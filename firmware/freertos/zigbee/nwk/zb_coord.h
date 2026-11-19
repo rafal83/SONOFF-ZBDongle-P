@@ -77,6 +77,9 @@
 /* Channel change: the coordinator switches after the broadcast had time to
  * reach every router (nwkNetworkBroadcastDeliveryTime) and sleepy parents. */
 #define ZB_CHANNEL_CHANGE_MS 10000u
+/* Network key switch: our own outgoing key changes this long after the
+ * Switch Key broadcast went out (its first transmission uses the old key). */
+#define ZB_KEY_SWITCH_MS 2000u
 typedef struct {
     bool used;
     uint16_t src, cluster, profile, len;
@@ -164,7 +167,7 @@ typedef struct {
     uint32_t early_mtorr_deferred;   /* early many-to-one request moved to the end of the minimum gap */
     uint32_t disc_buffered, disc_sent, disc_expired;   /* frames held during route discovery */
     uint32_t frag_rx_ok, frag_rx_dropped, frag_tx_ok, frag_tx_failed, frag_tx_retries;
-    uint32_t channel_changes;
+    uint32_t channel_changes, key_updates, key_switches;
 } zb_coord_stats_t;
 
 typedef struct {
@@ -226,6 +229,10 @@ typedef struct {
     zb_frag_rx_t frag_rx[ZB_FRAG_RX_SESSIONS];
     zb_frag_tx_t frag_tx;                  /* one fragmented transmission at a time */
     int16_t forced_handle;           /* >= 0: MAC handle imposed on the next frame */
+    uint8_t tx_key_slot;             /* core_security slot of the key we send with */
+    bool pending_key_valid, key_switch_due;
+    uint8_t pending_key[16], pending_key_seq;
+    uint32_t key_switch_at;
     uint8_t pending_channel;         /* channel change in progress (0: none) */
     uint8_t pending_update_id;
     uint32_t channel_change_at;
@@ -276,6 +283,16 @@ uint8_t zb_coord_send_aps_fragmented(zb_coord_t *c, uint16_t dst, uint8_t dst_ep
  * Mgmt_NWK_Update_req with scan duration 0xFE: broadcast the request with
  * nwkUpdateId + 1, switch ZB_CHANNEL_CHANGE_MS later, persist. */
 bool zb_coord_change_channel(zb_coord_t *c, uint8_t channel);
+/* Network key rotation, as Z-Stack ZDSecMgrUpdateNwkKey / SwitchNwkKey:
+ * update = install `key` (sequence `seq`) as the alternate key and
+ * broadcast it (APS Transport Key, NWK-secured with the current key) to
+ * `dst` (0xFFFF: every device, sleepy ones via their parents); switch =
+ * broadcast APS Switch Key, then send with the new key (persisted, counters
+ * re-bound). Incoming frames under the old key stay accepted until reboot.
+ * Zigbee2MQTT checks its configured network_key at start: it must be
+ * updated to the new key, or the next start reports a mismatch. */
+bool zb_coord_update_network_key(zb_coord_t *c, uint16_t dst, uint8_t seq, const uint8_t key[16]);
+bool zb_coord_switch_network_key(zb_coord_t *c, uint16_t dst, uint8_t seq);
 uint8_t zb_coord_send_aps_secured(zb_coord_t *c, uint16_t dst, uint8_t dst_ep, uint8_t src_ep, uint16_t cluster,
                                   uint16_t profile, const uint8_t *payload, uint8_t length, bool ack_request);
 /* Start a route discovery (broadcast Route Request) towards `dst`. */

@@ -40,6 +40,7 @@
 #define APS_KEY_TYPE_TC_LINK 0x04u
 #define APS_CMD_UPDATE_DEVICE 0x06u
 #define APS_CMD_TUNNEL 0x0Eu
+#define APS_CMD_SWITCH_KEY 0x09u
 
 /* NWK commands (Zigbee PRO 3.4) */
 #define NWK_CMD_ROUTE_REQUEST 0x01u
@@ -303,7 +304,7 @@ static uint8_t nwk_tx(zb_coord_t *c, uint8_t type, uint16_t dst, uint8_t radius,
     if (secured) {
         uint8_t local[8];
         put64(local, c->ext_addr);
-        if (!core_security_seal(&c->security, 0, local, frame, hl, len, sizeof frame, &total)) return ZB_SEND_SECURITY;
+        if (!core_security_seal(&c->security, c->tx_key_slot, local, frame, hl, len, sizeof frame, &total)) return ZB_SEND_SECURITY;
     }
     uint8_t status = ext_dst ? mac_send(c, MAC_ADDR_EXT, 0, ext_dst, indirect_ext, frame, total)
                              : mac_send(c, MAC_ADDR_SHORT, hop.mac_dst, 0, hop.indirect, frame, total);
@@ -334,7 +335,7 @@ static uint8_t send_plain(zb_coord_t *c, const uint8_t *plain, size_t hl, size_t
     put64(local, c->ext_addr);
     size_t total = 0;
     uint8_t status = ZB_SEND_SECURITY;
-    if (core_security_seal(&c->security, 0, local, frame, hl, len - hl, sizeof frame, &total))
+    if (core_security_seal(&c->security, c->tx_key_slot, local, frame, hl, len - hl, sizeof frame, &total))
         status = mac_send(c, dst_mode, mac_dst, ext, indirect, frame, total);
     wipe(frame, sizeof frame);
     return status;
@@ -1522,7 +1523,7 @@ static void relay(zb_coord_t *c, const nwk_header_t *in, const uint8_t *payload,
     uint8_t local[8];
     put64(local, c->ext_addr);
     size_t total = 0;
-    if (core_security_seal(&c->security, 0, local, frame, hl, len, sizeof frame, &total) &&
+    if (core_security_seal(&c->security, c->tx_key_slot, local, frame, hl, len, sizeof frame, &total) &&
         mac_send(c, MAC_ADDR_SHORT, hop.mac_dst, 0, hop.indirect, frame, total) == ZB_SEND_OK) {
         c->stats.relayed++;
         track_tx(c, c->last_send_handle, in->dst, hop.mac_dst, in->src);
@@ -1706,6 +1707,9 @@ void zb_coord_form(zb_coord_t *c, uint16_t pan_id, uint8_t channel, const uint8_
                    const uint8_t network_key[16], uint8_t key_seq) {
     for (unsigned i = 0; i < 16; i++) c->network_key[i] = network_key[i];
     c->key_seq = key_seq;
+    c->security.network_keys[1].valid = false;
+    c->tx_key_slot = 0;
+    c->pending_key_valid = c->key_switch_due = false;
     (void)core_security_set_key(&c->security, 0, key_seq, network_key);
     if (!c->tclk_seed_valid && c->upper.random_key && c->upper.random_key(c->upper.ctx, c->tclk_seed))
         c->tclk_seed_valid = true;
@@ -1726,6 +1730,9 @@ void zb_coord_set_network(zb_coord_t *c, uint16_t pan_id, uint8_t channel, const
 void zb_coord_set_network_key(zb_coord_t *c, const uint8_t key[16], uint8_t key_seq) {
     for (unsigned i = 0; i < 16; i++) c->network_key[i] = key[i];
     c->key_seq = key_seq;
+    c->security.network_keys[1].valid = false;   /* a restored key replaces any rotation */
+    c->tx_key_slot = 0;
+    c->pending_key_valid = c->key_switch_due = false;
     (void)core_security_set_key(&c->security, 0, key_seq, key);
     /* Counters keep their (monotonic) values and are re-bound to the key. */
     (void)save_counters(c, c->nwk_reserved, c->aps_reserved);
@@ -1769,6 +1776,65 @@ void zb_coord_set_tclk_seed(zb_coord_t *c, const uint8_t seed[16]) {
     for (unsigned i = 0; i < 16; i++) c->tclk_seed[i] = seed[i];
     c->tclk_seed_valid = true;
     save_network(c);
+}
+
+/* APS command, APS-unsecured, NWK-secured with the current key (broadcast
+ * network key update / switch, as Z-Stack). */
+static uint8_t send_aps_command_plain(zb_coord_t *c, uint16_t dst, const uint8_t *payload, size_t len) {
+    bool broadcast = nwk_is_broadcast(dst);
+    uint8_t aps[2 + 1 + 1 + 16 + 1 + 8 + 8];   /* header + Transport Key (the longest command) */
+    if (len + 2u > sizeof aps) return ZB_SEND_TOO_LONG;
+    aps[0] = (uint8_t)(0x01u | (broadcast ? 0x08u : 0x00u));   /* command frame, broadcast/unicast delivery */
+    aps[1] = c->aps_counter++;
+    for (size_t i = 0; i < len; i++) aps[2 + i] = payload[i];
+    return send_nwk(c, dst, aps, len + 2u);
+}
+
+bool zb_coord_update_network_key(zb_coord_t *c, uint16_t dst, uint8_t seq, const uint8_t key[16]) {
+    if (!c->mac.started || seq == c->key_seq || c->key_switch_due) return false;
+    unsigned alt = 1u - c->tx_key_slot;
+    if (!core_security_set_key(&c->security, alt, seq, key)) return false;
+    uint8_t tk[1 + 1 + 16 + 1 + 8 + 8] = {APS_CMD_TRANSPORT_KEY, APS_KEY_TYPE_STANDARD_NWK};
+    for (unsigned i = 0; i < 16; i++) tk[2 + i] = key[i];
+    tk[18] = seq;
+    uint64_t dst_ext = 0;   /* broadcast: no single destination */
+    if (!nwk_is_broadcast(dst)) {
+        uint16_t slot = nwk_devices_find_short(&c->devices, dst);
+        if (slot != NWK_DEVICE_NONE) dst_ext = c->devices.dev[slot].ext;
+    }
+    put64(tk + 19, dst_ext);
+    put64(tk + 27, c->ext_addr);
+    uint8_t st = send_aps_command_plain(c, dst, tk, sizeof tk);
+    wipe(tk, sizeof tk);
+    if (st != ZB_SEND_OK) { c->security.network_keys[alt].valid = false; return false; }
+    for (unsigned i = 0; i < 16; i++) c->pending_key[i] = key[i];
+    c->pending_key_seq = seq;
+    c->pending_key_valid = true;
+    c->stats.key_updates++;
+    return true;
+}
+
+bool zb_coord_switch_network_key(zb_coord_t *c, uint16_t dst, uint8_t seq) {
+    if (!c->pending_key_valid || seq != c->pending_key_seq || c->key_switch_due) return false;
+    const uint8_t sk[2] = {APS_CMD_SWITCH_KEY, seq};
+    if (send_aps_command_plain(c, dst, sk, sizeof sk) != ZB_SEND_OK) return false;
+    c->key_switch_due = true;
+    c->key_switch_at = c->now_ms + ZB_KEY_SWITCH_MS;
+    return true;
+}
+
+static void key_switch_service(zb_coord_t *c) {
+    if (!c->key_switch_due || (int32_t)(c->now_ms - c->key_switch_at) < 0) return;
+    c->key_switch_due = false;
+    c->tx_key_slot = (uint8_t)(1u - c->tx_key_slot);   /* the alternate slot holds the new key */
+    for (unsigned i = 0; i < 16; i++) c->network_key[i] = c->pending_key[i];
+    c->key_seq = c->pending_key_seq;
+    wipe(c->pending_key, sizeof c->pending_key);
+    c->pending_key_valid = false;
+    /* Counters first, bound to the new key, then the network record. */
+    (void)save_counters(c, c->nwk_reserved, c->aps_reserved);
+    save_network(c);
+    c->stats.key_switches++;
 }
 
 bool zb_coord_change_channel(zb_coord_t *c, uint8_t channel) {
@@ -2049,6 +2115,7 @@ void zb_coord_tick(zb_coord_t *c, uint32_t now_ms) {
     bcast_service(c);
     disc_service(c);
     frag_service(c);
+    key_switch_service(c);
     if (c->pending_channel && (int32_t)(now_ms - c->channel_change_at) >= 0) {
         uint8_t channel = c->pending_channel;
         c->pending_channel = 0;
