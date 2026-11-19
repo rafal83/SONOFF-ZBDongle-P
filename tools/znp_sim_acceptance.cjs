@@ -191,6 +191,22 @@ async function run() {
                 assert.equal(after.panID, before.panID);
                 report.channel_change = {from: before.channel, to: after.channel};
             });
+            /* ZNP extUpdateNwkKey + extSwitchNwkKey as herdsman defines them:
+             * the active key read back is the new one (Z2M's network_key must
+             * then be updated by the user, see docs/freertos-migration/znp-compat.md). */
+            await step('network key rotation (extUpdateNwkKey / extSwitchNwkKey)', async () => {
+                const {Subsystem} = r('zigbee-herdsman/dist/adapter/z-stack/unpi/constants.js');
+                const before = await adapter.znp.request(Subsystem.SYS, 'osalNvRead', {id: 0x003a, offset: 0});
+                const seq = (before.payload.value[0] + 1) & 0xff;
+                const key = crypto.randomBytes(16);
+                await adapter.znp.request(Subsystem.ZDO, 'extUpdateNwkKey', {dstaddr: 0xfffd, keyseqnum: seq, key});
+                await adapter.znp.request(Subsystem.ZDO, 'extSwitchNwkKey', {dstaddr: 0xfffd, keyseqnum: seq});
+                await new Promise(res => setTimeout(res, 2600));
+                const after = await adapter.znp.request(Subsystem.SYS, 'osalNvRead', {id: 0x003a, offset: 0});
+                assert.equal(after.payload.value[0], seq, 'new key sequence active');
+                assert(Buffer.from(after.payload.value.subarray(1, 17)).equals(key), 'new key active');
+                report.key_rotation = {from_seq: before.payload.value[0], to_seq: seq};
+            });
         }
         report.passed = true;
         delete report.current;

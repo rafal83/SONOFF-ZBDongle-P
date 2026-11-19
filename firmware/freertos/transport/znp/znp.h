@@ -10,7 +10,7 @@
  * the coordinator on read and APPLIED to it on write. Their binary layouts
  * come from znp_structs.h (generated from herdsman's own struct classes).
  *
- * Implemented subsystems/commands: see docs/freertos-migration/znp-compat.md.
+ * Implemented subsystems/commands: see docs/firmware/znp-compat.md.
  * Everything else is answered with the standard MT RPC error (unsupported
  * command), never with a fake success.
  *

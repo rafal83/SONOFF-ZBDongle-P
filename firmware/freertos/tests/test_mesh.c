@@ -795,6 +795,82 @@ int main(void) {
         drain();
     }
 
+    /* ---- Network key rotation (update, then switch) -------------------- */
+    {
+        drain();
+        uint8_t new_key[16];
+        for (unsigned i = 0; i < 16; i++) new_key[i] = (uint8_t)(0xA0 + i);
+        uint8_t old_seq = coord.key_seq, new_seq = (uint8_t)(old_seq + 1u);
+        CHECK(!zb_coord_update_network_key(&coord, 0xFFFF, old_seq, new_key));   /* same sequence: refused */
+        CHECK(!zb_coord_switch_network_key(&coord, 0xFFFF, new_seq));            /* nothing to switch to */
+        CHECK(zb_coord_update_network_key(&coord, 0xFFFF, new_seq, new_key));
+        /* R receives the broadcast Transport Key under the current key. */
+        bool got = false;
+        while (!got && rx_frame(&r, &m)) {
+            aps_header_t a;
+            got = m.nwk.dst == 0xFFFF && aps_parse(m.payload, m.len, &a) == APS_OK && a.type == APS_TYPE_COMMAND &&
+                  a.payload_len == 35 && a.payload[0] == 0x05 && a.payload[1] == 0x01 &&
+                  !memcmp(a.payload + 2, new_key, 16) && a.payload[18] == new_seq;
+        }
+        CHECK(got);
+        CHECK(core_security_set_key(&r.sec, 1, new_seq, new_key));
+        /* Before the switch: frames under the NEW key are already accepted. */
+        uint32_t ls0 = coord.stats.link_status_rx;
+        {
+            const uint8_t ls[5] = {0x08, 0x61, 0x00, 0x00, 0x11};
+            nwk_header_t h = hdr(NWK_TYPE_COMMAND, r.short_addr, 0xFFFC, 0x70);
+            h.radius = 1;
+            uint8_t nwk[CORE_SECURITY_MAX_FRAME];
+            size_t hl = nwk_build(&h, nwk, sizeof nwk);
+            memcpy(nwk + hl, ls, sizeof ls);
+            uint8_t local[8];
+            for (unsigned i = 0; i < 8; i++) local[i] = (uint8_t)(r.ext >> (8 * i));
+            size_t total = 0;
+            CHECK(core_security_seal(&r.sec, 1, local, nwk, hl, sizeof ls, sizeof nwk, &total));
+            mac_frame_t f = {0};
+            f.type = MAC_TYPE_DATA; f.pan_id_compression = true; f.seq = r.mac_seq++;
+            f.dst_mode = MAC_ADDR_SHORT; f.dst_pan = PAN; f.dst_short = 0xFFFF;
+            f.src_mode = MAC_ADDR_SHORT; f.src_short = r.short_addr;
+            uint8_t mpdu[MAC_MAX_MPDU];
+            size_t n = mac_frame_build(&f, nwk, total, mpdu, sizeof mpdu);
+            CHECK(n);
+            zb_coord_rx(&coord, mpdu, (uint8_t)n, 200, -40);
+        }
+        CHECK(coord.stats.link_status_rx == ls0 + 1);
+        CHECK(coord.key_seq == old_seq);                                         /* still sending with the old key */
+        CHECK(!zb_coord_switch_network_key(&coord, 0xFFFF, (uint8_t)(new_seq + 1u)));   /* wrong sequence */
+        CHECK(zb_coord_switch_network_key(&coord, 0xFFFF, new_seq));
+        got = false;
+        while (!got && rx_frame(&r, &m)) {
+            aps_header_t a;
+            got = m.nwk.dst == 0xFFFF && aps_parse(m.payload, m.len, &a) == APS_OK && a.type == APS_TYPE_COMMAND &&
+                  a.payload_len == 2 && a.payload[0] == 0x09 && a.payload[1] == new_seq;
+        }
+        CHECK(got);
+        zb_coord_tick(&coord, coord.now_ms + ZB_KEY_SWITCH_MS + 10u);
+        CHECK(coord.key_seq == new_seq && !memcmp(coord.network_key, new_key, 16) && coord.stats.key_switches == 1);
+        CHECK(coord.security.network_keys[coord.tx_key_slot].sequence == new_seq);
+        /* Our frames now carry the new key sequence in their aux header. */
+        const uint8_t zcl[3] = {0x01, 0x30, 0x01};
+        CHECK(zb_coord_send_aps(&coord, r.short_addr, 1, 1, 6, 0x0104, zcl, 3, false) == ZB_SEND_OK);
+        uint8_t copy[MAC_MAX_MPDU];
+        mac_frame_t f2;
+        bool seen = false;
+        while (!seen && take(&f2, copy)) {
+            nwk_header_t h2;
+            if (nwk_parse(f2.payload, f2.payload_len, &h2) != NWK_OK || h2.dst != r.short_addr) continue;
+            seen = h2.security && f2.payload[h2.header_len + 13] == new_seq;   /* aux: key sequence number */
+        }
+        CHECK(seen);
+        /* Frames under the OLD key are still accepted (devices that missed it). */
+        nwk_header_t h3 = hdr(NWK_TYPE_COMMAND, r.short_addr, 0xFFFC, 0x71);
+        h3.radius = 1;
+        const uint8_t ls2[5] = {0x08, 0x61, 0x00, 0x00, 0x11};
+        hop_send(&r, &h3, ls2, sizeof ls2, 0xFFFF, true);   /* r.sec slot 0 = old key */
+        CHECK(coord.stats.link_status_rx == ls0 + 2);
+        drain();
+    }
+
     printf("mesh: %u checks passed\n", frt_checks);
     return 0;
 }

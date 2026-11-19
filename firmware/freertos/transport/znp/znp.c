@@ -915,6 +915,17 @@ static void handle_zdo(znp_t *z, uint8_t cmd, const uint8_t *in, uint8_t n) {
         srsp_status(z, S_ZDO, cmd, zdo_send(z, get16(in), clusters[cmd], in + 2, (size_t)(n - 2)));
         return;
     }
+    case 0x4E: {   /* extUpdateNwkKey(dstAddr, keySeqNum, key[16]) */
+        if (n != 19) break;
+        srsp_status(z, S_ZDO, cmd, zb_coord_update_network_key(z->coord, get16(in), in[2], in + 3) ? ST_SUCCESS
+                                                                                                      : ST_FAILURE);
+        return;
+    }
+    case 0x4F: {   /* extSwitchNwkKey(dstAddr, keySeqNum) */
+        if (n != 3) break;
+        srsp_status(z, S_ZDO, cmd, zb_coord_switch_network_key(z->coord, get16(in), in[2]) ? ST_SUCCESS : ST_FAILURE);
+        return;
+    }
     case 0x37: {   /* mgmtNwkUpdateReq(dstaddr, dstaddrmode, channelmask u32, scanduration, scancount, manager) */
         if (n < 8) break;
         uint32_t mask = get32(in + 3);
