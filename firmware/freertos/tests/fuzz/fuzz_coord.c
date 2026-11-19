@@ -50,6 +50,8 @@ static void setup(void) {
     znp.dev_state = ZNP_DEV_ZB_COORD;
     const zb_endpoint_t ep = {.endpoint = 1, .profile = 0x0104, .device_id = 5};
     (void)zb_coord_register_endpoint(&coord, &ep);
+    const zb_endpoint_t gp_ep = {.endpoint = 242, .profile = 0xA1E0, .device_id = 0x61};
+    (void)zb_coord_register_endpoint(&coord, &gp_ep);   /* GP proxy paths reachable */
     (void)zb_coord_import_device(&coord, NWK_DEVICE_NONE, DEV_EXT, DEV_SHORT, true, 0, 0xFF);
     core_security_init(&dev_sec, 1, zb_ccm_backend_sw, reserve, 0);
     (void)core_security_set_key(&dev_sec, 0, 0, KEY);

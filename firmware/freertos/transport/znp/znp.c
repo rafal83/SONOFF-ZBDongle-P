@@ -998,6 +998,8 @@ static uint8_t af_send(znp_t *z, uint16_t dst, bool group, uint8_t dst_ep, uint8
     if (!group && !nwk_is_broadcast(dst))
         for (unsigned i = 0; i < ZNP_MAX_CONFIRMS && slot < 0; i++) if (!z->confirms[i].used) slot = (int)i;
     if (!group && !nwk_is_broadcast(dst) && slot < 0) { z->stats.af_tx_failed++; return 0x10u; }
+    if (cluster == GP_CLUSTER && (src_ep == GP_ENDPOINT || dst_ep == GP_ENDPOINT))
+        gp_proxy_host_frame(&z->gp, data, len, z->coord->now_ms);   /* we are a GP proxy too */
     uint8_t status;
     if (options & AF_EN_SECURITY) {
         /* APS encryption with the destination's link key, never silently dropped. */
@@ -1132,6 +1134,21 @@ static void up_left(void *ctx, uint16_t short_addr, uint64_t ext, bool rejoin) {
     areq(z, S_ZDO, 0xC9, p, sizeof p);   /* leaveInd -> herdsman "deviceLeave" (unless rejoin) */
 }
 
+static void incoming(znp_t *z, uint16_t group, uint16_t cluster, uint16_t src, uint8_t src_ep, uint8_t dst_ep,
+                     bool broadcast, uint8_t lqi, const uint8_t *data, size_t len);
+static const zb_endpoint_t *endpoint(znp_t *z, uint8_t ep);
+
+/* GPD frame heard by the coordinator: as a GP proxy, deliver the GP
+ * (Commissioning) Notification to the sink (herdsman) on the GP endpoint.
+ * Marked as received by broadcast, as proxies groupcast them. */
+static void up_gpdf(void *ctx, const uint8_t *nwk, size_t len, uint8_t mac_seq, uint8_t lqi) {
+    znp_t *z = ctx;
+    if (!endpoint(z, GP_ENDPOINT)) return;
+    uint8_t zcl[160];
+    size_t n = gp_proxy_rx(&z->gp, nwk, len, mac_seq, z->coord->now_ms, zcl, sizeof zcl);
+    if (n) incoming(z, 0, GP_CLUSTER, 0x0000, GP_ENDPOINT, GP_ENDPOINT, true, lqi, zcl, n);
+}
+
 static void up_channel(void *ctx, uint8_t channel) {
     znp_t *z = ctx;
     if (z->p.network_up) z->p.network_up(z->p.ctx, channel);   /* the radio follows the network */
@@ -1180,10 +1197,11 @@ void znp_boot(znp_t *z, const znp_platform_t *platform, zb_coord_t *coord, const
     const zb_coord_upper_t upper = {
         .device_joined = up_joined, .aps_data = up_aps, .reserve_nwk_counter = 0, .random_key = up_random,
         .key_established = 0, .send_confirm = up_confirm, .device_left = up_left, .ctx = z,
-        .channel_changed = up_channel,
+        .channel_changed = up_channel, .gpdf = up_gpdf,
     };
     zb_coord_init(coord, radio, &upper, z->ieee, random_seed, 0);
     zb_coord_attach_store(coord, store);
+    gp_proxy_init(&z->gp, store);
     coord->endpoint_count = 0;   /* as Z-Stack ZNP: the host registers every endpoint */
     if (clear_state) {
         (void)zb_coord_restore(coord);   /* load what exists so that it is deleted */

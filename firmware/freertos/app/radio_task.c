@@ -159,7 +159,7 @@ static bool coord_reserve(void *ctx, uint32_t upper) { (void)ctx; (void)upper; r
 
 static const mac_radio_ops_t COORD_RADIO = {coord_radio_tx, coord_source_match, 0};
 static const zb_coord_upper_t COORD_UPPER = {coord_joined, coord_aps, coord_reserve, coord_random_key,
-                                             coord_key, 0, 0, 0, 0};
+                                             coord_key, 0, 0, 0, 0, 0};
 
 /* ---- ZNP platform ------------------------------------------------------- */
 static void znp_send(void *ctx, uint8_t cmd0, uint8_t cmd1, const uint8_t *payload, uint8_t len) {

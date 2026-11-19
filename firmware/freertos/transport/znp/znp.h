@@ -24,6 +24,7 @@
 #include <stdint.h>
 #include "nv_log.h"
 #include "zb_coord.h"
+#include "gp_proxy.h"
 
 #define ZNP_PRODUCT_ZSTACK3X0 1u
 #define ZNP_PRODUCT_EXPERIMENTAL 0xFEu
@@ -58,6 +59,7 @@ typedef struct {
     znp_platform_t p;
     zb_coord_t *coord;
     nv_log_t *store;
+    gp_proxy_t gp;                     /* Green Power proxy (basic) */
     uint64_t ieee;
     uint8_t dev_state;
     bool formed;                       /* a network exists (restored or formed) */
