@@ -34,8 +34,9 @@
  *    by hop), Network Status sent on relay failure, address conflicts
  *    announced (Network Status 0x0D) and resolved for our own children
  *    (unsolicited Rejoin Response with a new address).
- * NOT implemented yet: APS retries/fragmentation/duplicate rejection, key
- * switch, many-to-one requests of other concentrators. Incoming NWK/APS replay counters are NOT persisted:
+ * NOT implemented yet: APS retries of unfragmented frames (herdsman sends
+ * without APS ACK request), many-to-one requests of other concentrators.
+ * Incoming NWK/APS replay counters are NOT persisted:
  * after a reboot an old frame from a device could be replayed once.
  */
 #ifndef ZB_COORD_H

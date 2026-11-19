@@ -309,6 +309,10 @@ static uint8_t nwk_tx(zb_coord_t *c, uint8_t type, uint16_t dst, uint8_t radius,
     uint8_t status = ext_dst ? mac_send(c, MAC_ADDR_EXT, 0, ext_dst, indirect_ext, frame, total)
                              : mac_send(c, MAC_ADDR_SHORT, hop.mac_dst, 0, hop.indirect, frame, total);
     if (status == ZB_SEND_OK && !broadcast && !ext_dst) track_tx(c, c->last_send_handle, dst, hop.mac_dst, 0xFFFF);
+    /* Originator of a broadcast: record it in the BTT (Zigbee PRO 3.6.5), so
+     * the copies relayed back by the routers are duplicates (passive ACK),
+     * never delivered to the host as a new frame. */
+    if (broadcast && status == ZB_SEND_OK) (void)nwk_btt_accept(&c->routes, h.src, h.seq, c->now_ms);
     wipe(frame, sizeof frame);
     if (broadcast && secured && status == ZB_SEND_OK) {
         /* Rebuild the plaintext for passive-ACK retries / sleepy copies. */
