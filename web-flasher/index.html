@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Installez le firmware FreeRTOS du SONOFF ZBDongle-P depuis votre navigateur, avec sauvegarde locale et vérification du flash.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <meta name="theme-color" content="#112b30">
+  <title>ZBDongle-P · FreeRTOS Web Flasher</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./app.mjs"></script>
+</head>
+<body>
+  <header class="topbar wrap">
+    <a class="brand" href="./" aria-label="Accueil ZBDongle-P"><span class="brand-icon" aria-hidden="true">Z</span> ZBDongle-P <span class="brand-divider">/</span> <span class="brand-sub">FreeRTOS</span></a>
+    <a href="https://github.com/rafal83/SONOFF-ZBDongle-P" target="_blank" rel="noopener noreferrer" class="repo-link">Le projet sur GitHub</a>
+  </header>
+  <main class="wrap">
+    <section class="intro">
+      <div class="intro-copy">
+        <p class="eyebrow">SONOFF · CC2652P</p>
+        <h1>Un nouveau firmware.<br><span>Directement d’ici.</span></h1>
+        <p class="lead">Installez FreeRTOS sur votre ZBDongle-P, sans ligne de commande. Connectez le dongle, sauvegardez son contenu et lancez l’installation.</p>
+        <div class="intro-tags"><span>USB local</span><span>Sans installation</span><span>Sauvegarde incluse</span></div>
+      </div>
+      <div class="device-art" aria-hidden="true">
+        <svg viewBox="0 0 300 260" role="presentation">
+          <defs><linearGradient id="body" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#526d73"/><stop offset=".45" stop-color="#253f45"/><stop offset="1" stop-color="#152b30"/></linearGradient><linearGradient id="metal"><stop stop-color="#b4c7c9"/><stop offset=".5" stop-color="#e9f1ee"/><stop offset="1" stop-color="#839fa4"/></linearGradient></defs>
+          <circle cx="150" cy="130" r="106" fill="none" stroke="#345158"/>
+          <circle cx="150" cy="130" r="78" fill="none" stroke="#345158" stroke-dasharray="3 7"/>
+          <g transform="rotate(-27 150 130)"><rect x="131" y="14" width="29" height="54" rx="3" fill="url(#metal)"/><rect x="137" y="22" width="5" height="10" rx="1" fill="#536e74"/><rect x="150" y="22" width="5" height="10" rx="1" fill="#536e74"/><rect x="115" y="57" width="62" height="122" rx="12" fill="url(#body)" stroke="#718d90"/><path d="M124 70v96" stroke="#658085" stroke-width="2"/><circle cx="146" cy="157" r="3" fill="#8de4c8"/><text x="146" y="109" fill="#e6f2ee" text-anchor="middle" font-family="sans-serif" font-size="9" letter-spacing="1">SONOFF</text><text x="146" y="126" fill="#9db9bc" text-anchor="middle" font-family="sans-serif" font-size="7">ZBDongle-P</text><rect x="140" y="179" width="12" height="14" rx="3" fill="url(#metal)"/><rect x="141" y="191" width="10" height="57" rx="5" fill="#1a3036" stroke="#658085"/></g>
+        </svg>
+        <span class="device-caption">ZBDongle-P <span>2,4 GHz · Zigbee</span></span>
+      </div>
+    </section>
+
+    <section class="flasher" aria-labelledby="installer-title">
+      <div class="panel-heading"><div><p class="eyebrow">WEB FLASHER</p><h2 id="installer-title">Installer FreeRTOS</h2></div><span class="badge">Version expérimentale</span></div>
+      <p id="compatibility" class="notice" role="status">Chrome ou Edge sur ordinateur · Connexion USB requise · ZBDongle-P uniquement, pas le modèle E.</p>
+      <div class="install-grid">
+        <section class="settings" aria-labelledby="firmware-title">
+          <h3 id="firmware-title">Votre firmware</h3>
+          <div class="release-line"><strong id="release-name">Chargement de la version…</strong><a id="release-link" hidden target="_blank" rel="noopener noreferrer">Voir la prérelease</a></div>
+          <label class="field-label" for="baud">Débit pour Zigbee2MQTT</label>
+          <div class="select-wrap"><select id="baud" disabled><option value="1000000">1 000 000 bauds — recommandé</option><option value="115200">115 200 bauds</option></select></div>
+          <p class="field-help">À reporter dans <code>serial.baudrate</code> après l’installation.</p>
+          <p class="hash-label">SHA-256 du firmware</p><code class="hash" id="firmware-hash">Vérification en cours…</code>
+          <a id="hex-link" class="text-link" hidden download>Télécharger le fichier HEX</a>
+          <div class="preservation"><span class="shield" aria-hidden="true">✓</span><p>Le stockage Zigbee et la configuration du dongle sont conservés. <strong>Une migration depuis Z-Stack demande une procédure distincte.</strong> <a href="https://github.com/rafal83/SONOFF-ZBDongle-P/blob/freeRTOS/docs/freertos-migration/migration.md" target="_blank" rel="noopener noreferrer">Lire la procédure</a></p></div>
+        </section>
+        <section class="controls" aria-labelledby="dongle-title">
+          <h3 id="dongle-title">Votre dongle</h3>
+          <p class="control-help">Branchez le dongle à cet ordinateur et arrêtez Zigbee2MQTT pour libérer son port USB.</p>
+          <label class="consent"><input id="consent" type="checkbox"><span>Zigbee2MQTT est arrêté et je souhaite mettre à jour ce ZBDongle-P.</span></label>
+          <button id="connect" class="button secondary" disabled>Connecter et sauvegarder</button>
+          <p id="device-info" class="device-info">Aucun dongle connecté</p>
+          <a id="backup-link" class="text-link" hidden download>Télécharger de nouveau la sauvegarde</a>
+          <p class="privacy">La sauvegarde reste sur votre ordinateur. Aucune donnée du dongle n’est envoyée à un serveur.</p>
+          <button id="install" class="button primary" disabled>Installer le firmware</button>
+          <button id="disconnect" class="text-button" hidden>Déconnecter sans installer</button>
+        </section>
+      </div>
+      <div class="status-area"><div class="status-heading"><strong id="status" role="status" aria-live="polite">Préparation du firmware…</strong><span id="percent"></span></div><progress id="progress" max="100" value="0" aria-label="Progression de l’installation"></progress><p id="result-help"></p></div>
+      <details class="log"><summary>Journal de l’opération</summary><pre id="log" aria-label="Journal de l’opération"></pre></details>
+    </section>
+    <section class="howto" aria-label="Comment installer le firmware"><article><span class="step-mark" aria-hidden="true">USB</span><h3>Connectez</h3><p>Le navigateur vous laisse choisir le port du dongle. Son modèle est vérifié avant toute écriture.</p></article><article><span class="step-mark" aria-hidden="true">BIN</span><h3>Sauvegardez</h3><p>Une copie complète de la mémoire est téléchargée avant l’installation. Conservez-la dans un endroit privé.</p></article><article><span class="step-mark" aria-hidden="true">CRC</span><h3>Installez</h3><p>Le firmware est écrit, puis relu intégralement. Les données conservées sont également vérifiées.</p></article></section>
+  </main>
+  <footer class="wrap"><span>FreeRTOS pour SONOFF ZBDongle-P</span><span><a href="./LICENSE.txt">Licence du site</a> · <a href="./FIRMWARE-LICENSES.txt">Licences du firmware</a> · Flash local via Web Serial</span></footer>
+  <noscript>Activez JavaScript pour utiliser le flasher USB.</noscript>
+</body>
+</html>

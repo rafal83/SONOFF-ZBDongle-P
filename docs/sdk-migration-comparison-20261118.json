@@ -1,0 +1,80 @@
+{
+  "comparison_completed": true,
+  "provenance": [
+    {
+      "version": "8.30.01.01",
+      "official_archive_sha256": "2531e2fb7f1b2bd0384d3adb2717b621b0218706e1bc2063728517c195006fe4",
+      "nwk_archive_sha256": "ba93547d5f683a38c92f8d8ca5ce81181d7e32615ec4a982a6b4fa36f9be4a96"
+    },
+    {
+      "version": "8.33.00.16",
+      "official_archive_sha256": "f61ccd1727bc54819506b4acc3b3a2891d0dd802df1c421700e93c1b8f5d3688",
+      "nwk_archive_sha256": "efcbb9d39371d9fa661d68693f47276ea23cb25a634c1c4cc8b4128dae78a65d"
+    }
+  ],
+  "objects_old": 20,
+  "objects_new": 20,
+  "runtime_object_sections_and_relocation_targets_identical": true,
+  "changed_objects": {},
+  "original_source_comparison": {
+    "source/ti/zstack/npi/npi_frame_mt.c": {
+      "identical": false,
+      "old_sha256": "389492f64bee9753ff088330de3d574a330a8dcf94ffcb6738fd90275cfd321a",
+      "new_sha256": "1417a4aaef8431471fc2919da8264ffa00f67c8107e3cdb5bd4e072205e0d44b"
+    },
+    "source/ti/zstack/npi/npi_task.c": {
+      "identical": false,
+      "old_sha256": "f099b1b9d11e52ff41d04ae5bfe27febe8381eb092f3fbfceb4f9431b454f606",
+      "new_sha256": "a3548b9bc01ee6379fb41e7666681df480f0505649ebe83fd8ec4c8b97546eb9"
+    },
+    "source/ti/zstack/npi/npi_tl.c": {
+      "identical": false,
+      "old_sha256": "557b04c030e14fdd85c640489a5f841ff2f6367e25f0526c5662a173b60df83a",
+      "new_sha256": "60767dd2308e29619c78c2cb4c770f74de6aed56df1fe2a3cfd7cccd830b5556"
+    },
+    "source/ti/zstack/npi/npi_tl_uart.c": {
+      "identical": false,
+      "old_sha256": "b590afdd6a686ceb8accc86eee1722c694bc368d9ec857dacd234e8d09e6a72a",
+      "new_sha256": "b02a12833c4cd2c37606bbe4ea3972685f9737826aaf7fd34cca7e6831ef1022"
+    },
+    "source/ti/zstack/zmac/f8w/zmac.c": {
+      "identical": false,
+      "old_sha256": "8ea0aa9f76534ef076fc1dd064b2e9e7c5d52f2dbc81a9e92e2ac1da043c5425",
+      "new_sha256": "8de5637d4a94bd39d404d671d8376a87e1ba0021cb2e016b76a56f269b7f9699"
+    },
+    "source/ti/zstack/stack/nwk/nwk.h": {
+      "identical": true,
+      "old_sha256": "c5af7721c7a0b3406eadf1f852da852d78fc63c7bbd25914a9115f21f3aa55a5",
+      "new_sha256": "c5af7721c7a0b3406eadf1f852da852d78fc63c7bbd25914a9115f21f3aa55a5"
+    },
+    "source/ti/zstack/stack/nwk/nwk_globals.c": {
+      "identical": true,
+      "old_sha256": "ea65d0f8617c6762ec776c4cb6468b80a4ab67f9f93c519a64aec043192849a2",
+      "new_sha256": "ea65d0f8617c6762ec776c4cb6468b80a4ab67f9f93c519a64aec043192849a2"
+    },
+    "source/ti/zstack/stack/zdo/zd_sec_mgr.c": {
+      "identical": true,
+      "old_sha256": "735367fe6708cbc72f58a1471b2e51ddab7c56be91a028c19f0a6bed2e5b677d",
+      "new_sha256": "735367fe6708cbc72f58a1471b2e51ddab7c56be91a028c19f0a6bed2e5b677d"
+    },
+    "source/ti/common/nv/nvocmp.c": {
+      "identical": true,
+      "old_sha256": "d37c7f314696c8669413cfb098900e41ffd2a4d48704481e5dd8c9a8c012d6d6",
+      "new_sha256": "d37c7f314696c8669413cfb098900e41ffd2a4d48704481e5dd8c9a8c012d6d6"
+    },
+    "source/ti/drivers/uart2/UART2CC26X2.c": {
+      "identical": true,
+      "old_sha256": "c6b933673bcf99c0e5052cbd3d980660d6e880794ae44b324330633c3f84e6de",
+      "new_sha256": "c6b933673bcf99c0e5052cbd3d980660d6e880794ae44b324330633c3f84e6de"
+    },
+    "source/ti/drivers/dpl/ClockP.h": {
+      "identical": true,
+      "old_sha256": "d9ecf57b1aafb3a123fed2f531662016932a3d69b5aa99515ced0d4a529c6f9e",
+      "new_sha256": "d9ecf57b1aafb3a123fed2f531662016932a3d69b5aa99515ced0d4a529c6f9e"
+    }
+  },
+  "audit_script_sha256": "f52786406d39e758f051536b9e9a6d87ee0ec81ff22565153d87abcb024b103b",
+  "semantics": "Allocated section bytes, sizes, alignments and relocation symbol names; debug excluded. Does not prove hardware compatibility.",
+  "hardware_tested": false,
+  "production_deployed": false
+}

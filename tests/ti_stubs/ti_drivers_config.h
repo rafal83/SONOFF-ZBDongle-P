@@ -1,0 +1,1 @@
+#define CONFIG_PORT_WATCHDOG 0

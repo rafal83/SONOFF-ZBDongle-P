@@ -1,0 +1,147 @@
+name: build-freertos
+on:
+  push:
+    branches: [freeRTOS]
+  pull_request:
+    branches: [freeRTOS]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: freertos-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  freertos:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install --target .tooling ziglang==0.13.0
+      - run: >-
+          python -m pip install --require-hashes --only-binary=:all:
+          --target .tooling/arm-tests -r tools/arm-tests-requirements.txt
+      - run: >-
+          python -m pip install -r tools/host-tests-requirements.txt
+          -r tools/core-tests-requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test the browser flasher and ROM failure cases
+        run: node --test tests/web_flasher.test.mjs
+      - name: Audit source distribution and required notices
+        run: python tools/audit_distribution.py
+      - run: python tools/fetch_sources.py FreeRTOS-Kernel Z-Stack-firmware zigbee-herdsman
+      - run: python tools/download_ti_toolchain.py sdk833 --extract --device-support-only
+      - name: Audit the TI source licences used by this build
+        run: python tools/audit_distribution.py --check-sdk
+      - name: Check shared core algorithms and NPI framing
+        run: |
+          python tools/test_core_engines.py
+          python tools/build.py host
+          node tests/herdsman_framing.mjs
+      - name: Build both FreeRTOS images and run host and ARM tests
+        run: python tools/build_freertos.py all
+      - run: python -m unittest discover -s tests -v
+      - name: Install the pinned zigbee-herdsman 11.2.1 (integrity-checked lock)
+        run: python tools/setup_herdsman_lab.py
+      - name: ZNP acceptance - real herdsman ZStackAdapter against the simulator
+        run: node tools/znp_sim_acceptance.cjs
+      - run: python tools/package_freertos_ci.py
+      - name: Prepare the verified web flasher and firmware catalog
+        run: python tools/package_web_flasher.py --commit "${{ github.sha }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-flasher-${{ github.sha }}
+          if-no-files-found: error
+          path: build/web-flasher
+      - uses: actions/upload-pages-artifact@v4
+        if: github.ref == 'refs/heads/freeRTOS' && github.event_name != 'pull_request' && vars.WEB_FLASHER_PAGES_ENABLED == 'true'
+        with:
+          path: build/web-flasher
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sonoff-freertos-experimental-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            build/freertos/sonoff-freertos-experimental.zip
+            build/freertos/sonoff-freertos-experimental.sha256
+      - name: Upload available test reports after failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: freertos-test-reports-${{ github.sha }}
+          if-no-files-found: ignore
+          path: |
+            build/core-engines/report.json
+            build/freertos/host/host-tests.json
+            build/freertos/arm-test/arm-tests.json
+            build/freertos/diag-*/manifest.json
+            build/freertos/sim/run-*/report.json
+  release:
+    needs: freertos
+    if: github.ref == 'refs/heads/freeRTOS' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: sonoff-freertos-experimental-${{ github.sha }}
+          path: release
+      - name: Publish the verified FreeRTOS prerelease
+        working-directory: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          sha256sum --check sonoff-freertos-experimental.sha256
+          tag="freertos-${GITHUB_SHA:0:12}"
+          cat > release-notes.md <<EOF
+          FreeRTOS experimental build for SONOFF ZBDongle-P (CC2652P).
+
+          Commit: ${GITHUB_SHA}
+          Validation: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          The ZIP contains the 115200 and 1000000 baud firmware images, their
+          manifests, host/ARM test reports and third-party licenses.
+          Read the manifests and included documentation for hardware validation
+          status and production migration requirements.
+          EOF
+          if draft=$(gh release view "$tag" --json isDraft --jq .isDraft); then
+            if [[ "$draft" == false ]]; then
+              echo "Release $tag is already published."
+              exit 0
+            fi
+          else
+            gh release create "$tag" --target "$GITHUB_SHA" --draft --prerelease \
+              --latest=false --title "FreeRTOS ${GITHUB_SHA:0:12}" --notes-file release-notes.md
+          fi
+          gh release upload "$tag" sonoff-freertos-experimental.zip \
+            sonoff-freertos-experimental.sha256 --clobber
+          gh release edit "$tag" --draft=false --prerelease --latest=false
+  pages:
+    needs: [freertos, release]
+    if: github.ref == 'refs/heads/freeRTOS' && github.event_name != 'pull_request' && vars.WEB_FLASHER_PAGES_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - name: Deploy the USB flasher to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

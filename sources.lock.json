@@ -1,0 +1,32 @@
+{
+  "Z-Stack-firmware": {
+    "url": "https://github.com/Koenkk/Z-Stack-firmware.git",
+    "commit": "58dda33d834ef09132427cb41721d7d68e11a7a6"
+  },
+  "zigbee-herdsman": {
+    "url": "https://github.com/Koenkk/zigbee-herdsman.git",
+    "commit": "99d664696dfb36dad175a7a0205d2481a42a1902"
+  },
+  "zigbee2mqtt": {
+    "url": "https://github.com/Koenkk/zigbee2mqtt.git",
+    "commit": "3c841fdfd66c92239921ef84fde8f039c64e1662"
+  },
+  "ti-sdk": {
+    "url": "https://github.com/TexasInstruments/simplelink-lowpower-f2-sdk.git",
+    "commit": "5b31d0a4903351e544546e23ef3330eaa4291ceb",
+    "tag": "lpf2-8.30.01.01"
+  },
+  "cc2538-bsl": {
+    "url": "https://github.com/JelmerT/cc2538-bsl.git",
+    "commit": "28cce9749bfb73c50363ded01bd8001b1639d9fb"
+  },
+  "tlsf": {
+    "url": "https://github.com/mattconte/tlsf.git",
+    "commit": "deff9ab509341f264addbd3c8ada533678591905"
+  },
+  "FreeRTOS-Kernel": {
+    "url": "https://github.com/FreeRTOS/FreeRTOS-Kernel.git",
+    "commit": "dbf70559b27d39c1fdb68dfb9a32140b6a6777a0",
+    "tag": "V11.1.0"
+  }
+}

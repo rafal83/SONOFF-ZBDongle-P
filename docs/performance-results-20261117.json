@@ -1,0 +1,585 @@
+{
+  "date": "2026-11-17",
+  "hardware_tested": true,
+  "original_revision": 20240710,
+  "method": "Same dongle, fresh synthetic NV per profile; randomized case order; original bracketed before/after",
+  "radio_benchmark_tested": true,
+  "Z2M_service_tested": false,
+  "production_NV_used": false,
+  "warmup_excluded_per_case_per_round": 5,
+  "transactions": 3600,
+  "profiles": [
+    {
+      "label": "original_115200_before",
+      "revision": 20240710,
+      "baudrate": 115200,
+      "hex_sha256": "e5159147dd13623eb497e78309ddffd2e1dfa63dd4c55d2a4a5f44ac86dc3f93",
+      "passed": true,
+      "original_restoration_verified": true,
+      "scratch_sha256": "fc6095e19d7bfcf8dce583204452608e3863c9704f1949d7f8e0b8a79067f1ca",
+      "raw_csv_sha256": "61892a39a45ea6841f2e9c50712bf5a58437cd7dc3992f9a9cb7ae55f0bec364",
+      "measured_transactions": 720,
+      "cases": {
+        "identical_write_240": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 30.340578300909694,
+          "latency_ms": {
+            "median": 30.13084997655824,
+            "p95_nearest_rank": 30.55080003105104,
+            "p99_nearest_rank": 133.14190006349236,
+            "max": 133.43929999973625
+          },
+          "duration_seconds": 3.9550993000157177
+        },
+        "ping": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 235.09299791270357,
+          "latency_ms": {
+            "median": 4.24469995778054,
+            "p95_nearest_rank": 4.372600000351667,
+            "p99_nearest_rank": 4.4784999918192625,
+            "max": 4.519400070421398
+          },
+          "duration_seconds": 0.5104362999554724
+        },
+        "read_128": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 61.30471451823341,
+          "latency_ms": {
+            "median": 16.277700022328645,
+            "p95_nearest_rank": 16.47270005196333,
+            "p99_nearest_rank": 16.879100003279746,
+            "max": 16.93340006750077
+          },
+          "duration_seconds": 1.9574351001065224
+        },
+        "read_16": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 150.31871324179923,
+          "latency_ms": {
+            "median": 6.624050030950457,
+            "p95_nearest_rank": 6.787699996493757,
+            "p99_nearest_rank": 6.9651000667363405,
+            "max": 7.165299961343408
+          },
+          "duration_seconds": 0.7983038000529632
+        },
+        "read_240": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 37.86652906863445,
+          "latency_ms": {
+            "median": 26.384349970612675,
+            "p95_nearest_rank": 26.590800029225647,
+            "p99_nearest_rank": 26.773500023409724,
+            "max": 26.790499920025468
+          },
+          "duration_seconds": 3.1690255999565125
+        },
+        "read_64": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 92.42715797672513,
+          "latency_ms": {
+            "median": 10.781300021335483,
+            "p95_nearest_rank": 11.088700033724308,
+            "p99_nearest_rank": 11.29429996944964,
+            "max": 11.320499936118722
+          },
+          "duration_seconds": 1.2983196998247877
+        }
+      }
+    },
+    {
+      "label": "candidate_115200",
+      "revision": 20261114,
+      "baudrate": 115200,
+      "hex_sha256": "bd33bf77ff3c1e4a713ee4b35783f087a6dfc94b9945ef19c8b16fa501ef6d57",
+      "passed": true,
+      "original_restoration_verified": true,
+      "scratch_sha256": "fc6095e19d7bfcf8dce583204452608e3863c9704f1949d7f8e0b8a79067f1ca",
+      "raw_csv_sha256": "ac5442cb3d677af9bf2f492c10252a89a6a78daf4f6a27a02e30d3894b1b919e",
+      "measured_transactions": 720,
+      "cases": {
+        "identical_write_240": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 36.597027810444544,
+          "latency_ms": {
+            "median": 27.293050021398813,
+            "p95_nearest_rank": 27.499500080011785,
+            "p99_nearest_rank": 27.804499957710505,
+            "max": 27.926600072532892
+          },
+          "duration_seconds": 3.2789547998690978
+        },
+        "ping": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 222.09912168462438,
+          "latency_ms": {
+            "median": 4.468300030566752,
+            "p95_nearest_rank": 4.716699942946434,
+            "p99_nearest_rank": 4.820799920707941,
+            "max": 4.860399989411235
+          },
+          "duration_seconds": 0.5402993001043797
+        },
+        "read_128": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 60.35810463526241,
+          "latency_ms": {
+            "median": 16.548500047065318,
+            "p95_nearest_rank": 16.722299973480403,
+            "p99_nearest_rank": 16.868500038981438,
+            "max": 16.966999974101782
+          },
+          "duration_seconds": 1.9881339999847114
+        },
+        "read_16": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 148.11197955955666,
+          "latency_ms": {
+            "median": 6.717300042510033,
+            "p95_nearest_rank": 6.927900016307831,
+            "p99_nearest_rank": 7.024999940767884,
+            "max": 7.052000029943883
+          },
+          "duration_seconds": 0.810197800048627
+        },
+        "read_240": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 37.573469046039335,
+          "latency_ms": {
+            "median": 26.59480000147596,
+            "p95_nearest_rank": 26.799499988555908,
+            "p99_nearest_rank": 26.947899954393506,
+            "max": 26.96189994458109
+          },
+          "duration_seconds": 3.1937429001554847
+        },
+        "read_64": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 91.69920459591458,
+          "latency_ms": {
+            "median": 10.875350038986653,
+            "p95_nearest_rank": 11.092499946244061,
+            "p99_nearest_rank": 11.364700039848685,
+            "max": 11.402199976146221
+          },
+          "duration_seconds": 1.3086264000739902
+        }
+      }
+    },
+    {
+      "label": "candidate_460800",
+      "revision": 20261114,
+      "baudrate": 460800,
+      "hex_sha256": "f8261b379b7aaaae3fb3d1d1f39ff8817b9e4bd54221d6347e18a9077f19de7c",
+      "passed": true,
+      "original_restoration_verified": true,
+      "scratch_sha256": "fc6095e19d7bfcf8dce583204452608e3863c9704f1949d7f8e0b8a79067f1ca",
+      "raw_csv_sha256": "d42291d1cf0b752aba23fc05f39bbea3517dc3d95cf1d472c4687be4f60365e2",
+      "measured_transactions": 720,
+      "cases": {
+        "identical_write_240": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 97.97565156853855,
+          "latency_ms": {
+            "median": 10.190300003159791,
+            "p95_nearest_rank": 10.327899944968522,
+            "p99_nearest_rank": 10.429500020109117,
+            "max": 10.741100064478815
+          },
+          "duration_seconds": 1.2247941001551226
+        },
+        "ping": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 301.1491852592892,
+          "latency_ms": {
+            "median": 3.308399929665029,
+            "p95_nearest_rank": 3.448299947194755,
+            "p99_nearest_rank": 3.5399000626057386,
+            "max": 3.5521999234333634
+          },
+          "duration_seconds": 0.39847360004205257
+        },
+        "read_128": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 149.44256057777122,
+          "latency_ms": {
+            "median": 6.6644499893300235,
+            "p95_nearest_rank": 6.905199959874153,
+            "p99_nearest_rank": 7.090099970810115,
+            "max": 7.104999967850745
+          },
+          "duration_seconds": 0.8029840999515727
+        },
+        "read_16": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 247.44681286681939,
+          "latency_ms": {
+            "median": 4.01294999755919,
+            "p95_nearest_rank": 4.211000050418079,
+            "p99_nearest_rank": 4.411799949593842,
+            "max": 5.2915000123903155
+          },
+          "duration_seconds": 0.4849526999751106
+        },
+        "read_240": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 107.65770125519606,
+          "latency_ms": {
+            "median": 9.25549998646602,
+            "p95_nearest_rank": 9.44690010510385,
+            "p99_nearest_rank": 9.63759992737323,
+            "max": 9.825500077567995
+          },
+          "duration_seconds": 1.1146439000731334
+        },
+        "read_64": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 197.2670621780942,
+          "latency_ms": {
+            "median": 5.040599964559078,
+            "p95_nearest_rank": 5.236999946646392,
+            "p99_nearest_rank": 5.339600029401481,
+            "max": 5.679600057192147
+          },
+          "duration_seconds": 0.6083123998250812
+        }
+      }
+    },
+    {
+      "label": "candidate_1000000",
+      "revision": 20261114,
+      "baudrate": 1000000,
+      "hex_sha256": "cb2b5e4f5cae02a5601c6c1c8d3cc9d7be7a009cfa2fb7398d323f39eb31dee5",
+      "passed": true,
+      "original_restoration_verified": true,
+      "scratch_sha256": "fc6095e19d7bfcf8dce583204452608e3863c9704f1949d7f8e0b8a79067f1ca",
+      "raw_csv_sha256": "ff8f3ec8162b32138169caeef49940d1f997b8f614f09ded42378d2cac8b4059",
+      "measured_transactions": 720,
+      "cases": {
+        "identical_write_240": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 151.38507884149118,
+          "latency_ms": {
+            "median": 6.548299919813871,
+            "p95_nearest_rank": 6.868100026622415,
+            "p99_nearest_rank": 7.189700030721724,
+            "max": 7.2382999351248145
+          },
+          "duration_seconds": 0.7926805000752211
+        },
+        "ping": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 382.4786528673042,
+          "latency_ms": {
+            "median": 2.5677999947220087,
+            "p95_nearest_rank": 2.875100006349385,
+            "p99_nearest_rank": 3.1586000695824623,
+            "max": 3.321500029414892
+          },
+          "duration_seconds": 0.3137430000351742
+        },
+        "read_128": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 231.48081175996583,
+          "latency_ms": {
+            "median": 4.285399918444455,
+            "p95_nearest_rank": 4.556500003673136,
+            "p99_nearest_rank": 4.821900045499206,
+            "max": 5.039600073359907
+          },
+          "duration_seconds": 0.518401499837637
+        },
+        "read_16": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 334.0021726054134,
+          "latency_ms": {
+            "median": 2.955300034955144,
+            "p95_nearest_rank": 3.2640999415889382,
+            "p99_nearest_rank": 3.4157000482082367,
+            "max": 3.455999889411032
+          },
+          "duration_seconds": 0.35927910008467734
+        },
+        "read_240": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 175.25862330802775,
+          "latency_ms": {
+            "median": 5.650850012898445,
+            "p95_nearest_rank": 5.988199962303042,
+            "p99_nearest_rank": 6.172900088131428,
+            "max": 6.177599891088903
+          },
+          "duration_seconds": 0.6847024000016972
+        },
+        "read_64": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 288.2593411790478,
+          "latency_ms": {
+            "median": 3.416749939788133,
+            "p95_nearest_rank": 3.7879999727010727,
+            "p99_nearest_rank": 3.994900034740567,
+            "max": 4.02410002425313
+          },
+          "duration_seconds": 0.4162917999783531
+        }
+      }
+    },
+    {
+      "label": "original_115200_after",
+      "revision": 20240710,
+      "baudrate": 115200,
+      "hex_sha256": "e5159147dd13623eb497e78309ddffd2e1dfa63dd4c55d2a4a5f44ac86dc3f93",
+      "passed": true,
+      "original_restoration_verified": true,
+      "scratch_sha256": "fc6095e19d7bfcf8dce583204452608e3863c9704f1949d7f8e0b8a79067f1ca",
+      "raw_csv_sha256": "aeef7cefb25b39689cb0563cbc505ee329d840fa7874329235c74a4872ad4239",
+      "measured_transactions": 720,
+      "cases": {
+        "identical_write_240": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 30.127147105443065,
+          "latency_ms": {
+            "median": 30.219799955375493,
+            "p95_nearest_rank": 31.26019996125251,
+            "p99_nearest_rank": 135.76620002277195,
+            "max": 137.53060007002205
+          },
+          "duration_seconds": 3.983118599979207
+        },
+        "ping": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 226.90190596386614,
+          "latency_ms": {
+            "median": 4.359350015874952,
+            "p95_nearest_rank": 4.693599999882281,
+            "p99_nearest_rank": 4.91010001860559,
+            "max": 5.526399938389659
+          },
+          "duration_seconds": 0.5288628999842331
+        },
+        "read_128": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 60.837942274975916,
+          "latency_ms": {
+            "median": 16.35764999082312,
+            "p95_nearest_rank": 16.81760000064969,
+            "p99_nearest_rank": 17.06779992673546,
+            "max": 17.152999993413687
+          },
+          "duration_seconds": 1.97245329990983
+        },
+        "read_16": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 145.17733589707981,
+          "latency_ms": {
+            "median": 6.760800024494529,
+            "p95_nearest_rank": 7.323300000280142,
+            "p99_nearest_rank": 8.793100016191602,
+            "max": 9.310900000855327
+          },
+          "duration_seconds": 0.8265753001905978
+        },
+        "read_240": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 37.72667720447006,
+          "latency_ms": {
+            "median": 26.471849938388914,
+            "p95_nearest_rank": 26.77219989709556,
+            "p99_nearest_rank": 26.992800063453615,
+            "max": 27.066900045610964
+          },
+          "duration_seconds": 3.180773099884391
+        },
+        "read_64": {
+          "transactions": 120,
+          "successful": 120,
+          "failed": 0,
+          "error_rate": 0.0,
+          "success_per_second": 90.6234143204378,
+          "latency_ms": {
+            "median": 10.928599978797138,
+            "p95_nearest_rank": 11.472400045022368,
+            "p99_nearest_rank": 11.636700015515089,
+            "max": 11.8337000021711
+          },
+          "duration_seconds": 1.3241611000848934
+        }
+      }
+    }
+  ],
+  "original_read_240_bracket_drift_fraction": 0.0033163586699576767,
+  "gains": [
+    {
+      "label": "candidate_115200",
+      "baudrate": 115200,
+      "read_240_median_speedup": 0.9920867977630362,
+      "identical_write_240_median_speedup": 1.1039751860980902,
+      "identical_write_240_p99_speedup": 4.788501870776158
+    },
+    {
+      "label": "candidate_460800",
+      "baudrate": 460800,
+      "read_240_median_speedup": 2.85066717186468,
+      "identical_write_240_median_speedup": 2.956816773521419,
+      "identical_write_240_p99_speedup": 12.765894799058582
+    },
+    {
+      "label": "candidate_1000000",
+      "baudrate": 1000000,
+      "read_240_median_speedup": 4.669094014243631,
+      "identical_write_240_median_speedup": 4.60132406052267,
+      "identical_write_240_p99_speedup": 18.51842211699716
+    }
+  ],
+  "transport_gain_established": true,
+  "selected_transport_baudrate": 1000000,
+  "final_qualified": false,
+  "limits": [
+    "Standard SYS/NV workload on fresh synthetic laboratory NV",
+    "Host USB/serial latency included; not a CPU or RF bitrate benchmark",
+    "No claim that all Zigbee application commands have the same speedup",
+    "One PC and one dongle; representative mesh/endurance remain untested"
+  ],
+  "radio_load_comparison": {
+    "comparison": "Candidate 115200 versus candidate 1000000, one HG06106C; not original firmware RF",
+    "trials": [
+      {
+        "baudrate": 115200,
+        "hex_sha256": "bd33bf77ff3c1e4a713ee4b35783f087a6dfc94b9945ef19c8b16fa501ef6d57",
+        "proof_sha256": "c9f3668874c32024cc05cdf86dbc7169f7e569efd15cd2393150488d17da8990",
+        "peer_model": "HG06106C",
+        "changed_NV_writes": 80,
+        "phases": {
+          "remote_repeated_attribute_reads": {
+            "successful_reads": 30,
+            "median_ms": 67.76279999999997,
+            "p95_ms": 70.10609999999997,
+            "max_ms": 70.16789999999992
+          },
+          "radio_and_NV_load_test": {
+            "successful_reads": 40,
+            "median_ms": 89.17005000000017,
+            "p95_ms": 219.13750000000073,
+            "max_ms": 349.83680000000004
+          }
+        }
+      },
+      {
+        "baudrate": 1000000,
+        "hex_sha256": "cb2b5e4f5cae02a5601c6c1c8d3cc9d7be7a009cfa2fb7398d323f39eb31dee5",
+        "proof_sha256": "9e1a66273d87a407d7e49ec12f1c37a14dc3372eea18f86427801d2698bd4485",
+        "peer_model": "HG06106C",
+        "changed_NV_writes": 80,
+        "phases": {
+          "remote_repeated_attribute_reads": {
+            "successful_reads": 30,
+            "median_ms": 16.149450000000115,
+            "p95_ms": 18.10480000000007,
+            "max_ms": 19.99409999999989
+          },
+          "radio_and_NV_load_test": {
+            "successful_reads": 40,
+            "median_ms": 22.226699999999937,
+            "p95_ms": 168.0219000000002,
+            "max_ms": 171.4389000000001
+          }
+        }
+      }
+    ],
+    "original_firmware_RF_benchmarked": false,
+    "Z2M_service_tested": false,
+    "median_speedup": {
+      "remote_repeated_attribute_reads": 4.195981906504524,
+      "radio_and_NV_load_test": 4.011843863461531
+    },
+    "limits": "Two sequential trials on one peer; host/USB and radio included; no mesh or endurance claim"
+  }
+}

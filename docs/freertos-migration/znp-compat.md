@@ -1,0 +1,61 @@
+# Phase F — compatibilité ZNP (Zigbee2MQTT `zstack`)
+
+Le firmware FreeRTOS expose l'interface MT/ZNP de Z-Stack attendue par zigbee-herdsman (adaptateur `zstack` de Zigbee2MQTT). Chaque réponse est produite à partir de l'état réel du coordinateur natif (`zigbee/nwk/zb_coord.c`) et de son stockage (`storage/nv_log.c`). Aucune réponse n'est fabriquée : une commande non prise en charge reçoit l'erreur MT RPC standard.
+
+Code : [`transport/znp/znp.c`](../../firmware/freertos/transport/znp/znp.c). Dispositions binaires des structures NV : [`znp_structs.h`](../../firmware/freertos/transport/znp/znp_structs.h), **générées** par [`tools/gen_znp_structs.cjs`](../../tools/gen_znp_structs.cjs) à partir des classes `Structs` de herdsman 11.2.1. Les offsets sont mesurés en sérialisant chaque structure avec une valeur marqueur.
+
+## Identification annoncée
+
+`SYS_VERSION` annonce le produit **1 (Z-Stack 3.x.0)**, version 2.7.1, révision **20261118**. Ce numéro de produit choisit le **dialecte MT** que parle herdsman (commandes BDB, tables NV étendues). Il ne signifie pas une parité fonctionnelle avec Z-Stack : les écarts sont listés plus bas.
+
+La révision ≥ 20210430 active la gestion de la LED côté herdsman ; `ledControl` répond par une erreur RPC, que herdsman intercepte. La révision ≥ 20201026 active `assocRemove`/`assocAdd` dans la récupération d'envoi de herdsman : `assocGetWithAddress` est servi, `assocRemove`/`assocAdd` renvoient une erreur RPC.
+
+## Commandes servies
+
+| Famille | Commandes | Comportement |
+|---|---|---|
+| SYS | `resetReq`, `ping`, `version`, `getExtAddr` | Redémarrage réel du MCU ; `SYS_RESET_IND` émis après la remise en route de la pile |
+| SYS NV | `osalNvItemInit/Read/ReadExt/Write/WriteExt/Delete/Length` | Petits items (`STARTUP_OPTION`, `PANID`, `CHANLIST`, `EXTENDED_PAN_ID`, `PRECFGKEY`, `ZNP_HAS_CONFIGURED`…) stockés tels quels dans `nv_log`. **Synthétisés depuis l'état réel** : `EXTADDR`, `NIB`, `NWK_ACTIVE/ALTERN_KEY_INFO`, `NWKKEY`, `TCLK_SEED`, table du gestionnaire de sécurité (item 76). Leur écriture est **appliquée** au coordinateur. Effacer `NIB` revient à quitter le réseau. |
+| SYS NV étendue | `nvCreate/Length/Read/Write` (sys 1) | Tables à capacité fixe : gestionnaire d'adresses (1, 200 entrées = emplacements des appareils), TCLK (4, 200), clés APS (6, 16), matériel de sécurité NWK (7, 2). Lecture synthétisée, écriture appliquée (import des appareils, clés dérivées de la graine, compteurs relevés de façon durable). |
+| SYS | `stackTune` (opération 0) | Puissance d'émission, appliquée immédiatement (redémarrage radio, bits *frame pending* réaffirmés) ; autres opérations : erreur RPC |
+| UTIL | `getDeviceInfo`, `assocGetWithAddress` | État réel, enfants directs |
+| APP_CNF | `bdbSetChannel`, `bdbStartCommissioning` (formation ; *steering* = ouverture 180 s), `bdbAddInstallCode` (code + CRC ou clé) | Formation depuis les items NV : premier canal du masque, PAN aléatoire si 0xFFFF, clé `PRECFGKEY` ou TRNG, graine TCLK tirée du TRNG |
+| ZDO | `startupFromApp`, `extNwkInfo`, `extFindGroup`, `extAddGroup`, `extRemoveGroup`, `extRouteDisc` | `extRouteDisc` émet une vraie *Route Request* |
+| ZDO requêtes | adresse NWK/IEEE, descripteurs nœud/simple/actifs, *match*, *server discovery*, *bind/unbind*, *mgmt LQI/Rtg/Bind/Leave/Permit join* | Coordinateur (0x0000) : réponse locale (LQI et routes réels) ; autres : trame ZDO envoyée, réponse remise en AREQ (format Z-Stack, y compris l'inversion *startIndex/numAssocDev*) |
+| AF | `register`, `dataRequest`, `dataRequestExt` (16 bits, 64 bits, broadcast, groupe) | Boucle locale vers 0x0000 ; option `EN_SECURITY` = chiffrement APS avec la clé de lien du destinataire, refus explicite sans clé unique |
+| AREQ émises | `SYS resetInd`, `ZDO stateChangeInd`, `tcDeviceInd`, `endDeviceAnnceInd`, `leaveInd`, `permitJoinInd`, réponses ZDO, `AF dataConfirm`, `AF incomingMsg`, `APP_CNF bdbComissioningNotification` | |
+
+`dataConfirm` reflète la livraison MAC au premier saut. herdsman n'active jamais l'ACK APS (`options = 0`, sauf `EN_SECURITY`) : c'est aussi ce que fait Z-Stack dans ce cas.
+
+## Non pris en charge (erreur RPC ou statut d'échec explicite)
+
+| Fonction | Conséquence |
+|---|---|
+| `AF interPanCtl` (Touchlink), `dataRetrieve`, `incomingMsgExt` (charges > 233 octets), fragmentation APS | Touchlink impossible ; trames ZCL très longues refusées (statut 0x02) ou non remontées |
+| `mgmtNwkUpdateReq` (changement de canal, scan) | Changement de canal depuis Z2M impossible |
+| `extUpdateNwkKey` / `extSwitchNwkKey` | Pas de rotation de la clé réseau |
+| `ledControl`, `assocRemove`, `assocAdd` | Pas de LED pilotée ; herdsman l'intercepte |
+| SAPI, Green Power (proxy) | Les trames Green Power ne sont pas traitées par le coordinateur |
+| BDB *finding & binding*, Touchlink | Statut d'échec |
+
+## Validation
+
+| Niveau | Résultat |
+|---|---|
+| Simulateur hôte (`firmware/freertos/sim/znp_sim.c`, la pile portable du firmware en TCP) + **vrai** `ZStackAdapter` herdsman 11.2.1 ([`tools/znp_sim_acceptance.cjs`](../../tools/znp_sim_acceptance.cjs)) | **17 étapes réussies** : premier démarrage `reset` (formation), *permit join*, version, IEEE, paramètres réseau, descripteurs (extrémités 1 et 242), sauvegarde avec graine TCLK, reset, `resumed`, boucle AF, `restoreBackup` avec deux appareils (clé dérivée de la graine, clé explicite) **rendus à l'identique**, `resumed` |
+| Dongle (COM8, 115200 bauds) avec le même script `--serial` | **17 étapes réussies**, redémarrages MCU réels |
+| Dongle + `Controller` herdsman complet ([`tools/znp_pair_test.cjs`](../../tools/znp_pair_test.cjs)) | Ampoule TS0505A appairée, **interview complète**, 4 bascules acquittées, lecture `onOff` |
+| Répétition de migration de la **sauvegarde Z2M de production** ([`tools/znp_migration_rehearsal.cjs`](../../tools/znp_migration_rehearsal.cjs)) | `restored` puis `resumed` ; IEEE, PAN, PAN étendu, canal, clé et séquence, graine TCLK identiques ; compteur NWK ≥ sauvegarde + 2 500 ; **130 appareils transmis identiques, 129 clés de lien et compteurs** ; voir [migration.md](migration.md) |
+
+## Conditions avant la migration du réseau réel
+
+| Condition | État |
+|---|---|
+| IEEE, PAN ID, PAN étendu, canal, clé réseau et séquence relus à l'identique | **Vérifié** sur la sauvegarde de production (répétition en simulateur) |
+| Compteur NWK sortant strictement supérieur au dernier utilisé | **Vérifié** : sauvegarde + 2 500, réservé durablement avant le redémarrage |
+| Clés de lien et compteurs APS repris | **Vérifié** : 129 sur 129 (graine + décalage), compteurs non décroissants |
+| Appareils derrière des routeurs joignables | Routage maillé implémenté et testé en simulation (`test_mesh`) ; voisinage, *Link Status* et *many-to-one* observés sur le matériel avec un routeur réel ; **multi-sauts réel non éprouvé** (pas de second appareil) |
+| Essai complet en laboratoire puis retour arrière vers Z-Stack | Fait sur le dongle unique : 7 séances avec restauration octet pour octet (voir [hardware-session-20261118.md](hardware-session-20261118.md)) |
+| PA 20 dBm (`transmit_power: 20` en production) | **Validé sur le matériel** (séance 10, après correction du lien d'overrides TX20) |
+| Image 1 000 000 bauds avec herdsman | **Validée sur le matériel** (séance 10) |
+| Accord explicite du propriétaire du réseau | **Requis** : `migrate` refuse sans `--confirm-production-migration` |

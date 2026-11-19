@@ -1,0 +1,23 @@
+{
+  "board": "SONOFF ZBDongle-P CC2652P (not P7, not E)",
+  "sdk": "8.30.01.01",
+  "ccs": "20.1.0",
+  "project": "znp_CC1352P_2_LAUNCHXL_tirtos7_ticlang",
+  "configuration": "default",
+  "upstream_variant": "launchpad",
+  "LAUNCHPAD_CONFIG": 1,
+  "uart_baud": 115200,
+  "uart_tx_dio": 13,
+  "uart_rx_dio": 12,
+  "flow_control": false,
+  "bsl_dio": 15,
+  "bsl_active_low": true,
+  "nv_start": "0x50000",
+  "nv_size": "0x6000",
+  "rf_high_pa_dio": 29,
+  "rf_24ghz_profile_dio": 28,
+  "xosc_caparray_delta": "0xc1",
+  "status": "Full coordinator built locally with standalone TI tools; Z2M startup and radio hardware validation pending",
+  "compiler": "TI Arm Clang 4.0.2.LTS",
+  "sysconfig": "1.23.0+4000"
+}

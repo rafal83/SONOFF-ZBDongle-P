@@ -1,0 +1,2 @@
+# Python unit tests and configuration parsing; never linked into the firmware.
+PyYAML==6.0.3

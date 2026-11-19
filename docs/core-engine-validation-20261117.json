@@ -1,0 +1,74 @@
+{
+  "passed": true,
+  "production_integration": false,
+  "hardware_tested": false,
+  "final_objectives_completed": false,
+  "tests": {
+    "index_host": "Patricia: 100000 mutations, exhaustive live lookups, full/reuse/64 bit boundaries; max observed branches=12; branch=6 bytes",
+    "indirect_host": "Indirect: 24 total / 3 per child, stale token rejection, 10000 reuse cycles, 30000 reference-model operations; 1264 bytes",
+    "broadcast_host": "Broadcast: source/sequence duplicates, unique ACKs through peer 127, retries, expiry/cancel, tick wrap and 1000 full/reuse cycles; 2032 bytes",
+    "index_x86": "Patricia: 100000 mutations, exhaustive live lookups, full/reuse/64 bit boundaries; max observed branches=12; branch=6 bytes",
+    "indirect_x86": "Indirect: 24 total / 3 per child, stale token rejection, 10000 reuse cycles, 30000 reference-model operations; 1056 bytes",
+    "broadcast_x86": "Broadcast: source/sequence duplicates, unique ACKs through peer 127, retries, expiry/cancel, tick wrap and 1000 full/reuse cycles; 2016 bytes",
+    "security": {
+      "passed": true,
+      "crypto": "cryptography AESCCM / OpenSSL, cross-check PyCryptodome",
+      "backend_versions": {
+        "cryptography": "50.0.0",
+        "pycryptodome": "3.23.0"
+      },
+      "RFC3610_vector_1_passed": true,
+      "encrypted_frames": 1105,
+      "optional_header_frames": 6,
+      "tampered_frames_rejected": 1245,
+      "crypto_calls": 3173,
+      "invalid_tags": 945,
+      "peer_capacity": 200,
+      "durable_counter_model_tested": true,
+      "real_Flash_tested": false,
+      "security_context_bytes": 5744,
+      "full_SSP_APS_Trust_Center_replacement": false,
+      "production_integration": false
+    },
+    "arm": {
+      "passed": true,
+      "elf_sha256": "c26e388e82016cd2c4ff737942c43c7dcbd105b98edfd9d616773a0c78df8826",
+      "compiler": "TI Arm Clang 4.0.2.LTS",
+      "ARM_calls": 1701,
+      "ARM_security_frames": 30,
+      "page_boundary_malformed_inputs": 1500,
+      "host_AES_CCM": true,
+      "real_crypto_peripheral_tested": false,
+      "real_Flash_tested": false,
+      "observed_stack_bytes": 408,
+      "context_bytes": {
+        "indirect": 1056,
+        "broadcast": 2016,
+        "security": 5720
+      },
+      "total_context_bytes": 8792,
+      "production_integration": false,
+      "hardware_tested": false
+    }
+  },
+  "input_sha256": {
+    "firmware/src/core_index.c": "1a58d69ae86341788b722978b0819fcabf732427b2b1f8bd755bfe7ce550daaa",
+    "firmware/src/core_indirect.c": "eede1b0e69d86b7037cb9fa21a014ea4a2e0afe34dba3205207cd33e4baa53c2",
+    "firmware/src/core_broadcast.c": "b82081e3ce2af8c7cf061b3646bdfbf43f3be2b02643580f24425bb33dd428d0",
+    "firmware/src/core_security.c": "1b573edd310d68bbfce2b6b223cb54813f7883d390bdcfac253b72ea9d27d12b",
+    "firmware/src/core_index.h": "6e1af9da0a913f3a6dbd84e3dd337e0efad0c93e9d7a0284ef1ff59d60a42621",
+    "firmware/src/core_indirect.h": "cdc143990718ef47670b5a0e12a6450528d693fbd1b589505d2e74cb5c61b1f6",
+    "firmware/src/core_broadcast.h": "d80a533f9abbb0317fff913d4308256caa7ef5f371e30e9cdb52ed9ca39e86d9",
+    "firmware/src/core_security.h": "23b5806247b38efec10e56a356699d36d1c804b45f8d288788993890bc72b40b",
+    "tests/test_core_index.c": "02ee23786eaaff9663b046c081289c2778132feb51b14954a05284d395c9f5df",
+    "tests/test_core_indirect.c": "98c1acb38a4e53f66986e24c7d5372bfb0fb5ae591467d1eb6a643e4d3731e0b",
+    "tests/test_core_broadcast.c": "51f3f2c08bbae7177fdba13f6e5f83f75813237c857de2d7fa05f0f84f79f8e8",
+    "tests/core_security_ffi.c": "3c2b23281d4f42af77aacf9caec2a6bc69d367aa07a3c96bbe8469a5167e39ae",
+    "tests/core_arm_runtime.c": "fbb6011bf3fcb283f5b5e27413c343605c3bab67ff253c88a0de073123028450",
+    "tests/core_arm_test.cmd": "260e7a0c50b67dc17471c798fab69ebb4280a856fff117ae6d99f3294a4804f0",
+    "tools/test_core_engines.py": "3be254ce865c761646731551f10633e783f307696408fc7a9ac56e3f7816c6ec",
+    "tools/test_core_security.py": "6d96f9dbb72afe9e75db5e5e2a5c35f58ee566d4c98a757fa5a08f2a22ff94f9",
+    "tools/test_arm_core_engines.py": "a36db6bdcc52213e6cad4ade3c9bc8b0f14ad92e2e348e70c86d7206b4e7da79",
+    "tools/core-tests-requirements.txt": "665d8998705ef03fa9933313e4b77f9cdc87705490abf7569f3837c3bd6617fb"
+  }
+}

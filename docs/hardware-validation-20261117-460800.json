@@ -1,0 +1,29 @@
+{
+  "experimental_hex_sha256": "f8261b379b7aaaae3fb3d1d1f39ff8817b9e4bd54221d6347e18a9077f19de7c",
+  "experimental_boot": true,
+  "scratch_NV_write_read": 20,
+  "scratch_NV_survived_soft_reset": true,
+  "ping_300": {
+    "min_ms": 2.7097000274807215,
+    "max_ms": 4.539399989880621,
+    "mean_ms": 3.034782665393626
+  },
+  "UART_noise_truncation_bad_FCS": true,
+  "auto_baud_enabled": false,
+  "serial_and_scratch_NV_tests_passed": true,
+  "restore_verified": true,
+  "date": "2026-11-17",
+  "target": "SONOFF ZBDongle-P CC2652P",
+  "baudrate": 460800,
+  "Z2M_used": false,
+  "radio_exchange_tested": false,
+  "commissioning_tested": false,
+  "production_network_loaded_into_experimental": false,
+  "original_revision_after_restore": 20240710,
+  "original_responded_after_restore": true,
+  "full_flash_restore_readback_identical": true,
+  "flash_backup_bytes": 360448,
+  "backup_copies_identical_and_ROM_CRC_checked": true,
+  "final_qualified": false,
+  "auto_baud_deferred_by_user": true
+}
