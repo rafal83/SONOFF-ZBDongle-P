@@ -24,6 +24,12 @@ bool zb_ccm_backend_hw(void *context, bool encrypt, const uint8_t key[16], const
                        uint8_t *output, uint8_t mic[4]);
 typedef bool (*zb_aes_block_fn)(const uint8_t key[16], const uint8_t in[16], uint8_t out[16]);
 void zb_ccm_backend_set_block(zb_aes_block_fn fn);
+/* Native CCM* of the accelerator (hal_aes_ccm): preferred over the block
+ * hook when installed, for 1..128 bytes of AAD and of data. Decrypt returns
+ * the MIC computed by the engine in `tag`; the backend compares it. */
+typedef bool (*zb_ccm_native_fn)(const uint8_t key[16], bool encrypt, const uint8_t nonce[13], const uint8_t *aad,
+                                 unsigned aad_len, const uint8_t *in, unsigned len, uint8_t *out, uint8_t tag[4]);
+void zb_ccm_backend_set_native(zb_ccm_native_fn fn);
 typedef struct {
     uint32_t hw_ops;         /* operations completed by the accelerator */
     uint32_t hw_faults;      /* operations with a failed or wrong block */
@@ -34,6 +40,8 @@ typedef struct {
     uint32_t hw_audits;      /* recomputed in software (1 in 32..95 + every rejection) */
     uint32_t hw_audit_failures;
     bool hw_disabled;        /* accelerator abandoned until reboot */
+    uint32_t native_ops;     /* of hw_ops: done by the native CCM* of the engine */
+    uint32_t tag_suspect;    /* native MIC all zero, or repeated for another nonce: redone */
 } zb_ccm_hw_stats_t;
 void zb_ccm_backend_hw_stats(zb_ccm_hw_stats_t *out);
 /* Backend used by the coordinator (software unless the platform selected
