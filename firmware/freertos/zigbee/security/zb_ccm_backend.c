@@ -46,12 +46,25 @@ bool zb_ccm_backend_sw(void *context, bool encrypt, const uint8_t key[16], const
  *    disabled too (software only until reboot), visible in the statistics;
  *  - one operation at a time: a concurrent caller takes the software path
  *    instead of sharing the state.
+ *
+ * Native CCM* (zb_ccm_backend_set_native, the engine computes the whole
+ * CCM* in one pass): the per-operation first-block check is replaced by the
+ * driver's key check (the engine encrypts a known block, compared with the
+ * software value of that key: a stale or foreign key is refused before the
+ * operation). The other rules are unchanged: any error -> software redo from
+ * the intact input; every rejection re-verified in software; random audits;
+ * HW_FAULT_LIMIT. In addition, a MIC that is all zero, or equal to the
+ * previous operation's MIC for another nonce (tag registers not updated), is
+ * not trusted: the operation is redone in software.
  */
 #define HW_MAX_INPUT 128u
 #define HW_FAULT_LIMIT 8u
 #define HW_AUDIT_MIN 32u     /* audit interval: HW_AUDIT_MIN + (0..63) operations */
 
 static zb_aes_block_fn hw_block;
+static zb_ccm_native_fn hw_native;
+static uint8_t last_tag[4], last_nonce[13];
+static bool last_tag_valid;
 static zb_ccm_hw_stats_t hw_stats;
 static uint32_t hw_consecutive_faults;
 static volatile uint32_t hw_busy;
@@ -67,6 +80,11 @@ void zb_ccm_backend_set_block(zb_aes_block_fn fn) {
     hw_consecutive_faults = 0;
     hw_audit_count = 0;
     hw_audit_next = HW_AUDIT_MIN;
+}
+
+void zb_ccm_backend_set_native(zb_ccm_native_fn fn) {
+    hw_native = fn;
+    last_tag_valid = false;
 }
 
 void zb_ccm_backend_hw_stats(zb_ccm_hw_stats_t *out) { *out = hw_stats; }
@@ -109,7 +127,7 @@ static bool overlaps(const uint8_t *a, const uint8_t *b, size_t n) {
 bool zb_ccm_backend_hw(void *context, bool encrypt, const uint8_t key[16], const uint8_t nonce[13],
                        const uint8_t *aad, size_t aad_len, const uint8_t *input, size_t input_len,
                        uint8_t *output, uint8_t mic[4]) {
-    if (!hw_block || hw_stats.hw_disabled || input_len > HW_MAX_INPUT) {
+    if ((!hw_block && !hw_native) || hw_stats.hw_disabled || input_len > HW_MAX_INPUT) {
         hw_stats.sw_direct++;
         return zb_ccm_backend_sw(context, encrypt, key, nonce, aad, aad_len, input, input_len, output, mic);
     }
@@ -132,9 +150,42 @@ bool zb_ccm_backend_hw(void *context, bool encrypt, const uint8_t key[16], const
         src = copy;
     }
     hw_op_t op = {key, false, false, false};
-    const ccm_block_t bc = {hw_encrypt, &op};
-    bool ok = encrypt ? ccm_star_seal_with(&bc, nonce, aad, aad_len, src, input_len, output, mic, 4, true)
-                      : ccm_star_open_with(&bc, nonce, aad, aad_len, src, input_len, output, mic, 4, true);
+    bool ok = false;
+    if (hw_native && aad_len && aad_len <= HW_MAX_INPUT && input_len) {
+        uint8_t tag[4];
+        bool done = hw_native(key, encrypt, nonce, aad, (unsigned)aad_len, src, (unsigned)input_len, output, tag);
+        if (done) {
+            uint8_t any = 0, same_tag = last_tag_valid, same_nonce = 1;
+            for (unsigned i = 0; i < 4; i++) { any |= tag[i]; same_tag &= (uint8_t)(tag[i] == last_tag[i]); }
+            for (unsigned i = 0; i < 13; i++) same_nonce &= (uint8_t)(nonce[i] == last_nonce[i]);
+            if (!any || (same_tag && !same_nonce)) { hw_stats.tag_suspect++; done = false; }
+        }
+        if (!done) {
+            op.failed = true;
+            if (output) wipe(output, input_len);
+        } else {
+            for (unsigned i = 0; i < 4; i++) last_tag[i] = tag[i];
+            for (unsigned i = 0; i < 13; i++) last_nonce[i] = nonce[i];
+            last_tag_valid = true;
+            hw_stats.native_ops++;
+            if (encrypt) {
+                for (unsigned i = 0; i < 4; i++) mic[i] = tag[i];
+                ok = true;
+            } else {
+                uint8_t diff = 0;
+                for (unsigned i = 0; i < 4; i++) diff |= (uint8_t)(tag[i] ^ mic[i]);
+                ok = diff == 0;
+                if (!ok && output) wipe(output, input_len);   /* as ccm_star_open_with */
+            }
+        }
+        wipe(tag, sizeof tag);
+    } else if (hw_block) {
+        const ccm_block_t bc = {hw_encrypt, &op};
+        ok = encrypt ? ccm_star_seal_with(&bc, nonce, aad, aad_len, src, input_len, output, mic, 4, true)
+                     : ccm_star_open_with(&bc, nonce, aad, aad_len, src, input_len, output, mic, 4, true);
+    } else {
+        op.failed = true;   /* native only, operation outside its limits */
+    }
     if (op.failed) {
         hw_stats.hw_faults++;
         if (op.mismatch) {

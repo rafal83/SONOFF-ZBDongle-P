@@ -103,13 +103,15 @@ extern uint32_t app_counter_floor[2];   /* floors kept by the last DIAG store fo
 typedef struct {
     uint32_t aes_sw_block_cycles;     /* boot benchmark, mean of 16 */
     uint32_t ccm_sw_frame_cycles;     /* CCM* seal: 22-byte AAD + 40-byte payload, mean of 16 */
-    uint32_t ccm_hw_frame_cycles;     /* same with the AES accelerator (0: not built/enabled) */
-    uint32_t hw_aes_state;            /* 0 not built, 1 enabled, 2 self-test failed (software kept) */
+    uint32_t ccm_hw_frame_cycles;     /* same with the AES accelerator as used (0: not built/enabled) */
+    uint32_t hw_aes_state;            /* 0 not built, 1 block mode, 2 self-test failed (software kept),
+                                         3 native CCM* (block mode as fallback) */
     uint32_t znp_last, znp_max;       /* cycles of one ZNP request (SREQ -> SRSP queued, incl. AF send) */
     uint32_t rx_last, rx_max;         /* cycles of zb_coord_rx (MAC + NWK/APS security + upper) */
     uint32_t tick_max;                /* cycles of zb_coord_tick */
     uint32_t rx_latency_last_us, rx_latency_max_us, rx_measured;   /* end of frame -> processing */
     uint32_t radio_stack_free_words;  /* lowest free stack of the radio task (no heap: static allocation) */
+    uint32_t ccm_hw_block_frame_cycles;   /* the same frame in block mode (ECB per block) */
 } app_perf_t;
 extern app_perf_t app_perf;
 

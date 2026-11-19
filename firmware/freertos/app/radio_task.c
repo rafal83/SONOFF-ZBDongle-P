@@ -430,9 +430,17 @@ static void crypto_setup(void) {
     /* Accelerator only after its self-test, otherwise software is kept. */
     if (hal_aes_selftest()) {
         zb_ccm_backend_set_block(hal_aes_block);
-        app_perf.ccm_hw_frame_cycles = bench_ccm(zb_ccm_backend_hw);
-        zb_ccm_backend_active = zb_ccm_backend_hw;
+        app_perf.ccm_hw_block_frame_cycles = bench_ccm(zb_ccm_backend_hw);
+        app_perf.ccm_hw_frame_cycles = app_perf.ccm_hw_block_frame_cycles;
         app_perf.hw_aes_state = 1;
+        /* Native CCM* only after its own self-test against the software
+         * CCM*; the block mode stays installed for what it does not cover. */
+        if (hal_aes_ccm_selftest()) {
+            zb_ccm_backend_set_native(hal_aes_ccm);
+            app_perf.ccm_hw_frame_cycles = bench_ccm(zb_ccm_backend_hw);
+            app_perf.hw_aes_state = 3;
+        }
+        zb_ccm_backend_active = zb_ccm_backend_hw;
     } else {
         app_perf.hw_aes_state = 2;
     }

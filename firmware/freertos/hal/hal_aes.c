@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: MIT
- * CC2652P AES-128 accelerator, single-block ECB encryption for CCM*.
+ * CC2652P AES-128 accelerator: single-block ECB encryption for CCM*, and
+ * native AES-CCM* (one pass: AAD then data by DMA, tag read from the engine),
+ * after the sequence of TI's AESCCMCC26XX driver (polling mode).
  *
  * Register-level, after the sequence of TI's polled AESECBCC26XX driver
  * (key store area 6, DMA in/out, RESULT_AVAIL), but EVERY wait is bounded:
@@ -25,6 +27,7 @@
  */
 #include "hal_aes.h"
 #include "aes128.h"
+#include "ccm_star.h"
 
 #ifdef HAL_AES_HOST_MODEL
 #include "inc/hw_crypto.h"
@@ -56,6 +59,11 @@ static uint8_t cached_key[16];
 static bool key_loaded;
 /* Word aligned DMA buffers in SRAM; the key buffer is wiped after use. */
 static uint32_t dma_in[4], dma_out[4], dma_key[4];
+/* Native CCM*: AAD, data in, data out (word aligned, wiped after use). */
+static uint32_t dma_aad[HAL_AES_CCM_MAX / 4], dma_data[HAL_AES_CCM_MAX / 4], dma_res[HAL_AES_CCM_MAX / 4];
+/* Key check: software E(key, 0^128) of the loaded key, computed once per load. */
+static uint8_t kat_ref[16];
+static bool kat_ready;
 static hal_aes_stats_t stats;
 static volatile uint32_t busy;
 
@@ -103,7 +111,9 @@ static void recover(void) {
     WR(CRYPTO_O_IRQCLR, 0xFFFFFFFFu);
     WR(CRYPTO_O_ALGSEL, 0);
     key_loaded = false;
+    kat_ready = false;
     wipe(cached_key, sizeof cached_key);
+    wipe(kat_ref, sizeof kat_ref);
     wipe(dma_key, sizeof dma_key);
 }
 
@@ -152,16 +162,22 @@ static bool key_select(void) {
     return true;
 }
 
-static bool block_locked(const uint8_t key[16], const uint8_t in[16], uint8_t out[16]) {
+/* Make `key` the key of key store area 6 (written only when it changed). */
+static bool load_key(const uint8_t key[16]) {
     bool same = key_loaded;
     for (unsigned i = 0; i < 16 && same; i++) same = cached_key[i] == key[i];
-    if (!same) {
-        key_loaded = false;
-        if (!key_write(key)) return false;
-        for (unsigned i = 0; i < 16; i++) cached_key[i] = key[i];
-        key_loaded = true;
-        stats.key_loads++;
-    }
+    if (same) return true;
+    key_loaded = false;
+    kat_ready = false;
+    if (!key_write(key)) return false;
+    for (unsigned i = 0; i < 16; i++) cached_key[i] = key[i];
+    key_loaded = true;
+    stats.key_loads++;
+    return true;
+}
+
+/* One ECB block with the key of area 6. */
+static bool ecb_locked(const uint8_t in[16], uint8_t out[16]) {
     WR(CRYPTO_O_IRQCLR, CRYPTO_IRQCLR_RESULT_AVAIL | CRYPTO_IRQCLR_DMA_IN_DONE | CRYPTO_IRQSTAT_DMA_BUS_ERR_M);
     WR(CRYPTO_O_IRQEN, RD(CRYPTO_O_IRQEN) & ~CRYPTO_IRQEN_DMA_IN_DONE_M);
     WR(CRYPTO_O_ALGSEL, CRYPTO_ALGSEL_AES_M);
@@ -187,6 +203,105 @@ static bool block_locked(const uint8_t key[16], const uint8_t in[16], uint8_t ou
     return true;
 }
 
+static bool block_locked(const uint8_t key[16], const uint8_t in[16], uint8_t out[16]) {
+    return load_key(key) && ecb_locked(in, out);
+}
+
+/* The engine must hold `key`: E(key, 0^128) by the engine == by software.
+ * Catches a stale or foreign key (e.g. the well-known link key left in the
+ * engine) before it could authenticate a forged frame. */
+static const uint8_t zero_block[16];
+static bool key_check(const uint8_t key[16]) {
+    if (!kat_ready) {
+        aes128_ctx_t a;
+        aes128_init(&a, key);
+        aes128_encrypt(&a, zero_block, kat_ref);
+        aes128_clear(&a);
+        kat_ready = true;
+    }
+    uint8_t chk[16];
+    if (!ecb_locked(zero_block, chk)) return false;
+    uint8_t diff = 0;
+    for (unsigned i = 0; i < 16; i++) diff |= (uint8_t)(chk[i] ^ kat_ref[i]);
+    wipe(chk, sizeof chk);
+    if (diff) { stats.key_check_failures++; return false; }
+    return true;
+}
+
+static void put_words(uint32_t first_reg, const uint8_t b[16]) {
+    for (unsigned w = 0; w < 4; w++)
+        WR(first_reg + 4u * w, (uint32_t)b[4 * w] | (uint32_t)b[4 * w + 1] << 8 | (uint32_t)b[4 * w + 2] << 16 |
+                               (uint32_t)b[4 * w + 3] << 24);
+}
+
+static bool ccm_locked(const uint8_t key[16], bool encrypt, const uint8_t nonce[13], const uint8_t *aad,
+                       unsigned aad_len, const uint8_t *in, unsigned len, uint8_t *out, uint8_t tag[4]) {
+    if (!load_key(key) || !key_check(key)) return false;
+    WR(CRYPTO_O_IRQCLR, CRYPTO_IRQCLR_RESULT_AVAIL | CRYPTO_IRQCLR_DMA_IN_DONE | CRYPTO_IRQSTAT_DMA_BUS_ERR_M);
+    WR(CRYPTO_O_IRQEN, CRYPTO_IRQEN_DMA_IN_DONE_M | CRYPTO_IRQEN_RESULT_AVAIL_M);
+    WR(CRYPTO_O_ALGSEL, CRYPTO_ALGSEL_AES_M);
+    if (!key_select()) return false;
+    /* AESWriteCCMInitializationVector: flags L - 1 = 1, nonce, counter 0. */
+    uint8_t iv[16] = {0};
+    iv[0] = 1u;
+    for (unsigned i = 0; i < 13; i++) iv[1 + i] = nonce[i];
+    put_words(CRYPTO_O_AESIV0, iv);
+    /* AESConfigureCCMCtrl(13, 4, encrypt): L field 1 (L = 2), M field 1 (M = 4). */
+    WR(CRYPTO_O_AESCTL, (1u << CRYPTO_AESCTL_CCM_L_S) | (1u << CRYPTO_AESCTL_CCM_M_S) | CRYPTO_AESCTL_CCM |
+                            CRYPTO_AESCTL_CTR | CRYPTO_AESCTL_SAVE_CONTEXT | CRYPTO_AESCTL_CTR_WIDTH_128_BIT |
+                            (encrypt ? CRYPTO_AESCTL_DIR : 0u));
+    WR(CRYPTO_O_AESDATALEN0, len);
+    WR(CRYPTO_O_AESDATALEN1, 0);
+    WR(CRYPTO_O_AESAUTHLEN, aad_len);
+    uint8_t *b = (uint8_t *)dma_aad;
+    for (unsigned i = 0; i < aad_len; i++) b[i] = aad[i];
+    uint32_t got = 0;
+    if (!start_dma(dma_aad, aad_len, 0, 0)) { stats.timeouts++; return false; }
+    if (!wait_flags(CRYPTO_IRQSTAT_DMA_IN_DONE_M, &got)) { stats.timeouts++; return false; }
+    if (got & ERR_FLAGS) { stats.dma_errors++; return false; }
+    b = (uint8_t *)dma_data;
+    for (unsigned i = 0; i < len; i++) b[i] = in[i];
+    if (!start_dma(dma_data, len, dma_res, len)) { stats.timeouts++; return false; }
+    if (!wait_flags(CRYPTO_IRQSTAT_RESULT_AVAIL_M, &got)) { stats.timeouts++; return false; }
+    if (got & ERR_FLAGS) { stats.dma_errors++; return false; }
+    if (!wait_reg(CRYPTO_O_DMASTAT, CRYPTO_DMASTAT_CH1_ACT, 0)) { stats.timeouts++; return false; }
+    /* AESReadTag: the tag is valid once the context is saved. */
+    if (!wait_reg(CRYPTO_O_AESCTL, CRYPTO_AESCTL_SAVED_CONTEXT_RDY_M, CRYPTO_AESCTL_SAVED_CONTEXT_RDY_M)) {
+        stats.timeouts++;
+        return false;
+    }
+    uint32_t t[4];
+    for (unsigned w = 0; w < 4; w++) t[w] = RD(CRYPTO_O_AESTAGOUT0 + 4u * w);
+    WR(CRYPTO_O_ALGSEL, 0);
+    for (unsigned i = 0; i < 4; i++) tag[i] = (uint8_t)(t[0] >> (8 * i));
+    const uint8_t *r = (const uint8_t *)dma_res;
+    for (unsigned i = 0; i < len; i++) out[i] = r[i];
+    wipe(t, sizeof t);
+    stats.ccm_ops++;
+    return true;
+}
+
+static void wipe_ccm_buffers(void) {
+    wipe(dma_aad, sizeof dma_aad);
+    wipe(dma_data, sizeof dma_data);
+    wipe(dma_res, sizeof dma_res);
+}
+
+bool hal_aes_ccm(const uint8_t key[16], bool encrypt, const uint8_t nonce[13], const uint8_t *aad, unsigned aad_len,
+                 const uint8_t *in, unsigned len, uint8_t *out, uint8_t tag[4]) {
+    if (!aad_len || aad_len > HAL_AES_CCM_MAX || !len || len > HAL_AES_CCM_MAX) return false;
+    if (!try_lock()) { stats.busy++; return false; }
+    bool ok = ccm_locked(key, encrypt, nonce, aad, aad_len, in, len, out, tag);
+    if (!ok) {
+        recover();
+        wipe(dma_in, sizeof dma_in);
+        wipe(dma_out, sizeof dma_out);
+    }
+    wipe_ccm_buffers();
+    unlock();
+    return ok;
+}
+
 bool hal_aes_block(const uint8_t key[16], const uint8_t in[16], uint8_t out[16]) {
     if (!try_lock()) { stats.busy++; return false; }
     bool ok = block_locked(key, in, out);
@@ -202,6 +317,7 @@ bool hal_aes_block(const uint8_t key[16], const uint8_t in[16], uint8_t out[16])
 void hal_aes_invalidate(void) {
     if (!try_lock()) return;   /* the running operation reloads the key */
     key_loaded = false;
+    kat_ready = false;
     wipe(cached_key, sizeof cached_key);
     WR(CRYPTO_O_KEYWRITTENAREA, 1u << KEY_AREA);
     unlock();
@@ -234,6 +350,49 @@ bool hal_aes_selftest(void) {
     }
     wipe(k2, sizeof k2);
     return true;
+}
+
+/* Native CCM* against the software CCM*: seal and open, lengths around the
+ * block boundaries, two alternating keys (reload + key check), modified
+ * ciphertext. */
+bool hal_aes_ccm_selftest(void) {
+    static const uint8_t lens[][2] = {{1, 1}, {13, 15}, {22, 16}, {22, 17}, {30, 40}, {45, 82}, {16, 128}, {128, 3}};
+    static uint8_t aad[HAL_AES_CCM_MAX], pt[HAL_AES_CCM_MAX], ref[HAL_AES_CCM_MAX], got[HAL_AES_CCM_MAX];
+    uint8_t key[16], nonce[13], ref_mic[4], tag[4];
+    uint32_t x = CYCLES() | 1u;
+    bool ok = true;
+    for (unsigned k = 0; k < sizeof lens / sizeof lens[0] && ok; k++) {
+        for (unsigned i = 0; i < HAL_AES_CCM_MAX; i++) {
+            x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+            aad[i] = (uint8_t)x;
+            pt[i] = (uint8_t)(x >> 8);
+            if (i < 16) key[i] = (uint8_t)((k & 1u) ? (x >> 16) : i);   /* two keys alternate */
+            if (i < 13) nonce[i] = (uint8_t)(x >> 24);
+        }
+        unsigned al = lens[k][0], dl = lens[k][1];
+        aes128_ctx_t a;
+        aes128_init(&a, key);
+        ok = ccm_star_seal(&a, nonce, aad, al, pt, dl, ref, ref_mic, 4, true);
+        aes128_clear(&a);
+        /* seal */
+        ok = ok && hal_aes_ccm(key, true, nonce, aad, al, pt, dl, got, tag);
+        for (unsigned i = 0; ok && i < dl; i++) ok = got[i] == ref[i];
+        for (unsigned i = 0; ok && i < 4; i++) ok = tag[i] == ref_mic[i];
+        /* open: plaintext back, and the engine's MIC equals the frame's */
+        ok = ok && hal_aes_ccm(key, false, nonce, aad, al, ref, dl, got, tag);
+        for (unsigned i = 0; ok && i < dl; i++) ok = got[i] == pt[i];
+        for (unsigned i = 0; ok && i < 4; i++) ok = tag[i] == ref_mic[i];
+        /* a modified ciphertext gives another MIC */
+        ref[0] ^= 0x01u;
+        ok = ok && hal_aes_ccm(key, false, nonce, aad, al, ref, dl, got, tag);
+        uint8_t same = 1;
+        for (unsigned i = 0; i < 4; i++) same &= (uint8_t)(tag[i] == ref_mic[i]);
+        ok = ok && !same;
+    }
+    wipe(key, sizeof key);
+    wipe(got, sizeof got);
+    wipe(pt, sizeof pt);
+    return ok;
 }
 
 void hal_aes_get_stats(hal_aes_stats_t *out) { *out = stats; }

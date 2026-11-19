@@ -27,7 +27,9 @@ PERF_NAMES = ["aes_sw_block_cycles", "ccm_sw_frame_cycles", "ccm_hw_frame_cycles
               "timer_stack_free_words_unused",
               "ccm_hw_ops", "ccm_hw_faults", "ccm_hw_mismatches", "ccm_sw_redo", "ccm_busy", "ccm_hw_audits",
               "ccm_hw_audit_failures", "ccm_hw_disabled",
-              "aes_timeouts", "aes_dma_errors", "aes_key_errors", "aes_resets", "aes_reset_timeouts"]
+              "aes_timeouts", "aes_dma_errors", "aes_key_errors", "aes_resets", "aes_reset_timeouts",
+              "ccm_hw_block_frame_cycles", "ccm_native_ops", "ccm_tag_suspect", "aes_ccm_ops",
+              "aes_key_check_failures"]
 STORE_STATUS = {0: "mounted", 1: "formatted (was blank)", 2: "CORRUPT (nothing erased)", 3: "I/O error",
                 4: "bad parameters", 5: "not mounted"}
 RESTORE_STATUS = {0: "no network", 1: "restored", 2: "network record invalid", 3: "counters missing",
