@@ -63,7 +63,7 @@ static void up_key(void *ctx, uint16_t s, uint64_t e) { (void)ctx; (void)s; (voi
 
 static zb_coord_t coord;
 static const mac_radio_ops_t RADIO = {sim_tx, sim_match, 0};
-static const zb_coord_upper_t UPPER = {up_joined, up_aps, up_reserve, up_random, up_key, 0, 0, 0, 0};
+static const zb_coord_upper_t UPPER = {up_joined, up_aps, up_reserve, up_random, up_key, 0, 0, 0, 0, 0};
 
 /* ---- simulated device ----------------------------------------------- */
 typedef struct {

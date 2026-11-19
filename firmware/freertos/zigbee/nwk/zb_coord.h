@@ -143,6 +143,8 @@ typedef struct {
     void *ctx;
     /* The network moved to `channel` (zb_coord_change_channel): retune the radio. */
     void (*channel_changed)(void *ctx, uint8_t channel);
+    /* Green Power frame heard on the air (NWK protocol version 3), raw. */
+    void (*gpdf)(void *ctx, const uint8_t *nwk, size_t len, uint8_t mac_seq, uint8_t lqi);
 } zb_coord_upper_t;
 
 typedef struct {
@@ -167,7 +169,7 @@ typedef struct {
     uint32_t early_mtorr_deferred;   /* early many-to-one request moved to the end of the minimum gap */
     uint32_t disc_buffered, disc_sent, disc_expired;   /* frames held during route discovery */
     uint32_t frag_rx_ok, frag_rx_dropped, frag_tx_ok, frag_tx_failed, frag_tx_retries;
-    uint32_t channel_changes, key_updates, key_switches;
+    uint32_t channel_changes, key_updates, key_switches, gpdf_rx;
 } zb_coord_stats_t;
 
 typedef struct {

@@ -1543,6 +1543,12 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
     zb_coord_t *c = ctx;
     (void)rssi;
     c->stats.nwk_rx++;
+    if (f->payload_len >= 1 && ((f->payload[0] >> 2) & 0x0Fu) == 3u) {
+        /* Green Power (protocol version 3): handed to the GP proxy as is. */
+        c->stats.gpdf_rx++;
+        if (c->upper.gpdf) c->upper.gpdf(c->upper.ctx, f->payload, f->payload_len, f->seq, lqi);
+        return;
+    }
     if (f->payload_len > CORE_SECURITY_MAX_FRAME) { c->stats.nwk_malformed++; return; }
     uint8_t frame[CORE_SECURITY_MAX_FRAME];
     for (size_t i = 0; i < f->payload_len; i++) frame[i] = f->payload[i];

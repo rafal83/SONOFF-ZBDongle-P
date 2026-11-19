@@ -51,6 +51,7 @@ PORTABLE = [
     "firmware/freertos/storage/nv_log.c",
     "firmware/freertos/zigbee/tc/trust_center.c",
     "firmware/freertos/transport/znp/znp.c",
+    "firmware/freertos/zigbee/gp/gp_proxy.c",
 ]
 INCLUDES = [
     "firmware/src",
@@ -67,6 +68,7 @@ INCLUDES = [
     "firmware/freertos/zigbee/nwk",
     "firmware/freertos/zigbee/aps",
     "firmware/freertos/zigbee/tc",
+    "firmware/freertos/zigbee/gp",
     "firmware/freertos/storage",
 ]
 MCU_SOURCES = [
@@ -112,6 +114,7 @@ HOST_TESTS = {
     "test_frt_store_integrity": ["firmware/freertos/tests/test_store_integrity.c"],
     "test_frt_mesh_scale": ["firmware/freertos/tests/test_mesh_scale.c"],
     "test_frt_sleepy": ["firmware/freertos/tests/test_sleepy.c"],
+    "test_frt_gp": ["firmware/freertos/tests/test_gp.c"],
 }
 
 

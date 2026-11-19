@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "aps_frame.h"
+#include "gp_proxy.h"
 #include "mac_frame.h"
 #include "npi.h"
 #include "nwk_frame.h"
@@ -36,6 +37,13 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     }
     aps_header_t a;
     (void)aps_parse(data, size, &a);
+    gpdf_t g;
+    (void)gpdf_parse(data, size, &g);
+    /* GP proxy: the input as a GPD frame, then as a host GP command. */
+    static gp_proxy_t gp;
+    static uint8_t zcl[160];
+    (void)gp_proxy_rx(&gp, data, size, size ? data[0] : 0, 1000, zcl, sizeof zcl);
+    gp_proxy_host_frame(&gp, data, size, 1000);
     npi_parser p;
     npi_init(&p, on_npi, 0);
     uint32_t now = 0;
