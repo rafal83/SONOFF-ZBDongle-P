@@ -871,6 +871,32 @@ int main(void) {
         drain();
     }
 
+    /* ---- Our own broadcast relayed back by the routers (Zigbee PRO 3.6.5:
+     * the originator records it in its BTT). Every copy is a duplicate: not
+     * delivered to the host again, counted as a passive acknowledgement. */
+    {
+        drain();
+        unsigned up0 = aps_up;
+        uint32_t dup0 = coord.stats.broadcast_duplicates, auth0 = coord.stats.nwk_auth_failures;
+        const uint8_t zcl[3] = {0x01, 0x31, 0x00};
+        CHECK(zb_coord_send_aps_ex(&coord, 0xFFFD, false, 0xFF, 1, 6, 0x0104, zcl, 3, false) == ZB_SEND_OK);
+        rx_t m;
+        bool got = false;
+        while (!got && rx_frame(&r, &m)) got = m.nwk.dst == 0xFFFD && m.nwk.src == 0x0000;
+        CHECK(got);
+        node_t *relays[2] = {&r, &r2};
+        for (unsigned i = 0; i < 2; i++) {
+            nwk_header_t h = m.nwk;
+            h.security = false;               /* re-secured hop by hop by the relaying router */
+            h.radius--;
+            hop_send(relays[i], &h, m.payload, m.len, 0xFFFF, true);
+        }
+        CHECK(aps_up == up0);
+        CHECK(coord.stats.broadcast_duplicates == dup0 + 2);
+        CHECK(coord.stats.nwk_auth_failures == auth0);
+        drain();
+    }
+
     printf("mesh: %u checks passed\n", frt_checks);
     return 0;
 }
