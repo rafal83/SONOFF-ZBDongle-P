@@ -64,6 +64,15 @@
 #define ZB_APS_DUP_TABLE 32u
 #define ZB_TX_TRACK MAC_POOL_SLOTS   /* unicasts awaiting their MAC confirm: one per MAC buffer */
 #define ZB_DISC_PENDING 16u          /* local frames held while their route is discovered */
+/* A destination whose route discovery got no reply is not searched again
+ * for a backoff (30 s, doubling up to 5 min), cleared as soon as it is heard:
+ * each Route Request is rebroadcast by every router, and requests repeated
+ * for devices offline for months flooded the production network (324 Route
+ * Requests, 20 000 rebroadcast copies in 15 min; responses of reachable
+ * routers were lost in the collisions). */
+#define ZB_RDISC_FAIL 8u
+#define ZB_RDISC_BACKOFF_MS 30000u
+#define ZB_RDISC_BACKOFF_MAX_MS 300000u
 #define ZB_DISC_WAIT_MS 5000u        /* then confirmed NWK_NO_ROUTE (0xCD) */
 #define ZB_STATUS_NWK_NO_ROUTE 0xCDu
 #define ZB_STATUS_BUFFER_FULL 0x11u    /* ZStatus: local transmit queue full (the host retries) */
@@ -172,6 +181,7 @@ typedef struct {
     uint32_t disc_buffered, disc_sent, disc_expired;   /* frames held during route discovery */
     uint32_t rreq_coalesced;     /* no new Route Request: one for that destination is pending */
     uint32_t aps_counter_reuse;  /* same source and APS counter, other content: NOT a duplicate */
+    uint32_t rreq_suppressed;    /* Route Request not sent: destination in discovery backoff */
     uint32_t frag_rx_ok, frag_rx_dropped, frag_tx_ok, frag_tx_failed, frag_tx_retries;
     uint32_t channel_changes, key_updates, key_switches, gpdf_rx;
 } zb_coord_stats_t;
@@ -218,6 +228,7 @@ typedef struct {
     struct { uint16_t originator, sender; uint8_t id, cost; uint32_t ms; bool used; } rdisc[ZB_ROUTE_DISCOVERIES];
     /* APS duplicate rejection: (source, APS counter) seen recently. */
     struct { uint16_t src, hash; uint8_t counter; uint32_t ms; bool used; } aps_dup[ZB_APS_DUP_TABLE];
+    struct { uint16_t dst; uint32_t until_ms, backoff_ms; bool used; } rdisc_fail[ZB_RDISC_FAIL];
     uint8_t aps_dup_next;
     /* Routing outcome of each pending unicast (route repair on failure). */
     struct { uint16_t dst, mac_dst, relayed_src; uint8_t handle; bool used; } tx_track[ZB_TX_TRACK];

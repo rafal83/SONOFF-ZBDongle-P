@@ -19,6 +19,7 @@
  *        [--timeout 10000]        (ms to wait for the ZCL response; Z2M default: 10 s)
  *        [--burst-size 16]        (routers per burst, rotating; default: all)
  *        [--spacing 3]            (ms between the requests of a burst; default 0)
+ *        [--exclude 0x68d6,0x6092] (routers left out, e.g. offline for months)
  *        [--tx-power 20]          (SYS stackTune like herdsman for Z2M transmit_power; production: 20)
  */
 const assert = require('node:assert/strict');
@@ -127,11 +128,13 @@ async function main() {
         console.log('network resumed', JSON.stringify(report.resume));
 
         /* targets: routers with a Basic server cluster */
-        const routers = rows.filter(d => d.type === 'Router').map(d => {
+        const excluded = new Set(String(args.exclude ?? '').split(',').filter(Boolean).map(x => Number(x)));
+        const routers = rows.filter(d => d.type === 'Router' && !excluded.has(d.nwkAddr)).map(d => {
             const ep = Object.values(d.endpoints ?? {}).find(e => (e.inClusterList ?? []).includes(0));
             return ep ? {ieee: d.ieeeAddr, nwk: d.nwkAddr, ep: ep.epId, model: d.modelId} : null;
         }).filter(Boolean);
         report.routers = routers.length;
+        report.excluded = [...excluded];
 
         let seq = 1, transid = 1;
         const pending = new Map();   /* key nwk:seq -> resolve */
