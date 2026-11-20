@@ -5,7 +5,7 @@
  */
 ENTRY(Reset_Handler)
 MEMORY {
-    FLASH_APP (rx) : ORIGIN = 0x00000000, LENGTH = 0x00048000   /* 0x48000-0x4FFFF: nv_log store */
+    FLASH_APP (rx) : ORIGIN = 0x00000000, LENGTH = 0x00034000   /* 0x34000-0x4FFFF: nv_log store (layout 2) */
     CCFG (r)       : ORIGIN = 0x00057FA8, LENGTH = 88
     SRAM (rwx)     : ORIGIN = 0x20000000, LENGTH = 0x00014000
 }
@@ -51,7 +51,7 @@ SECTIONS {
 }
 _flash_used = LOADADDR(.data) + SIZEOF(.data);
 _sram_used = _estack - ORIGIN(SRAM);
-ASSERT(_flash_used <= 0x48000, "Image would overlap the nv_log store / production NV region")
+ASSERT(_flash_used <= 0x34000, "Image would overlap the nv_log store (layout 2) / production NV region")
 ASSERT(SIZEOF(.ccfg) == 88, "Missing or wrong CC26x2 CCFG")
 ASSERT(image_info == 0x100, "Wrong application identity address")
 ASSERT(_estack <= ORIGIN(SRAM) + LENGTH(SRAM), "SRAM overflow")

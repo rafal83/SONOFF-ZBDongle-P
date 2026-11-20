@@ -8,7 +8,7 @@ FreeRTOS -> Koenkk, without counter regression:
      + 2500 (herdsman restore increment) must exceed every counter the
      FreeRTOS store has reserved;
   3. Koenkk application programmed in 0..0x47FFF; the FreeRTOS store
-     (0x48000..0x4FFFF), the Z-Stack NV and the CCFG are kept byte for byte
+     (0x34000..0x4FFFF, storage layout 2), the Z-Stack NV and the CCFG are kept byte for byte
      (program_application refuses otherwise); full read-back compared;
   4. Koenkk identity checked (revision 20250321, IEEE) at 115200 baud;
   5. Z-Stack network state cleared (STARTUP_OPTION), so that herdsman then
@@ -29,7 +29,7 @@ from image import read_hex  # noqa: E402
 KOENKK_HEX = ROOT / "build/reference-coordinator/CC1352P2_CC2652P_launchpad_coordinator_20250321.hex"
 KOENKK_REVISION = 20250321
 KOENKK_BAUD = 115200
-STORE_START, NV_START, FLASH_SIZE, CCFG = 0x48000, 0x50000, 0x58000, 0x57FA8
+STORE_START, NV_START, FLASH_SIZE, CCFG = 0x34000, 0x50000, 0x58000, 0x57FA8   # store: layout 2
 
 
 def main():

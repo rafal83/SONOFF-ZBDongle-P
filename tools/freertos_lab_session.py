@@ -53,7 +53,7 @@ def compose_freertos(current, hex_memory):
     """Full image = FreeRTOS application + CURRENT NV, spare page and CCFG."""
     if len(current) != FLASH_SIZE:
         raise ValueError("Expected a complete CC2652P capture")
-    outside = [a for a in hex_memory if a >= NV_START and not CCFG <= a < FLASH_SIZE]
+    outside = [a for a in hex_memory if a >= 0x34000 and not CCFG <= a < FLASH_SIZE]   # store (layout 2), NV
     if outside:
         raise ValueError(f"FreeRTOS HEX writes outside the application/CCFG: 0x{outside[0]:05x}")
     for a in range(CCFG, FLASH_SIZE):
@@ -457,7 +457,8 @@ def session(args):
         print(json.dumps(report, indent=2))
 
 
-STORE_START = 0x48000
+STORE_START = 0x34000   # storage layout 2 (layout 1: 0x48000, inside it)
+STORAGE_LAYOUT = 2
 
 
 def read_range(command, start, end):
@@ -513,6 +514,15 @@ def fast_flash(args):
             args.production_backup = folder / "original-a.bin"
         nv_ccfg = read_nv_ccfg(command)
         backup = check_backup(args.production_backup.resolve(), nv_ccfg)
+        # Never back to an older storage layout over a migrated store: the
+        # old firmware would find no store (layout 1 headers erased) or, worse,
+        # format one inside the new bank. Identity of the image: 0x10C.
+        import freertos_store
+        image_layout = int.from_bytes(bytes(hex_memory.get(0x10C + i, 0xFF) for i in range(4)), "little")
+        store_layout = freertos_store.layout(backup)
+        report["storage_layout"] = {"image": image_layout, "store": store_layout}
+        if store_layout and image_layout < store_layout and not args.wipe_store:
+            raise ValueError(f"Image storage layout {image_layout} older than the store's ({store_layout}): refused")
         report["backup"] = str(args.production_backup)
         report["backup_sha256"] = sha(backup)
         current = bytearray(b"\xff" * FLASH_SIZE)

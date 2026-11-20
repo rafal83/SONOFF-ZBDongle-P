@@ -562,6 +562,17 @@ static void radio(void *arg) {
     /* Formats only a blank store; a corrupted one is kept untouched and
      * reported (DIAG_STORE_STATUS) until DIAG_STORE_FORMAT is requested. */
     store_ok = nv_log_mount(&app_store, &STORE_OPS, HAL_FLASH_STORE_BASE, HAL_FLASH_BANK_SIZE, HAL_FLASH_SECTOR);
+    if (store_ok) {
+        /* Finishes a migration interrupted after its commit (no-op otherwise). */
+        (void)nv_log_retire_old(&app_store, HAL_FLASH_OLD_STORE_BASE, HAL_FLASH_OLD_BANK_SIZE);
+    } else if (app_store.mount_status == NV_LOG_ERR_CORRUPT) {
+        /* First boot after the layout change: the old store (inside the new
+         * bank 1) is copied into bank 0, power-cut safe; if there is no old
+         * store either, the corrupt state is kept for an explicit recovery. */
+        store_ok = nv_log_migrate(&app_store, &STORE_OPS, HAL_FLASH_OLD_STORE_BASE, HAL_FLASH_OLD_BANK_SIZE,
+                                  HAL_FLASH_STORE_BASE, HAL_FLASH_BANK_SIZE, HAL_FLASH_SECTOR) == NV_LOG_MIGRATION_DONE;
+        if (!store_ok) app_store.mount_status = NV_LOG_ERR_CORRUPT;
+    }
     crypto_setup();   /* before any key is used: selects the CCM* backend */
     const crash_record_t *crash = crash_log_previous();
     znp_boot(&znp, &ZNP_PLATFORM, &coord, &COORD_RADIO, store_ok ? &app_store : 0, ieee64(), hal_trng_u32(),

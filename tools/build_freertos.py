@@ -99,6 +99,7 @@ TI_SOURCES = [DEVICE / "driverlib" / f"{n}.c" for n in [
 HOST_TESTS = {
     "test_frt_mt": ["firmware/freertos/tests/test_mt.c"],
     "test_frt_uart_noise": ["firmware/freertos/tests/test_uart_noise.c"],
+    "test_frt_store_migration": ["firmware/freertos/tests/test_store_migration.c"],
     "test_frt_radio_logic": ["firmware/freertos/tests/test_radio_logic.c"],
     "test_frt_quorum": ["firmware/freertos/tests/test_quorum.c"],
     "test_frt_spsc": ["firmware/freertos/tests/test_spsc_ring.c"],
@@ -289,7 +290,7 @@ def firmware(exe, baud, hw_aes=False):
     memory = image.read_hex(hexfile)
     identity = bytes(memory.get(a, 255) for a in range(0x100, 0x118))
     if (identity[:8] != b'ZBDP-FRT' or
-            tuple(int.from_bytes(identity[a:a + 4], 'little') for a in (8, 12, 16, 20)) != (1, 1, baud, revision)):
+            tuple(int.from_bytes(identity[a:a + 4], 'little') for a in (8, 12, 16, 20)) != (1, 2, baud, revision)):
         raise SystemExit('Missing or invalid FreeRTOS application identity / storage layout')
     ccfg_match = None
     if PRODUCTION_HEX.exists():
@@ -325,7 +326,7 @@ def firmware(exe, baud, hw_aes=False):
         },
         "uart_baud": baud,
         "hardware_aes": hw_aes,
-        "image_identity": {"address": 0x100, "version": 1, "storage_layout": 1},
+        "image_identity": {"address": 0x100, "version": 1, "storage_layout": 2},
         "build_revision": revision,
         "compiler": "Zig cc 0.13.0 (clang/LLD)",
         "freertos_kernel": {"tag": lock["tag"], "commit": lock["commit"]},
@@ -333,7 +334,7 @@ def firmware(exe, baud, hw_aes=False):
         "elf_sha256": sha256(elf),
         "hex_sha256": sha256(hexfile),
         "flash_used_bytes": flash_used,
-        "flash_app_limit_bytes": 0x50000,
+        "flash_app_limit_bytes": 0x34000,
         "sram_static_bytes_including_msp_stack": sram_used,
         "sram_total_bytes": 0x14000,
         "stack_static_analysis": {"tool": "tools/stack_analysis.py (upper bound under its indirect-call rules)",
@@ -345,7 +346,7 @@ def firmware(exe, baud, hw_aes=False):
         "sections": sections,
         "largest_objects": dict(biggest),
         "nv_region_untouched": True,
-        "flash_writes": "only hal_flash.c, bounded to 0x48000-0x4FFFF (nv_log store)",
+        "flash_writes": "only hal_flash.c, bounded to 0x34000-0x4FFFF (nv_log store, layout 2)",
         "ccfg_identical_to_installed_2026111802": ccfg_match,
         "image_check": check.stdout.strip().splitlines()[-1:] if check.stdout else [],
         "sources_sha256": {s: sha256(ROOT / s) for s in own},

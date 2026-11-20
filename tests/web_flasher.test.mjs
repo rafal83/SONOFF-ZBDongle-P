@@ -80,7 +80,7 @@ for (const failure of ['identity', 'digest', 'ccfg', 'changed', 'storage']) {
       if (failure === 'digest') saved.bytes[0x200] ^= 1;
       if (failure === 'ccfg') { saved.bytes[CCFG] ^= 1; saved.hash = await sha256(saved.bytes); }
       if (failure === 'changed') port.memory[APP_END] ^= 1;
-      if (failure === 'storage') { saved.bytes[0x10c] = 2; saved.hash = await sha256(saved.bytes); }
+      if (failure === 'storage') { saved.bytes[0x10c] = 1; saved.hash = await sha256(saved.bytes); }
       await assert.rejects(restoreApplication(rom, saved, backup));
       assert.equal(mutations(port).length, 0);
     } finally { await rom.close(); }
@@ -154,14 +154,14 @@ test('bad firmware hash, incompatible CCFG or changed dongle prevents erasure', 
     assert.equal(mutations(port).length, 0);
   } finally { await rom.close(); }
 });
-test('full flash: vectors last; all 64 KiB of protected data preserved; reset only after verification', async () => {
+test('full flash: vectors last; the store (layout 2), NV and CCFG preserved; reset only after verification', async () => {
   const { rom, port, binary, backup, hash } = await prepared();
   try {
     await installApplication(rom, binary, hash, backup, fixtureCcfg());
     assert.deepEqual(port.memory.subarray(0, APP_END), binary);
     assert.deepEqual(port.memory.subarray(APP_END), backup.subarray(APP_END));
     const erases = port.commands.filter(c => c.cmd === 0x26);
-    assert.equal(erases.length, 36);
+    assert.equal(erases.length, APP_END / PAGE_SIZE);   /* 26 sectors: 0x34000-0x57FFF untouched */
     assert.deepEqual(erases[0].args, [0, 0, 0, 0]);
     const downloads = port.commands.filter(c => c.cmd === 0x21);
     assert.deepEqual(downloads.at(-1).args.slice(0, 4), [0, 0, 0, 0]);

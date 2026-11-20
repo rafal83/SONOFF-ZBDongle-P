@@ -10,7 +10,7 @@ import zipfile
 from image import FLASH_END, CCFG, check, read_hex
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_END = 0x48000
+APP_END = 0x34000   # storage layout 2: the nv_log store starts here
 
 
 def package(archive, output, commit):
@@ -54,7 +54,7 @@ def package(archive, output, commit):
             identity = binary[0x100:0x118]
             if (identity[:8] != b'ZBDP-FRT' or
                     tuple(int.from_bytes(identity[a:a + 4], 'little') for a in (8, 12, 16, 20)) !=
-                    (1, 1, baud, manifest['build_revision'])):
+                    (1, 2, baud, manifest['build_revision'])):
                 raise ValueError('Invalid FreeRTOS application identity / storage layout')
             images.append((baud, bytes(binary), raw, manifest))
     output.mkdir(parents=True, exist_ok=True)
