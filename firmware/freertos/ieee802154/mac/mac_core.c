@@ -310,6 +310,20 @@ bool mac_purge(mac_t *m, uint8_t handle) {
     return false;
 }
 
+/* Another round for a direct frame that failed: back to the END of the
+ * queue (see MAC_TX_ROUNDS). false when the rounds are used up. */
+static bool next_round(mac_t *m, int s) {
+    mac_slot_t *slot = &m->slots[s];
+    if (slot->rounds + 1u >= MAC_TX_ROUNDS || !push(m->direct_q, MAC_DIRECT_QUEUE, &m->direct_head, &m->direct_count, s, false))
+        return false;
+    slot->rounds++;
+    slot->retries = 0;
+    slot->in_flight = false;
+    slot->queued = true;
+    m->stats.tx_rounds++;
+    return true;
+}
+
 void mac_tx_done(mac_t *m, mac_tx_result_t result, bool frame_pending) {
     (void)frame_pending;
     int s = m->active;
@@ -331,14 +345,14 @@ void mac_tx_done(mac_t *m, mac_tx_result_t result, bool frame_pending) {
             slot->in_flight = false;
             slot->queued = true;
             m->stats.tx_retries++;
-        } else {
+        } else if (!next_round(m, s)) {
             complete(m, s, MAC_STATUS_NO_ACK);
         }
         break;
     case MAC_TX_BUSY:
         m->stats.tx_busy++;
         if (indirect) keep_pending(m, s);
-        else complete(m, s, MAC_STATUS_CHANNEL_ACCESS_FAILURE);
+        else if (!next_round(m, s)) complete(m, s, MAC_STATUS_CHANNEL_ACCESS_FAILURE);
         break;
     default:
         m->stats.tx_error++;

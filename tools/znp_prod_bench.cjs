@@ -15,7 +15,7 @@
  *
  *   node tools/znp_prod_bench.cjs --port COM8 --baudrate 1000000 \
  *        --database <copy>/database.db --backup <copy>/coordinator_backup.json \
- *        --expect-ieee 0x... --out private/perf-YYYYMMDD-label [--reads 10] [--bursts 5]
+ *        --expect-ieee 0x... --out private/perf-YYYYMMDD-label [--reads 10] [--bursts 5]  *        [--herdsman-retries 1]   (retry recoverable dataConfirm statuses like herdsman)
  */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -42,6 +42,7 @@ const {BackupUtils} = lab('zigbee-herdsman/dist/utils/index.js');
 const {Subsystem, Type} = lab('zigbee-herdsman/dist/adapter/z-stack/unpi/constants.js');
 
 const READS = Number(args.reads ?? 10), BURSTS = Number(args.bursts ?? 5), TIMEOUT = 4000;
+const RETRIES = 'herdsman-retries' in args;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const quantile = (v, q) => { const s = [...v].sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.floor(q * (s.length - 1) + 0.5))] : null; };
 const stats = v => ({n: v.length, median_ms: quantile(v, 0.5), p95_ms: quantile(v, 0.95), max_ms: v.length ? Math.max(...v) : null});
@@ -132,17 +133,40 @@ async function main() {
             const w = pending.get(k);
             if (w) { pending.delete(k); w({lqi: p.linkquality}); }
         });
-        async function read(r) {
+        /* One ZCL read; the AF dataConfirm is tracked (status recorded). With
+         * --herdsman-retries, recoverable confirm statuses are retried the way
+         * zigbee-herdsman 11.2.1 does (zStackAdapter: up to 4 attempts, 2 s
+         * pause for congestion statuses); the latency then includes them. */
+        const RECOVERABLE = new Set([0xcd, 0xe9, 0xe1, 0xf0, 0x11, 0x1a]);
+        const CONGESTION = new Set([0xe1, 0x11, 0x1a]);
+        const confirmStats = {};
+        async function read(r, attempt = 0, t0 = process.hrtime.bigint()) {
             const s = seq = (seq % 255) + 1;
             const k = `${r.nwk}:${s}`;
-            const t0 = process.hrtime.bigint();
+            const tid = (transid = (transid % 255) + 1);
             const done = new Promise(res => { pending.set(k, res); setTimeout(() => { if (pending.delete(k)) res(null); }, TIMEOUT); });
+            const confirm = znp.waitFor(Type.AREQ, Subsystem.AF, 'dataConfirm', undefined, tid, undefined, TIMEOUT);
             try {
                 await znp.request(Subsystem.AF, 'dataRequest', {dstaddr: r.nwk, destendpoint: r.ep, srcendpoint: 1, clusterid: 0,
-                    transid: (transid = (transid % 255) + 1), options: 0, radius: 30, len: 5, data: Buffer.from([0x00, s, 0x00, 0x00, 0x00])});
-            } catch (e) { pending.delete(k); return {ok: false, error: String(e.message ?? e)}; }
+                    transid: tid, options: 0, radius: 30, len: 5, data: Buffer.from([0x00, s, 0x00, 0x00, 0x00])}, confirm.ID);
+            } catch (e) { pending.delete(k); confirm.cancel?.(); return {ok: false, error: String(e.message ?? e)}; }
+            let status = null;
+            try { status = (await confirm.start().promise).payload.status; } catch { status = null; }
+            const name = status === null ? 'confirm timeout' : `confirm 0x${status.toString(16)}`;
+            confirmStats[name] = (confirmStats[name] ?? 0) + 1;
+            if (status !== 0) {
+                const w = pending.get(k);
+                pending.delete(k);
+                if (w) w(null);
+                if (RETRIES && status !== null && RECOVERABLE.has(status) && attempt < 3) {
+                    if (CONGESTION.has(status)) await sleep(2000);
+                    return read(r, attempt + 1, t0);
+                }
+                return {ok: false, error: name, attempts: attempt + 1};
+            }
             const got = await done;
-            return got ? {ok: true, ms: Number(process.hrtime.bigint() - t0) / 1e6, lqi: got.lqi} : {ok: false, error: 'timeout'};
+            return got ? {ok: true, ms: Number(process.hrtime.bigint() - t0) / 1e6, lqi: got.lqi, attempts: attempt + 1}
+                       : {ok: false, error: 'no response after a successful confirm', attempts: attempt + 1};
         }
 
         /* 3. sequential latency */
@@ -173,6 +197,8 @@ async function main() {
             await sleep(3000);
         }
         report.bursts = bursts;
+        report.confirm_statuses = confirmStats;
+        report.herdsman_retries = RETRIES;
         report.passed = true;
     } finally {
         report.znp_commands_sent = sent;

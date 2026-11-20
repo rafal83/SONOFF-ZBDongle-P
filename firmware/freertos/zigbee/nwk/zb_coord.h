@@ -63,9 +63,10 @@
 #define ZB_SLEEPY_BCAST_COPIES 8u
 #define ZB_APS_DUP_TABLE 32u
 #define ZB_TX_TRACK MAC_POOL_SLOTS   /* unicasts awaiting their MAC confirm: one per MAC buffer */
-#define ZB_DISC_PENDING 8u           /* local frames held while their route is discovered */
+#define ZB_DISC_PENDING 16u          /* local frames held while their route is discovered */
 #define ZB_DISC_WAIT_MS 5000u        /* then confirmed NWK_NO_ROUTE (0xCD) */
 #define ZB_STATUS_NWK_NO_ROUTE 0xCDu
+#define ZB_STATUS_BUFFER_FULL 0x11u    /* ZStatus: local transmit queue full (the host retries) */
 /* APS fragmentation (Zigbee 2.2.8.4.5), window of one block. */
 #define ZB_FRAG_MAX 230u             /* whole message (what one ZNP frame can carry) */
 #define ZB_FRAG_BLOCK 64u            /* APS payload per block: fits along a source route */
@@ -169,6 +170,7 @@ typedef struct {
     uint32_t neighbor_restarts;      /* complete Link Status that no longer lists us */
     uint32_t early_mtorr_deferred;   /* early many-to-one request moved to the end of the minimum gap */
     uint32_t disc_buffered, disc_sent, disc_expired;   /* frames held during route discovery */
+    uint32_t rreq_coalesced;     /* no new Route Request: one for that destination is pending */
     uint32_t frag_rx_ok, frag_rx_dropped, frag_tx_ok, frag_tx_failed, frag_tx_retries;
     uint32_t channel_changes, key_updates, key_switches, gpdf_rx;
 } zb_coord_stats_t;
