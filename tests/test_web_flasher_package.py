@@ -18,7 +18,7 @@ class WebFlasherPackageTests(unittest.TestCase):
             memory.update({address + i: b for i, b in enumerate(value.to_bytes(4, 'little'))})
         memory[0x140] = 0x70
         memory.update(dict(enumerate(b'ZBDP-FRT', 0x100)))
-        for address, value in [(0x108, 1), (0x10c, 1), (0x114, 20261119)]:
+        for address, value in [(0x108, 1), (0x10c, 2), (0x114, 20261119)]:
             memory.update({address + i: b for i, b in enumerate(value.to_bytes(4, 'little'))})
         if overlap:
             memory[APP_END] = 1

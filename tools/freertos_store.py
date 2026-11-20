@@ -1,5 +1,6 @@
-"""Read-only parser of the FreeRTOS firmware's nv_log store (0x48000-0x4FFFF)
-inside a full Flash capture, following firmware/freertos/storage/nv_log.c:
+"""Read-only parser of the FreeRTOS firmware's nv_log store inside a full Flash
+capture (storage layout 2: 0x34000-0x4FFFF, 2 x 56 KiB; layout 1, before the
+migration: 0x48000-0x4FFFF, 2 x 16 KiB), following firmware/freertos/storage/nv_log.c:
 two banks with a 16-byte header {magic "FRNV", version 1, generation,
 complete}; records {id u16, len u16, hcrc u16, 0xFFFF, data padded to 4,
 crc32}. The highest complete generation is authoritative; a record counts
@@ -12,8 +13,9 @@ restored on Z-Stack never brings it back below a value already used.
 import struct
 import zlib
 
-STORE_BASE, STORE_END = 0x48000, 0x50000
+STORE_BASE, STORE_END = 0x48000, 0x50000          # layout 1 (store-alone files use it too)
 BANK_SIZE = (STORE_END - STORE_BASE) // 2
+LAYOUTS = {2: (0x34000, 0xE000), 1: (STORE_BASE, BANK_SIZE)}   # layout: (base, bank size)
 MAGIC, VERSION = 0x564E5246, 1
 ID_NETWORK, ID_COUNTERS = 1, 2
 TOMBSTONE = 0x8000
@@ -23,9 +25,9 @@ def _hcrc(header4):
     return zlib.crc32(header4, 0x5A5A) & 0xFFFF
 
 
-def _records(store, base):
+def _records(store, base, bank_size=BANK_SIZE):
     recs, off = {}, 16
-    while off + 8 <= BANK_SIZE:
+    while off + 8 <= bank_size:
         h = store[base + off: base + off + 8]
         if h == b"\xff" * 8:
             break
@@ -34,7 +36,7 @@ def _records(store, base):
         if hc != _hcrc(h[:4]) or plen > 256 or rid >= 512:
             break                                   # torn header: end of the usable log
         end = off + 8 + ((plen + 3) & ~3) + 4
-        if end > BANK_SIZE:
+        if end > bank_size:
             break
         data = store[base + off + 8: base + off + 8 + plen]
         trailer = struct.unpack_from("<I", store, base + end - 4)[0]
@@ -47,18 +49,41 @@ def _records(store, base):
     return recs
 
 
-def records(flash, store_base=STORE_BASE):
-    """Latest committed records {id: bytes} of the store, None if no valid bank.
-    `flash` is a full capture (store at store_base) or the store alone (store_base=0)."""
+def _best_bank(flash, store_base, bank_size):
     best = None
     for bank in (0, 1):
-        base = store_base + bank * BANK_SIZE
+        base = store_base + bank * bank_size
+        if base + 16 > len(flash):
+            continue
         magic, version, _, generation, complete = struct.unpack_from("<IHHII", flash, base)
         if magic != MAGIC or version != VERSION or complete != 0:
             continue
         if best is None or 0 < ((generation - best[1]) & 0xFFFFFFFF) < 0x80000000:
             best = (base, generation)
-    return None if best is None else _records(flash, best[0])
+    return best
+
+
+def layout(flash):
+    """Storage layout holding a valid store in a full capture (2, 1), None if none.
+    Layout 2 first: after the migration, layout 1's headers are erased."""
+    for lay in (2, 1):
+        if _best_bank(flash, *LAYOUTS[lay]):
+            return lay
+    return None
+
+
+def records(flash, store_base=None, bank_size=None):
+    """Latest committed records {id: bytes} of the store, None if no valid bank.
+    `flash` is a full capture (layout detected) or a layout-1 store alone
+    (store_base=0)."""
+    if store_base is None:
+        lay = layout(flash)
+        if lay is None:
+            return None
+        store_base, bank_size = LAYOUTS[lay]
+    bank_size = bank_size or BANK_SIZE
+    best = _best_bank(flash, store_base, bank_size)
+    return None if best is None else _records(flash, best[0], bank_size)
 
 
 def counters(recs):

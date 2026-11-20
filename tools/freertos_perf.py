@@ -33,7 +33,7 @@ PERF_NAMES = ["aes_sw_block_cycles", "ccm_sw_frame_cycles", "ccm_hw_frame_cycles
               "gp_tx_started", "gp_tx_ok", "gp_tx_failed", "gp_tx_missed", "gp_coord_tx_deferred",
               "gp_channel_moves", "gp_channel_failed"]
 STORE_STATUS = {0: "mounted", 1: "formatted (was blank)", 2: "CORRUPT (nothing erased)", 3: "I/O error",
-                4: "bad parameters", 5: "not mounted"}
+                4: "bad parameters", 5: "not mounted", 6: "migrated (layout 1 -> 2) at this boot"}
 RESTORE_STATUS = {0: "no network", 1: "restored", 2: "network record invalid", 3: "counters missing",
                   4: "counters invalid", 5: "counters of another key", 6: "counters incoherent"}
 # Allocated stacks (words), firmware/freertos/app/app.h and FreeRTOSConfig.h.

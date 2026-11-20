@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // TI SWRA466 / SWCU185 serial ROM protocol. No bank erase or CCFG writes.
 export const FLASH_SIZE = 0x58000;
-export const APP_END = 0x48000;
+export const APP_END = 0x34000;   // storage layout 2: 0x34000-0x4FFFF is the store
 export const PAGE_SIZE = 0x2000;
 export const CCFG = 0x57fa8;
 const ACK = Uint8Array.of(0, 0xcc);
@@ -30,7 +30,7 @@ export function validateApplication(bytes) {
 export function applicationInfo(bytes) {
   validateApplication(bytes);
   if (new TextDecoder().decode(bytes.subarray(0x100, 0x108)) !== 'ZBDP-FRT' ||
-      le32(bytes, 0x108) !== 1 || le32(bytes, 0x10c) !== 1 ||
+      le32(bytes, 0x108) !== 1 || le32(bytes, 0x10c) !== 2 ||
       ![115200, 1000000].includes(le32(bytes, 0x110))) {
     throw new Error('Cette sauvegarde ne contient pas un firmware FreeRTOS avec un stockage compatible.');
   }

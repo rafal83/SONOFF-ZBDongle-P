@@ -328,3 +328,100 @@ bool nv_log_delete(nv_log_t *l, uint16_t id) {
     if (!l->index[id]) return true;
     return put(l, id, TOMBSTONE, 0);
 }
+
+/* ---- storage layout migration ------------------------------------------ */
+
+static bool ranges_overlap(uint32_t a, uint32_t alen, uint32_t b, uint32_t blen) {
+    return a < b + blen && b < a + alen;
+}
+
+nv_log_migration_t nv_log_migrate(nv_log_t *l, const nv_flash_ops_t *ops, uint32_t old_base, uint32_t old_bank_size,
+                                  uint32_t base, uint32_t bank_size, uint32_t sector_size) {
+    *l = (nv_log_t){0};
+    l->ops = *ops;
+    l->sector_size = sector_size;
+    l->mount_status = NV_LOG_ERR_PARAM;
+    /* The copy goes to bank 0 of the new geometry, which must not overlap the
+     * old store (still the authoritative copy until the commit). */
+    if (!sector_size || bank_size % sector_size || old_bank_size % sector_size || bank_size / 4u > 0xFFFFu ||
+        old_bank_size / 4u > 0xFFFFu || ranges_overlap(base, bank_size, old_base, 2u * old_bank_size))
+        return NV_LOG_MIGRATION_ERROR;
+    /* 1. Old store, read only: the highest complete generation, no format. */
+    l->base = old_base;
+    l->bank_size = old_bank_size;
+    bank_header_t h0, h1;
+    bool v0 = read_header(l, 0, &h0), v1 = read_header(l, 1, &h1);
+    if (!v0 && !v1) return NV_LOG_MIGRATION_NONE;
+    if (v0 && (!v1 || (int32_t)(h0.generation - h1.generation) > 0)) { l->active = 0; l->generation = h0.generation; }
+    else { l->active = 1; l->generation = h1.generation; }
+    if (!scan(l)) return NV_LOG_MIGRATION_ERROR;
+    unsigned old_active = l->active;
+    for (unsigned id = 0; id < NV_LOG_MAX_IDS; id++) l->scratch_index[id] = l->index[id];
+    /* 2. Copy every live record into the new bank 0, then commit. */
+    l->base = base;
+    l->bank_size = bank_size;
+    if (!erase_bank(l, 0)) return NV_LOG_MIGRATION_ERROR;
+    uint32_t gen = l->generation + 1u;
+    if (!write_header(l, 0, gen, false)) return NV_LOG_MIGRATION_ERROR;
+    uint32_t off = NV_LOG_HEADER;
+    unsigned copied = 0;
+    for (unsigned id = 0; id < NV_LOG_MAX_IDS; id++) {
+        if (!l->scratch_index[id]) continue;
+        uint16_t rid, len;
+        uint32_t next;
+        l->base = old_base;
+        l->bank_size = old_bank_size;
+        int r = read_record(l, old_active, (uint32_t)l->scratch_index[id] * 4u, &rid, &len, &next, l->tmp2);
+        l->base = base;
+        l->bank_size = bank_size;
+        if (r != 1 || rid != id) continue;   /* unreadable: as nv_log_read would report it */
+        uint32_t at = off;
+        if (!append(l, 0, &off, (uint16_t)id, len, l->tmp2)) return NV_LOG_MIGRATION_ERROR;
+        l->index[id] = (uint16_t)(at / 4u);
+        copied++;
+    }
+    const uint8_t zero[4] = {0, 0, 0, 0};
+    if (!program(l, bank_addr(l, 0) + 12u, zero, 4)) return NV_LOG_MIGRATION_ERROR;   /* commit point */
+    /* 3. Mounted on the new copy. */
+    l->active = 0;
+    l->generation = gen;
+    l->write_offset = off;
+    l->full = false;
+    l->mounted = true;
+    l->mount_status = NV_LOG_MIGRATED;
+    l->stats.mounts++;
+    l->migrated_records = copied;
+    /* 4. The old store is retired (its headers erased): an older firmware
+     * would find no valid store rather than resume stale data. A power cut
+     * here is finished by nv_log_retire_old() at the next boot. */
+    (void)nv_log_retire_old(l, old_base, old_bank_size);
+    return NV_LOG_MIGRATION_DONE;
+}
+
+bool nv_log_retire_old(nv_log_t *l, uint32_t old_base, uint32_t old_bank_size) {
+    if (!l->mounted || !l->sector_size) return false;
+    /* Only while the new bank that covers the old store has never been used
+     * by the new layout (its header still erased): otherwise those sectors
+     * hold new data, never touched here. */
+    for (unsigned b = 0; b < 2; b++) {
+        uint32_t nb = bank_addr(l, b);
+        if (!ranges_overlap(nb, l->bank_size, old_base, 2u * old_bank_size)) continue;
+        uint8_t h[16];
+        if (!l->ops.read(l->ops.ctx, nb, h, sizeof h)) return false;
+        for (unsigned i = 0; i < sizeof h; i++) if (h[i] != 0xFF) return false;
+        if (b == l->active) return false;
+    }
+    bool retired = false;
+    for (unsigned b = 0; b < 2; b++) {
+        uint32_t ob = old_base + b * old_bank_size;
+        uint8_t h[16];
+        if (!l->ops.read(l->ops.ctx, ob, h, sizeof h)) return false;
+        bool blank = true;
+        for (unsigned i = 0; i < sizeof h; i++) blank &= h[i] == 0xFF;
+        if (blank) continue;
+        if (!l->ops.erase_sector(l->ops.ctx, ob - (ob % l->sector_size))) { l->stats.erase_failures++; return false; }
+        retired = true;
+    }
+    if (retired) l->stats.old_layout_retired++;
+    return retired;
+}

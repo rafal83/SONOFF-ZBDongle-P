@@ -35,7 +35,7 @@ __attribute__((section(".imageInfo"), used))
 const struct {
     char magic[8];
     uint32_t version, storage_layout, uart_baud, revision;
-} image_info = { "ZBDP-FRT", 1u, 1u, BOARD_UART_BAUD, FRT_BUILD_REVISION };
+} image_info = { "ZBDP-FRT", 1u, 2u, BOARD_UART_BAUD, FRT_BUILD_REVISION };   /* layout 2: 2 x 56 KiB store */
 
 /* 16 system exceptions + 38 device interrupts (hw_ints.h: 16..53). */
 __attribute__((section(".resetVecs"), used))

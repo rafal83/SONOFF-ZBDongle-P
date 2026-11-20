@@ -35,6 +35,7 @@ typedef struct {
 
 typedef struct {
     uint32_t mounts, writes, compactions, torn_records, torn_headers, erase_failures, program_failures;
+    uint32_t old_layout_retired;
 } nv_log_stats_t;
 
 /* Outcome of nv_log_mount(). Only a store holding no committed data
@@ -49,6 +50,7 @@ typedef enum {
     NV_LOG_ERR_IO = 3,         /* flash read/erase/program failure */
     NV_LOG_ERR_PARAM = 4,
     NV_LOG_UNMOUNTED = 5,
+    NV_LOG_MIGRATED = 6,       /* old storage layout copied into this one at this boot */
 } nv_log_mount_status_t;
 
 typedef struct {
@@ -66,6 +68,7 @@ typedef struct {
     nv_log_stats_t stats;
     nv_log_mount_status_t mount_status;
     bool mounted;                   /* writes/reads refused while false */
+    uint16_t migrated_records;      /* records copied by nv_log_migrate() */
 } nv_log_t;
 
 /* Mount. Formats ONLY a store without committed data (see
@@ -85,5 +88,21 @@ typedef void (*nv_log_salvage_fn)(void *ctx, const uint8_t *data, uint16_t len);
 unsigned nv_log_salvage(nv_log_t *log, uint16_t id, nv_log_salvage_fn fn, void *ctx);
 /* Erase both banks and start an empty log (factory reset of the store). */
 bool nv_log_format(nv_log_t *log);
+
+/* Storage layout change (bigger banks elsewhere). When the new geometry holds
+ * no valid store but the OLD geometry does: every live record of the old
+ * store is copied into bank 0 of the new geometry (which must not overlap
+ * the old store), committed last, then the old store's headers are erased so
+ * that an older firmware finds no valid store instead of stale data. A power
+ * cut before the commit leaves the old store intact: the migration is simply
+ * redone at the next boot. On NV_LOG_MIGRATION_DONE `log` is mounted (status
+ * NV_LOG_MIGRATED). NONE: no old store either. */
+typedef enum { NV_LOG_MIGRATION_NONE, NV_LOG_MIGRATION_DONE, NV_LOG_MIGRATION_ERROR } nv_log_migration_t;
+nv_log_migration_t nv_log_migrate(nv_log_t *log, const nv_flash_ops_t *ops, uint32_t old_base, uint32_t old_bank_size,
+                                  uint32_t base, uint32_t bank_size, uint32_t sector_size);
+/* On a mounted new-layout store: erase what is left of the old layout's
+ * headers, only while the new bank covering it has never been used (true
+ * if something was erased). Finishes a migration interrupted after commit. */
+bool nv_log_retire_old(nv_log_t *log, uint32_t old_base, uint32_t old_bank_size);
 uint32_t nv_log_crc32(uint32_t crc, const void *data, size_t length);
 #endif
