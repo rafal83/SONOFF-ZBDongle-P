@@ -517,6 +517,11 @@ static uint32_t bench_ccm(core_security_ccm_t fn) {
     uint8_t nonce[13] = {0}, aad[22], in[40], out[40], mic[4];
     for (unsigned i = 0; i < sizeof aad; i++) aad[i] = (uint8_t)i;
     for (unsigned i = 0; i < sizeof in; i++) in[i] = (uint8_t)(3 * i);
+    /* Warm-up (not measured): the one-time key load and key check are not
+     * the steady-state cost of a frame. */
+    nonce[1] = 0xA5;
+    (void)fn(0, true, key, nonce, aad, sizeof aad, in, sizeof in, out, mic);
+    nonce[1] = 0;
     uint32_t start = hal_cycles();
     for (unsigned n = 0; n < 16; n++) {
         nonce[0] = (uint8_t)n;

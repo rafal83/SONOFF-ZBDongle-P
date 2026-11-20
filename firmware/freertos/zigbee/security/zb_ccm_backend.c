@@ -59,7 +59,11 @@ bool zb_ccm_backend_sw(void *context, bool encrypt, const uint8_t key[16], const
  */
 #define HW_MAX_INPUT 128u
 #define HW_FAULT_LIMIT 8u
-#define HW_AUDIT_MIN 32u     /* audit interval: HW_AUDIT_MIN + (0..63) operations */
+/* Audit interval: HW_AUDIT_MIN + (0..127) operations. A software audit costs
+ * a full software CCM* (~75 000 cycles): 1 in 64..191 adds ~600 cycles per
+ * operation on average (1 in 32..95 added ~1 200). Rejected frames are still
+ * ALL re-verified in software. */
+#define HW_AUDIT_MIN 64u
 
 static zb_aes_block_fn hw_block;
 static zb_ccm_native_fn hw_native;
@@ -204,7 +208,7 @@ bool zb_ccm_backend_hw(void *context, bool encrypt, const uint8_t key[16], const
             if (hw_audit_count >= hw_audit_next) {
                 hw_audit_count = 0;
                 hw_audit_rng ^= hw_audit_rng << 13; hw_audit_rng ^= hw_audit_rng >> 17; hw_audit_rng ^= hw_audit_rng << 5;
-                hw_audit_next = HW_AUDIT_MIN + (hw_audit_rng >> 26);
+                hw_audit_next = HW_AUDIT_MIN + (hw_audit_rng >> 25);
             }
             hw_stats.hw_audits++;
             uint8_t ref[HW_MAX_INPUT], ref_mic[4];

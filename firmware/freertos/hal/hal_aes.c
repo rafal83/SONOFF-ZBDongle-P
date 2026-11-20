@@ -242,6 +242,7 @@ static void put_words(uint32_t first_reg, const uint8_t b[16]) {
 
 static bool ccm_locked(const uint8_t key[16], bool encrypt, const uint8_t nonce[13], const uint8_t *aad,
                        unsigned aad_len, const uint8_t *in, unsigned len, uint8_t *out, uint8_t tag[4]) {
+    uint32_t t0 = CYCLES();
     if (!load_key(key)) return false;
     if (!kat_ready || ++ops_since_check >= HAL_AES_KEY_CHECK_EVERY) {
         if (!key_check(key)) return false;
@@ -266,15 +267,19 @@ static bool ccm_locked(const uint8_t key[16], bool encrypt, const uint8_t nonce[
     uint8_t *b = (uint8_t *)dma_aad;
     for (unsigned i = 0; i < aad_len; i++) b[i] = aad[i];
     uint32_t got = 0;
+    uint32_t t1 = CYCLES();
     if (!start_dma(dma_aad, aad_len, 0, 0)) { stats.timeouts++; return false; }
-    if (!wait_flags(CRYPTO_IRQSTAT_DMA_IN_DONE_M, &got)) { stats.timeouts++; return false; }
-    if (got & ERR_FLAGS) { stats.dma_errors++; return false; }
+    /* The data is copied while the engine authenticates the AAD. */
     b = (uint8_t *)dma_data;
     for (unsigned i = 0; i < len; i++) b[i] = in[i];
+    if (!wait_flags(CRYPTO_IRQSTAT_DMA_IN_DONE_M, &got)) { stats.timeouts++; return false; }
+    if (got & ERR_FLAGS) { stats.dma_errors++; return false; }
+    uint32_t t2 = CYCLES();
     if (!start_dma(dma_data, len, dma_res, len)) { stats.timeouts++; return false; }
     if (!wait_flags(CRYPTO_IRQSTAT_RESULT_AVAIL_M, &got)) { stats.timeouts++; return false; }
     if (got & ERR_FLAGS) { stats.dma_errors++; return false; }
     if (!wait_reg(CRYPTO_O_DMASTAT, CRYPTO_DMASTAT_CH1_ACT, 0)) { stats.timeouts++; return false; }
+    uint32_t t3 = CYCLES();
     /* AESReadTag: the tag is valid once the context is saved. */
     if (!wait_reg(CRYPTO_O_AESCTL, CRYPTO_AESCTL_SAVED_CONTEXT_RDY_M, CRYPTO_AESCTL_SAVED_CONTEXT_RDY_M)) {
         stats.timeouts++;
@@ -288,14 +293,25 @@ static bool ccm_locked(const uint8_t key[16], bool encrypt, const uint8_t nonce[
     for (unsigned i = 0; i < len; i++) out[i] = r[i];
     wipe(t, sizeof t);
     stats.ccm_ops++;
+    uint32_t t4 = CYCLES();
+    stats.prof_setup += t1 - t0;
+    stats.prof_aad += t2 - t1;
+    stats.prof_data += t3 - t2;
+    stats.prof_tail += t4 - t3;
     return true;
 }
 
 /* Only what the operation used (bounded by the buffers): the rest is zero. */
+static void wipe_words(uint32_t *p, unsigned bytes, unsigned cap_words) {
+    volatile uint32_t *v = p;
+    unsigned n = (bytes + 3u) / 4u;
+    if (n > cap_words) n = cap_words;
+    while (n--) *v++ = 0;
+}
 static void wipe_ccm_buffers(unsigned aad_len, unsigned len) {
-    wipe(dma_aad, aad_len < sizeof dma_aad ? aad_len : sizeof dma_aad);
-    wipe(dma_data, len < sizeof dma_data ? len : sizeof dma_data);
-    wipe(dma_res, len < sizeof dma_res ? len : sizeof dma_res);
+    wipe_words(dma_aad, aad_len, HAL_AES_CCM_MAX / 4u);
+    wipe_words(dma_data, len, HAL_AES_CCM_MAX / 4u);
+    wipe_words(dma_res, len, HAL_AES_CCM_MAX / 4u);
 }
 
 bool hal_aes_ccm(const uint8_t key[16], bool encrypt, const uint8_t nonce[13], const uint8_t *aad, unsigned aad_len,
