@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT
- * Hardware campaign on a LABORATORY network (docs/freertos-migration/hardware-campaign.md):
+ * Hardware campaign on a LABORATORY network (docs/firmware/hardware-campaign.md):
  * the full zigbee-herdsman 11.2.1 Controller (Zigbee2MQTT minus MQTT) on the
  * FreeRTOS coordinator, persistent network/database under private/znp-lab/
  * (shared with znp_pair_test.cjs). Never use it with the production network.

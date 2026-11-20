@@ -665,7 +665,7 @@ def clear_zstack_state(port, report):
     finally:
         mt.close()
     if not (report["startup_option_written"] and report["zstack_unconfigured"]):
-        raise RuntimeError("Z-Stack state not cleared: do NOT start Zigbee2MQTT, see docs/freertos-migration/rollback.md")
+        raise RuntimeError("Z-Stack state not cleared: do NOT start Zigbee2MQTT, see docs/firmware/restauration.md")
 
 
 def rollback(args):

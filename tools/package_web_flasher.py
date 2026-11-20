@@ -49,6 +49,11 @@ def package(archive, output, commit):
             for address, byte in memory.items():
                 if address < APP_END:
                     binary[address] = byte
+            identity = binary[0x100:0x118]
+            if (identity[:8] != b'ZBDP-FRT' or
+                    tuple(int.from_bytes(identity[a:a + 4], 'little') for a in (8, 12, 16, 20)) !=
+                    (1, 1, baud, manifest['build_revision'])):
+                raise ValueError('Invalid FreeRTOS application identity / storage layout')
             images.append((baud, bytes(binary), raw, manifest))
     output.mkdir(parents=True, exist_ok=True)
     (output / 'firmware').mkdir(exist_ok=True)

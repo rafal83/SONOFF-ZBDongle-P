@@ -40,7 +40,7 @@ Chaque étape écrit ses résultats sous `private/hw-campaign/` (non versionné)
 | **H8** Endurance courte | `--soak 120 --interval 30` (1 h) ; `freertos_perf.py --interval 60 --samples 60` dans une fenêtre où herdsman est arrêté | Taux de livraison, charge CPU, piles, compteurs | ≥ 99 % pour R1 et R2, ≥ 97 % pour S ; aucune dérive des piles ; aucun reset |
 | **H9** AES matériel | `freertos_lab_session.py flash ... --baud 1000000 --hw-aes --z2m-stopped` (store conservé), puis répéter H1b, H3, H4 et H8 | `ccm_hw_frame_cycles` contre `ccm_sw_frame_cycles` ; `ccm_hw_ops`, `ccm_hw_faults`, `ccm_hw_mismatches`, `ccm_hw_audits`, `aes_timeouts`, `aes_resets` | `hw_aes_state = 1` ; 0 désaccord ; 0 délai dépassé ; audits croissants ; gain mesuré et consigné (aucune estimation) |
 | **H10** Zigbee2MQTT | Z2M de laboratoire (dossier séparé) sur le même réseau : interview, carte réseau, *permit join*, suppression et ré-ajout de S, arrêt propre | Journal Z2M ; `coordinator_backup.json` réécrit à l'arrêt | Aucune erreur ; sauvegarde écrite à l'arrêt (correctif des files ZNP, commit `0d5987e`) |
-| **H11** Retour | Programmer l'image de production retenue (ou revenir à Z-Stack avec `rollback`, voir [rollback.md](rollback.md)) ; redémarrer Z2M de production | Journal Z2M | `resumed` ; appareils de production entendus |
+| **H11** Retour | Programmer l'image FreeRTOS retenue ou [restaurer un firmware sauvegardé](restauration.md), stockage actuel conservé ; redémarrer Z2M | Journal Z2M | `resumed` ; appareils du réseau entendus |
 
 Remettre ensuite R1, R2 et S à zéro avant de les rendre au réseau de production.
 
@@ -50,7 +50,7 @@ Après la recette, avec l'accord du propriétaire, l'image retenue remplace cell
 
 - **chaque jour** : erreurs et avertissements du journal Z2M (hors analyse DIAG), appareils entendus, disponibilité ;
 - **chaque semaine**, Z2M arrêté 5 minutes : `freertos_perf.py` (perf, maillage, store) et sauvegarde fraîche (`production_nv_snapshot.cjs`) ;
-- **critères d'arrêt** : réinitialisation inattendue, compteur `ccm_hw_mismatches` ou `aes_timeouts` non nul, marge de pile sous 10 %, store `CORRUPT`, appareils perdus. En cas d'arrêt : revenir à l'image précédente, ou à Z-Stack par `rollback`.
+- **critères d'arrêt** : réinitialisation inattendue, compteur `ccm_hw_mismatches` ou `aes_timeouts` non nul, marge de pile sous 10 %, store `CORRUPT`, appareils perdus. En cas d'arrêt : conserver une capture de l'état actuel et restaurer une image FreeRTOS compatible. Un stockage corrompu exige une récupération séparée du réseau.
 
 ## Rapport
 

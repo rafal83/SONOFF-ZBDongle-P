@@ -1,4 +1,4 @@
-# Phase G — validation et mesures
+# Validation et mesures
 
 ## Niveaux de preuve
 
@@ -10,11 +10,17 @@
 | Contrôles statiques d'image | Lien, carte mémoire, symboles requis/interdits, `tools/image.py check`, CCFG identique à 2026111802 | **Réussis** aux deux débits |
 | Pile portable + vrai herdsman | Simulateur TCP (`firmware/freertos/sim/znp_sim.c`) et `ZStackAdapter` herdsman 11.2.1 | **17 étapes réussies** (`tools/znp_sim_acceptance.cjs`, aussi en CI) |
 | Matériel | Dongle unique de l'utilisateur, sauvegarde et restauration automatiques | Démarrage, UART, FreeRTOS, watchdog, radio, arrivée d'un appareil réel, clé de lien unique, persistance après reset ; **recette herdsman de 17 étapes réussie sur le dongle** ; **appairage et pilotage d'une ampoule via le `Controller` herdsman** ; voir [hardware-session-20261118.md](hardware-session-20261118.md) |
-| Répétition de migration | Sauvegarde Z2M de production restaurée par herdsman dans le firmware simulé | **Réussie** : voir [migration.md](migration.md) |
+| Restauration d'une sauvegarde réseau | Sauvegarde Z2M de production restaurée par herdsman dans le firmware simulé | **Réussie** : voir [restauration.md](restauration.md) |
 | Réseau de production | Migré le 18 novembre au soir avec l'accord du propriétaire | Image `969fb13` en service : voir [status.md](status.md#production) |
 | Recette matérielle à deux routeurs et un endormi | [hardware-campaign.md](hardware-campaign.md) | **À exécuter** : séance à autoriser |
 
 Les tests Python du dépôt passent : 54 tests, dont l'analyseur du store FreeRTOS et la garde de l'action `restore`.
+
+## Flasher et restauration depuis une sauvegarde
+
+Les tests JavaScript couvrent 28 scénarios : protocole ROM fragmenté, modèle incompatible, sauvegarde complète vérifiée, import JSON et BIN, refus d'une sauvegarde corrompue ou d'un autre dongle, format de stockage incompatible, interruption USB et erreur de relecture. Une restauration doit réécrire l'application sauvegardée tout en gardant les données réseau actuelles, même si celles de la sauvegarde sont différentes.
+
+Le parcours dans Chrome a aussi été exercé avec un dongle ROM simulé, aux formats ordinateur et mobile : installation, sélection d'un fichier de sauvegarde, confirmation distincte, refus de mauvais SHA-256 et d'IEEE différent, restauration et conservation du stockage. Aucun port USB physique n'a été ouvert. Les rapports générés à chaque build font foi pour l'image publiée ; ces essais ne remplacent pas une validation matérielle.
 
 ## Mesures disponibles
 

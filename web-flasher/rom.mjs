@@ -26,6 +26,63 @@ export function validateApplication(bytes) {
     throw new Error('Vecteurs du firmware invalides.');
   }
 }
+
+export function applicationInfo(bytes) {
+  validateApplication(bytes);
+  if (new TextDecoder().decode(bytes.subarray(0x100, 0x108)) !== 'ZBDP-FRT' ||
+      le32(bytes, 0x108) !== 1 || le32(bytes, 0x10c) !== 1 ||
+      ![115200, 1000000].includes(le32(bytes, 0x110))) {
+    throw new Error('Cette sauvegarde ne contient pas un firmware FreeRTOS avec un stockage compatible.');
+  }
+  return { baud: le32(bytes, 0x110), revision: le32(bytes, 0x114) };
+}
+
+export async function encodeBackup(bytes, ieee) {
+  if (!(bytes instanceof Uint8Array) || bytes.length !== FLASH_SIZE || !/^[a-f0-9]{16}$/.test(ieee)) {
+    throw new Error('Sauvegarde complète et identité du dongle requises.');
+  }
+  let data = '';
+  for (let offset = 0; offset < bytes.length; offset += 8192) data += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
+  return JSON.stringify({ schema: 1, board: 'SONOFF ZBDongle-P', ieee, created: new Date().toISOString(),
+    sha256: await sha256(bytes), flash: btoa(data) });
+}
+
+export async function decodeBackup(contents, filename) {
+  if (!(contents instanceof Uint8Array) || contents.length > 1024 * 1024) throw new Error('Fichier de sauvegarde trop volumineux.');
+  let bytes, ieee;
+  if (filename.toLowerCase().endsWith('.json')) {
+    let data;
+    try { data = JSON.parse(new TextDecoder().decode(contents)); } catch { throw new Error('Sauvegarde JSON invalide.'); }
+    if (data?.schema !== 1 || data.board !== 'SONOFF ZBDongle-P' || !/^[a-f0-9]{16}$/.test(data.ieee) ||
+        !/^[a-f0-9]{64}$/.test(data.sha256) || typeof data.flash !== 'string' || data.flash.length !== Math.ceil(FLASH_SIZE / 3) * 4) {
+      throw new Error('Format de sauvegarde invalide. Utilisez une sauvegarde complète de ce flasher.');
+    }
+    try { bytes = Uint8Array.from(atob(data.flash), c => c.charCodeAt(0)); } catch { throw new Error('Contenu de sauvegarde invalide.'); }
+    if (await sha256(bytes) !== data.sha256) throw new Error('Le SHA-256 de la sauvegarde est invalide.');
+    ieee = data.ieee;
+  } else {
+    // Previous flasher exports carry the factory IEEE in their original filename.
+    const match = /^zbdongle-p-([a-f0-9]{16})-.+\.bin$/i.exec(filename);
+    if (!match) throw new Error('Conservez le nom d’origine du BIN : il identifie le dongle sauvegardé.');
+    bytes = contents.slice();
+    ieee = match[1].toLowerCase();
+  }
+  if (bytes.length !== FLASH_SIZE) throw new Error('La sauvegarde doit contenir les 352 Kio de Flash.');
+  const info = applicationInfo(bytes.subarray(0, APP_END));
+  return { bytes, ieee, ...info, hash: await sha256(bytes), legacy: !filename.toLowerCase().endsWith('.json') };
+}
+
+export async function restoreApplication(rom, saved, original, progress = () => {}) {
+  const bytes = Uint8Array.from(saved.bytes);
+  const info = applicationInfo(bytes.subarray(0, APP_END));
+  if (!rom.device || saved.ieee !== rom.device.ieee) throw new Error('Cette sauvegarde appartient à un autre dongle.');
+  if (bytes.length !== FLASH_SIZE || await sha256(bytes) !== saved.hash) throw new Error('Sauvegarde modifiée ou incomplète.');
+  // installApplication rechecks the current CRC and compatible CCFG, then changes
+  // the application only. Never restore an old nv_log or security counter floor.
+  await installApplication(rom, bytes.subarray(0, APP_END), await sha256(bytes.subarray(0, APP_END)),
+    original, bytes.subarray(CCFG), progress);
+  return info;
+}
 function appRange(address, length) {
   if (!Number.isInteger(address) || !Number.isInteger(length) || address < 0 || length <= 0 || address + length > APP_END) {
     throw new Error('Écriture refusée hors de la zone application.');
@@ -187,7 +244,10 @@ export class TiRom {
   }
   async close() {
     if (!this.opened) return;
-    try { await this.reader.cancel(); await this.reading; }
+    try {
+      try { await this.reader.cancel(); } catch (error) { if (!this.readError) throw error; }
+      await this.reading;
+    }
     finally {
       this.reader.releaseLock();
       this.writer.releaseLock();

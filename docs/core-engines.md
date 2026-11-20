@@ -1,6 +1,6 @@
 # Travail sur les trois moteurs finaux
 
-17 novembre 2026. Les modules `core_indirect`, `core_broadcast` et `core_security` sont des implémentations indépendantes testées sur PC et sur leurs instructions Cortex-M4F compilées par TI. **Ils sont raccordés au coordinateur ZNP depuis le candidat 2026111701 à 1 Mbaud.** Le 18 novembre, leur [variante 2026111802 sous SDK 8.33](sdk-migration.md) est installée sur le dongle ; les tests de moteurs isolés décrits ici restent une campagne distincte sans accès matériel. Voir les [raccordements, preuves et limites](core-integration.md).
+Rapport historique du 17 novembre 2026 sur les modules indépendants `core_indirect`, `core_broadcast` et `core_security`, testés sur PC et sur Cortex-M4F émulé. Les essais de l'ancien coordinateur ne qualifient pas le firmware actuel. Consulter l'[architecture FreeRTOS](firmware/architecture.md) et sa [validation](firmware/validation.md).
 
 Le [rapport reproductible](core-engine-validation-20261117.json) donne les empreintes des sources, des tests et de l'ELF de test. Le programme installé, son paquet et les sources du commit `f26734e` sont conservés séparément dans `private/release-20261117-frozen/`.
 

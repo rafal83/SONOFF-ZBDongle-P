@@ -35,35 +35,50 @@
     </section>
 
     <section class="flasher" aria-labelledby="installer-title">
-      <div class="panel-heading"><div><p class="eyebrow">WEB FLASHER</p><h2 id="installer-title">Installer FreeRTOS</h2></div><span class="badge">Version expérimentale</span></div>
+      <div class="panel-heading"><div><p class="eyebrow">WEB FLASHER</p><h2 id="installer-title">Installer ou restaurer</h2></div><span class="badge">Version expérimentale</span></div>
       <p id="compatibility" class="notice" role="status">Chrome ou Edge sur ordinateur · Connexion USB requise · ZBDongle-P uniquement, pas le modèle E.</p>
       <div class="install-grid">
         <section class="settings" aria-labelledby="firmware-title">
           <h3 id="firmware-title">Votre firmware</h3>
+          <label class="field-label" for="operation">Que souhaitez-vous faire ?</label>
+          <div class="select-wrap"><select id="operation"><option value="install">Installer la dernière version</option><option value="restore">Restaurer un firmware sauvegardé</option></select></div>
+          <div id="install-settings" class="operation-settings">
           <div class="release-line"><strong id="release-name">Chargement de la version…</strong><a id="release-link" hidden target="_blank" rel="noopener noreferrer">Voir la prérelease</a></div>
           <label class="field-label" for="baud">Débit pour Zigbee2MQTT</label>
           <div class="select-wrap"><select id="baud" disabled><option value="1000000">1 000 000 bauds — recommandé</option><option value="115200">115 200 bauds</option></select></div>
           <p class="field-help">À reporter dans <code>serial.baudrate</code> après l’installation.</p>
           <p class="hash-label">SHA-256 du firmware</p><code class="hash" id="firmware-hash">Vérification en cours…</code>
           <a id="hex-link" class="text-link" hidden download>Télécharger le fichier HEX</a>
-          <div class="preservation"><span class="shield" aria-hidden="true">✓</span><p>Le stockage Zigbee et la configuration du dongle sont conservés. <strong>Une migration depuis Z-Stack demande une procédure distincte.</strong> <a href="https://github.com/rafal83/SONOFF-ZBDongle-P/blob/freeRTOS/docs/freertos-migration/migration.md" target="_blank" rel="noopener noreferrer">Lire la procédure</a></p></div>
+          </div>
+          <div id="restore-settings" class="operation-settings" hidden>
+            <label class="field-label" for="restore-file">Sauvegarde de ce dongle</label>
+            <input id="restore-file" type="file" accept=".json,.bin">
+            <p class="field-help">Choisissez la sauvegarde complète du flasher. Le firmware FreeRTOS sauvegardé sera restauré ; le réseau et ses compteurs actuels seront conservés.</p>
+            <p id="restore-info" class="field-help" role="status">Aucune sauvegarde sélectionnée.</p>
+            <p class="hash-label">SHA-256 de la sauvegarde</p><code class="hash" id="restore-hash">Non vérifié</code>
+          </div>
+          <div class="preservation"><span class="shield" aria-hidden="true">✓</span><p>Le stockage Zigbee et la configuration du dongle sont conservés, puis vérifiés. <a href="https://github.com/rafal83/SONOFF-ZBDongle-P/blob/freeRTOS/docs/firmware/installation.md" target="_blank" rel="noopener noreferrer">Installation et restauration</a></p></div>
         </section>
         <section class="controls" aria-labelledby="dongle-title">
           <h3 id="dongle-title">Votre dongle</h3>
           <p class="control-help">Branchez le dongle à cet ordinateur et arrêtez Zigbee2MQTT pour libérer son port USB.</p>
-          <label class="consent"><input id="consent" type="checkbox"><span>Zigbee2MQTT est arrêté et je souhaite mettre à jour ce ZBDongle-P.</span></label>
+          <label class="consent"><input id="consent" type="checkbox"><span>Zigbee2MQTT est arrêté et je souhaite programmer ce ZBDongle-P.</span></label>
           <button id="connect" class="button secondary" disabled>Connecter et sauvegarder</button>
           <p id="device-info" class="device-info">Aucun dongle connecté</p>
           <a id="backup-link" class="text-link" hidden download>Télécharger de nouveau la sauvegarde</a>
           <p class="privacy">La sauvegarde reste sur votre ordinateur. Aucune donnée du dongle n’est envoyée à un serveur.</p>
           <button id="install" class="button primary" disabled>Installer le firmware</button>
-          <button id="disconnect" class="text-button" hidden>Déconnecter sans installer</button>
+          <div id="restore-controls" hidden>
+            <label class="consent"><input id="restore-consent" type="checkbox"><span>Je souhaite restaurer le firmware de cette sauvegarde en gardant les données Zigbee actuelles.</span></label>
+            <button id="restore" class="button primary" disabled>Restaurer le firmware sauvegardé</button>
+          </div>
+          <button id="disconnect" class="text-button" hidden>Déconnecter</button>
         </section>
       </div>
       <div class="status-area"><div class="status-heading"><strong id="status" role="status" aria-live="polite">Préparation du firmware…</strong><span id="percent"></span></div><progress id="progress" max="100" value="0" aria-label="Progression de l’installation"></progress><p id="result-help"></p></div>
       <details class="log"><summary>Journal de l’opération</summary><pre id="log" aria-label="Journal de l’opération"></pre></details>
     </section>
-    <section class="howto" aria-label="Comment installer le firmware"><article><span class="step-mark" aria-hidden="true">USB</span><h3>Connectez</h3><p>Le navigateur vous laisse choisir le port du dongle. Son modèle est vérifié avant toute écriture.</p></article><article><span class="step-mark" aria-hidden="true">BIN</span><h3>Sauvegardez</h3><p>Une copie complète de la mémoire est téléchargée avant l’installation. Conservez-la dans un endroit privé.</p></article><article><span class="step-mark" aria-hidden="true">CRC</span><h3>Installez</h3><p>Le firmware est écrit, puis relu intégralement. Les données conservées sont également vérifiées.</p></article></section>
+    <section class="howto" aria-label="Comment installer le firmware"><article><span class="step-mark" aria-hidden="true">USB</span><h3>Connectez</h3><p>Le navigateur vous laisse choisir le port du dongle. Son modèle est vérifié avant toute écriture.</p></article><article><span class="step-mark" aria-hidden="true">JSON</span><h3>Sauvegardez</h3><p>Une copie complète de la mémoire est téléchargée avant l’installation. Conservez-la dans un endroit privé.</p></article><article><span class="step-mark" aria-hidden="true">CRC</span><h3>Installez</h3><p>Le firmware est écrit, puis relu intégralement. Les données conservées sont également vérifiées.</p></article></section>
   </main>
   <footer class="wrap"><span>FreeRTOS pour SONOFF ZBDongle-P</span><span><a href="./LICENSE.txt">Licence du site</a> · <a href="./FIRMWARE-LICENSES.txt">Licences du firmware</a> · Flash local via Web Serial</span></footer>
   <noscript>Activez JavaScript pour utiliser le flasher USB.</noscript>

@@ -1,4 +1,4 @@
-# Phase C — couche radio IEEE 802.15.4
+# Couche radio IEEE 802.15.4
 
 ## Choix
 

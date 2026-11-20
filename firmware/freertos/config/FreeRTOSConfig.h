@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * FreeRTOS kernel configuration for the SONOFF ZBDongle-P (CC2652P, Cortex-M4F).
  *
- * Design rules (docs/freertos-migration/architecture.md):
+ * Design rules (docs/firmware/architecture.md):
  *  - static allocation only: no FreeRTOS heap is linked (heap_x.c absent);
  *  - preemptive scheduling, 1 kHz tick, no tickless idle (RF core stays on);
  *  - every ISR that calls a FromISR API runs at a priority numerically
