@@ -1,14 +1,14 @@
-# Performances : notre firmware face à Z-Stack (Koenkk) et ZeroStack (SMLIGHT)
+# Performances : firmware FreeRTOS face à Z-Stack (Koenkk) et ZeroStack (SMLIGHT)
 
 Dernière mise à jour : **20 novembre 2026**. Ce document est la référence chiffrée ; le [README](../../README.md#comparatif) en reprend le résumé. Il est mis à jour à chaque nouvelle mesure (voir [Mettre à jour](#mettre-à-jour)).
 
 Trois sources, à ne pas confondre :
 
-| Source | Ce qui est mesuré | Notre firmware | Z-Stack Koenkk | ZeroStack |
+| Source | Ce qui est mesuré | Firmware FreeRTOS | Z-Stack Koenkk | ZeroStack |
 |---|---|---|---|---|
 | **Réseau réel** (dongle de production, 130 appareils) | lectures Zigbee de bout en bout | mesuré | **mesuré** (image 20250321, même dongle, même réseau) | non disponible |
 | **Dongle, compteur DWT** | cycles CPU d'une trame CCM\* | mesuré | — | — |
-| **Émulateur** (Unicorn, Cortex-M4F) | instructions de nos chemins de code | mesuré | — | — |
+| **Émulateur** (Unicorn, Cortex-M4F) | instructions des chemins de code | mesuré | — | — |
 | **Documentation SMLIGHT** | leurs chiffres, sur CC1352P7 à 48 MHz | — | « Z-Stack stock » selon SMLIGHT | publié, **non reproduit** |
 
 ZeroStack est un binaire fermé : il n'a été ni exécuté ni émulé ici.
@@ -19,14 +19,14 @@ Banc en lecture seule `tools/znp_prod_bench.cjs`, dongle de production sur COM8,
 
 | Image | Conditions | Lecture isolée, médiane / p95 | Rafales réussies | Part des routeurs joignables |
 |---|---|---|---|---|
-| **Notre firmware actuel** (priorité routes, recent_tx 32, reroutage) | 28 routeurs joignables, 20 dBm, réessais herdsman, délai 10 s | **34,4 ms / 60,4 ms** | **224 / 224** | **100 %** (8 rafales sur 8 à 28 / 28) |
-| Notre 2f787a6 (reroutage Network Status, CCM\* optimisé) | 29 routeurs, 20 dBm, réessais herdsman, délai 10 s | 68 ms / 168 ms | 223 / 232 | 96,1 % (3 rafales sur 8 à 29 / 29) |
-| Notre 1e7b645 (store 2 × 56 Kio, CCM\* natif allégé) | idem | 65 ms / 221 ms | 221 / 232 | 95,3 % (2 rafales sur 8 à 29 / 29) |
-| Notre 72bc038 (CCM\* natif) | idem | 78 ms / 226 ms | 207 / 232 | 89,2 % |
-| Notre 57f17bc | 32 routeurs dont 4 morts, 20 dBm, réessais, 10 s | 66 ms / 218 ms | 209 / 256 | 93,3 % (209 / 224) |
-| Notre 975a2b0 (file MAC de 32) | 32 routeurs dont 4 morts, 5 dBm, sans réessai, 4 s | 74 ms / 125 ms | 103 / 160 | 73,6 % |
-| Notre 4a9e55f (AES matériel par blocs) | idem | 43 ms / 87 ms | 71 / 160 | 50,7 % |
-| Notre ed08b88 (AES logiciel) | idem | 74 ms / 95 ms | 68 / 160 | 48,6 % |
+| **Commit 666f804** (priorité routes, recent_tx 32, reroutage) | 28 routeurs joignables, 20 dBm, réessais herdsman, délai 10 s | **34,4 ms / 60,4 ms** | **224 / 224** | **100 %** (8 rafales sur 8 à 28 / 28) |
+| Commit 2f787a6 (reroutage Network Status, CCM\* optimisé) | 29 routeurs, 20 dBm, réessais herdsman, délai 10 s | 68 ms / 168 ms | 223 / 232 | 96,1 % (3 rafales sur 8 à 29 / 29) |
+| Commit 1e7b645 (store 2 × 56 Kio, CCM\* natif allégé) | idem | 65 ms / 221 ms | 221 / 232 | 95,3 % (2 rafales sur 8 à 29 / 29) |
+| Commit 72bc038 (CCM\* natif) | idem | 78 ms / 226 ms | 207 / 232 | 89,2 % |
+| Commit 57f17bc | 32 routeurs dont 4 morts, 20 dBm, réessais, 10 s | 66 ms / 218 ms | 209 / 256 | 93,3 % (209 / 224) |
+| Commit 975a2b0 (file MAC de 32) | 32 routeurs dont 4 morts, 5 dBm, sans réessai, 4 s | 74 ms / 125 ms | 103 / 160 | 73,6 % |
+| Commit 4a9e55f (AES matériel par blocs) | idem | 43 ms / 87 ms | 71 / 160 | 50,7 % |
+| Commit ed08b88 (AES logiciel) | idem | 74 ms / 95 ms | 68 / 160 | 48,6 % |
 | **Z-Stack Koenkk 20250321** | 32 routeurs dont 4 morts, 115 200 bauds, **sans réessai, 4 s** | **51 ms / 127 ms** | 140 / 160 | **100 %** (28 / 28 à chaque rafale) |
 
 Lecture :
@@ -84,7 +84,7 @@ Le mode natif garde des contrôles que ZeroStack ne décrit pas :
 
 Une trame à MIC falsifié coûte donc l'opération native plus une opération logicielle. **Résultat : un coût moyen du même ordre que les 3 824 à 3 968 cycles publiés par ZeroStack.** Leur protocole de mesure n'est pas publié ; ce n'est pas une comparaison à conditions identiques.
 
-## 3. CPU : charges décrites par SMLIGHT, sur notre code émulé
+## 3. CPU : charges décrites par SMLIGHT, sur le code FreeRTOS émulé
 
 Banc `tools/bench_freertos.py`, scénarios dans `firmware/freertos/tests/arm_perf.c`, résultats dans `build/freertos/arm-test/benchmarks.json`.
 
@@ -92,30 +92,35 @@ Banc `tools/bench_freertos.py`, scénarios dans `firmware/freertos/tests/arm_per
 - **Dans l'émulateur, l'AES est logiciel.** Les lignes qui déchiffrent surestiment donc le coût de l'image de production : voir la section 2 pour le CCM\* natif.
 - **SMLIGHT ne publie ni la taille des trames, ni le nombre d'itérations, ni la version de Z-Stack comparée.** Les rapports ci-dessous sont des ordres de grandeur.
 
-| Charge (définition SMLIGHT) | Notre firmware | ZeroStack (publié) | Z-Stack « stock » (selon SMLIGHT) |
+| Charge (définition SMLIGHT) | Firmware FreeRTOS | ZeroStack (publié) | Z-Stack « stock » (selon SMLIGHT) |
 |---|---|---|---|
-| Écho d'un broadcast relayé (50 routeurs, 1 000 échos) | **≈ 2 555 cycles (53 µs) par écho, total ≈ 53 ms** : doublon reconnu avant tout déchiffrement | 7 076 cycles (147 µs), total 151 ms | 143 865 cycles (3 ms), total 3 s |
-| Trame rejouée | ≈ 2 474 cycles (52 µs), rejetée avant déchiffrement | **1 550 cycles** | 143 802 cycles |
-| En-tête de sécurité tronqué | ≈ 1 682 cycles (35 µs) | 320 à 6 631 cycles | défaut distant ≈ 3 ms |
-| MIC falsifié | ≈ 63 825 cycles en AES logiciel ; en production : CCM\* natif plus revérification logicielle | **4 760 cycles** | 143 058 cycles |
-| Réception d'un rapport ZCL sécurisé (MAC, NWK, APS), 200 appareils | ≈ 65 850 cycles (1,37 ms) en AES logiciel | — | — |
-| Appareil inconnu cherché dans une table pleine | **≈ 252 cycles (5,2 µs)**, 200 entrées | 326 cycles, 300 entrées | 1 486 228 cycles |
+| Écho d'un broadcast relayé (50 routeurs, 1 000 échos) | **≈ 1 766 cycles (37 µs) par écho, total ≈ 37 ms** : doublon reconnu avant tout déchiffrement | 7 076 cycles (147 µs), total 151 ms | 143 865 cycles (3 ms), total 3 s |
+| Trame rejouée | **≈ 1 444 cycles (30 µs)**, rejetée avant déchiffrement | 1 550 cycles | 143 802 cycles |
+| En-tête de sécurité tronqué | **≈ 1 082 cycles (23 µs)** | 320 à 6 631 cycles | défaut distant ≈ 3 ms |
+| MIC falsifié | ≈ 62 792 cycles en AES logiciel ; en production : CCM\* natif plus revérification logicielle | **4 760 cycles** | 143 058 cycles |
+| Réception d'un rapport ZCL sécurisé (MAC, NWK, APS), 200 appareils | ≈ 65 219 cycles (1,36 ms) en AES logiciel | — | — |
+| Appareil inconnu cherché dans une table pleine | **≈ 228 cycles (4,8 µs)**, 200 entrées | 326 cycles, 300 entrées | 1 486 228 cycles |
 | Allocation mémoire | **sans objet : aucun tas**, tout est statique | 218 cycles | 2 550 cycles |
 | Écriture identique de 100 octets, × 48 | ≈ 4 537 cycles (94,5 µs), 0 octet écrit | **3 770 cycles (78,5 µs)**, 0 octet | 100 714 cycles, 48 écritures |
-| Écritures de 100 octets avant la 1re compaction | 512 (store vide) ; **405** avec 200 enregistrements vivants de 48 octets | 1 013 | 69 |
-| Coût d'une compaction (200 enregistrements vivants) | ≈ 19,6 ms de CPU et 7 effacements de secteur (durée réelle non mesurée) | non publié | non publié |
+| Écritures avant la 1re compaction (store vide) | **1 024** (écritures 44 o) / **512** (100 o) | 1 013 (store vide) | 69 |
+| Écritures avant la 1re compaction (200 appareils vivants) | **756** (mises à jour réelles 48 o) / **405** (100 o) | non publié | non supporté |
+| Coût d'une compaction (200 enregistrements vivants) | ≈ 19,5 ms de CPU et 7 effacements de secteur (durée réelle non mesurée) | non publié | non publié |
 | Coupures de courant testées | **27 980**, 0 perte : 25 900 pendant des compactions, 858 sur le journal, 770 sur le store complet, 452 pendant la migration de disposition | 22 959, 0 perte | 1 conflit, récupération de 62 pages |
 | Trames malformées | 0 plantage sur ≈ 208 millions d'entrées fuzzées (ASan + UBSan) | 0 plantage, 12 classes et 3 255 vecteurs | défaut distant |
 | Bruit UART (64 octets collés à une commande) | 0 ping perdu, reprise en 40 ms | 0 ping perdu, reprise en 3 à 55 ms | 8,84 s d'interruption |
 
 Ce qui reste en retrait de ZeroStack :
-- **le rejet d'un MIC falsifié :** la revérification logicielle est un choix de sûreté ;
-- **l'endurance du store :** 405 écritures entre deux compactions contre 1 013 annoncées, avec un store vide chez eux ;
-- **la trame rejouée :** 2 474 cycles contre 1 550.
+- **le rejet d'un MIC falsifié :** les rejets du moteur sont revérifiés en logiciel, dans un budget de 8 puis 1 toutes les 16 opérations réussies : c'est un choix de sûreté face aux pannes silencieuses ;
+- **l'écriture identique (sans écriture flash) :** 4 537 cycles contre 3 770 cycles chez ZeroStack.
+
+Ce qui dépasse désormais ZeroStack :
+- **la trame rejouée :** 1 444 cycles contre 1 550 annoncés ;
+- **l'écho de broadcast :** 1 766 cycles par écho (37 ms total) contre 7 076 cycles (151 ms) ;
+- **l'endurance du store :** 1 024 écritures avant compaction sur store vide contre 1 013 publiées par ZeroStack.
 
 ## 4. Capacités et mémoire
 
-| | Notre firmware | Z-Stack (Koenkk, `firmware.patch`) | ZeroStack (publié) |
+| | Firmware FreeRTOS | Z-Stack (Koenkk, `firmware.patch`) | ZeroStack (publié) |
 |---|---|---|---|
 | Appareils sécurisés (Trust Center) | 200 | 200 (`ZDSECMGR_TC_DEVICE_MAX`) | 200 sur CC2652P |
 | Voisins | 32 | 50 | non publié |
@@ -225,7 +230,7 @@ Les émetteurs réessaient les trames non acquittées, donc presque rien n'est p
 ## Ce qui n'est pas mesuré
 
 - **Le débit sur le matériel.** La section 5 est une simulation. Le seul dongle est le coordinateur de production : une mesure intensive demande un réseau d'essai isolé, avec un autre dongle et quelques routeurs.
-- **ZeroStack sur notre réseau :** l'image fermée n'a pas été flashée.
+- **ZeroStack sur banc physique :** l'image fermée n'a pas été flashée.
 - **Les durées réelles d'effacement de la Flash pendant une compaction.**
 
 ## Mettre à jour
