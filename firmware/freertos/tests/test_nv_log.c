@@ -175,6 +175,78 @@ int main(void) {
      * writes after a cut still succeed and survive a remount. */
     CHECK(nv_log_write(&lg, 1, a, 5) && nv_log_mount(&lg, &OPS, BASE, BANK, SECTOR));
     CHECK(nv_log_read(&lg, 1, buf, sizeof buf, &len) && len == 5 && !memcmp(buf, a, 5));
+    /* Exhaustive power cuts DURING compactions (the riskiest moment: the live
+     * records are copied to the other bank, then it is committed): the store
+     * is brought to the write that compacts, then that write is replayed with
+     * a power cut at EVERY flash operation it performs (program or erase,
+     * torn or partial), from many different store states. After each cut and
+     * remount: the record being written is either its old or its new value,
+     * every other record intact, nothing programmed twice. */
+    {
+        static uint8_t snap_nor[SIZE], snap_prog[SIZE];
+        static nv_log_t snap_lg;
+        static uint8_t snap_model[IDS][64];
+        static uint16_t snap_len[IDS];
+        static bool snap_present[IDS];
+        unsigned states = 0, comp_cuts = 0, writes = 0;
+        /* The model follows the write of record 1 just above. */
+        model_present[1] = true;
+        model_len[1] = 5;
+        memcpy(model[1], a, 5);
+        while (states < 700) {
+            unsigned id = frt_rand() % IDS;
+            uint8_t value[64];
+            uint16_t vlen = (uint16_t)(1u + frt_rand() % 48u);
+            for (unsigned k = 0; k < vlen; k++) value[k] = (uint8_t)frt_rand();
+            memcpy(snap_nor, nor, SIZE); memcpy(snap_prog, programmed, SIZE); snap_lg = lg;
+            memcpy(snap_model, model, sizeof model); memcpy(snap_len, model_len, sizeof model_len);
+            memcpy(snap_present, model_present, sizeof model_present);
+            uint32_t c0 = lg.stats.compactions;
+            unsigned ops0 = ops;
+            budget = -1;
+            CHECK(nv_log_write(&lg, (uint16_t)id, value, vlen));
+            writes++;
+            if (lg.stats.compactions != c0) {
+                unsigned n_ops = ops - ops0;
+                for (unsigned k = 0; k < n_ops; k++) {
+                    memcpy(nor, snap_nor, SIZE); memcpy(programmed, snap_prog, SIZE); lg = snap_lg;
+                    budget = (long)k;
+                    (void)nv_log_write(&lg, (uint16_t)id, value, vlen);
+                    CHECK(dead);
+                    dead = false;
+                    budget = -1;
+                    comp_cuts++;
+                    CHECK(nv_log_mount(&lg, &OPS, BASE, BANK, SECTOR));
+                    uint8_t got[NV_LOG_MAX_RECORD];
+                    uint16_t got_len = 0;
+                    bool present = nv_log_read(&lg, (uint16_t)id, got, sizeof got, &got_len);
+                    bool is_new = present && got_len == vlen && !memcmp(got, value, vlen);
+                    bool is_old = present == snap_present[id] &&
+                                  (!present || (got_len == snap_len[id] && !memcmp(got, snap_model[id], got_len)));
+                    CHECK(is_new || is_old);
+                    for (unsigned o = 0; o < IDS; o++) {
+                        if (o == id) continue;
+                        uint16_t l2 = 0;
+                        bool p2 = nv_log_read(&lg, (uint16_t)o, got, sizeof got, &l2);
+                        CHECK(p2 == snap_present[o]);
+                        if (p2) CHECK(l2 == snap_len[o] && !memcmp(got, snap_model[o], l2));
+                    }
+                }
+                /* Back to the state before, then the write without cut. */
+                memcpy(nor, snap_nor, SIZE); memcpy(programmed, snap_prog, SIZE); lg = snap_lg;
+                CHECK(nv_log_write(&lg, (uint16_t)id, value, vlen));
+                states++;
+            }
+            model_present[id] = true;
+            model_len[id] = vlen;
+            memcpy(model[id], value, vlen);
+        }
+        verify_all();
+        CHECK(double_programs == 0);
+        printf("nv_log: %u power cuts DURING compactions (%u compactions, every flash operation), "
+               "%u writes, 0 records lost\n", comp_cuts, states, writes);
+        CHECK(comp_cuts > 20000);
+    }
     printf("nv_log: %u cuts (%u forward, %u back), %u compactions, %u ops\n", cuts, rolled_forward,
            rolled_back, lg.stats.compactions, ops);
     PASS("nv_log");
