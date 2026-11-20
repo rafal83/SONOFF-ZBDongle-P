@@ -19,7 +19,8 @@ Banc en lecture seule `tools/znp_prod_bench.cjs`, dongle de production sur COM8,
 
 | Image | Conditions | Lecture isolée, médiane / p95 | Rafales réussies | Part des routeurs joignables |
 |---|---|---|---|---|
-| **Notre 72bc038** (CCM\* natif) | 29 routeurs, routeurs morts retirés, 20 dBm, réessais herdsman, délai 10 s | 78 ms / 226 ms | 207 / 232 | **89,2 %** |
+| **Notre 1e7b645** (store 2 × 56 Kio, CCM\* natif allégé) | 29 routeurs, routeurs morts retirés, 20 dBm, réessais herdsman, délai 10 s | 65 ms / 221 ms | 221 / 232 | **95,3 %** |
+| Notre 72bc038 (CCM\* natif) | idem | 78 ms / 226 ms | 207 / 232 | 89,2 % |
 | Notre 57f17bc | 32 routeurs dont 4 morts, 20 dBm, réessais, 10 s | 66 ms / 218 ms | 209 / 256 | 93,3 % (209 / 224) |
 | Notre 975a2b0 (file MAC de 32) | 32 routeurs dont 4 morts, 5 dBm, sans réessai, 4 s | 74 ms / 125 ms | 103 / 160 | 73,6 % |
 | Notre 4a9e55f (AES matériel par blocs) | idem | 43 ms / 87 ms | 71 / 160 | 50,7 % |
@@ -28,13 +29,13 @@ Banc en lecture seule `tools/znp_prod_bench.cjs`, dongle de production sur COM8,
 
 Lecture :
 
-- **Z-Stack Koenkk reste devant en rafale.** Il a répondu à 100 % des routeurs joignables, dans des conditions plus dures pour lui : sans réessai et avec un délai de 4 s. Notre meilleure image est entre 89 et 93 %.
-- **Les progrès d'aujourd'hui :** passer de 49 % à 89–93 % est venu de quatre changements :
+- **Z-Stack Koenkk reste devant en rafale.** Il a répondu à 100 % des routeurs joignables, dans des conditions plus dures pour lui : sans réessai et avec un délai de 4 s. Notre meilleure session atteint 95,3 %, avec 2 rafales sur 8 à 29 / 29.
+- **Les progrès d'aujourd'hui :** passer de 49 % à 89–95 % est venu de quatre changements :
   - une file MAC plus grande ;
   - des tours de retransmission MAC ;
   - la coalescence des Route Request ;
   - la puissance d'émission à 20 dBm, la valeur que Zigbee2MQTT impose.
-- **Les échecs restants de 72bc038 ne sont pas internes au coordinateur.** Tous sont des « pas de réponse après une confirmation réussie ». Ils se concentrent sur deux routeurs : Lumière garage 0x7491 et Routeur dans portail 0x6454. Les compteurs du coordinateur ne montrent aucune perte interne.
+- **Les échecs restants ne sont pas internes au coordinateur.** Pour 72bc038 comme pour 1e7b645, tous sont des « pas de réponse après une confirmation réussie ». Les compteurs du coordinateur ne montrent aucune perte interne : file MAC jamais pleine, rien d'abandonné. Avec 1e7b645, 4 des 11 échecs viennent du seul routeur 0x146d.
 - **La lecture isolée varie avec l'état du réseau,** de 43 à 78 ms selon la session. L'écart avec Koenkk (51 ms) est du même ordre que cette variation. Une comparaison serrée exige des sessions entrelacées.
 - **La durée d'une rafale n'est pas comparable :** le délai d'attente est de 10 s chez nous et de 4 s pour Koenkk.
 
@@ -48,25 +49,38 @@ Cycles DWT pour une trame de 22 octets d'en-tête authentifié et 40 octets de c
 |---|---|---|
 | AES logiciel | 74 769 | 1,56 ms |
 | Moteur AES par blocs (DMA) et contrôle logiciel | 21 609 | 0,45 ms |
-| **CCM\* natif du moteur AES** (72bc038, en production) | **8 984** | **0,19 ms** |
+| CCM\* natif, 72bc038 : la mesure incluait un contrôle logiciel | 8 984 | 0,19 ms |
+| **CCM\* natif, 1e7b645** (en production) : banc de 16 trames, hors contrôle logiciel | **3 171** | **66 µs** |
+| **CCM\* natif, 1e7b645 en trafic réel**, contrôles logiciels amortis | **≈ 3 700** | ≈ 77 µs |
 | ZeroStack (publié par SMLIGHT) | 3 824 à 3 968 | ≈ 80 µs |
 | Z-Stack « stock » selon SMLIGHT (« NV vieillie ») | 532 182 | 11,1 ms |
 
-Le mode natif garde des contrôles que ZeroStack ne décrit pas :
+**Pourquoi l'écart entre 8 984 et 3 171 cycles.** L'ancienne mesure enchaînait 16 opérations par blocs puis 16 natives, sur le même compteur de contrôle. La 32e opération déclenchait donc un recalcul logiciel complet, environ 75 000 cycles, compté dans la mesure native. Le nouveau banc fait une opération de chauffe et espace les contrôles. Le gain propre aux optimisations est donc modeste :
+- la copie des données pendant le traitement de l'en-tête ;
+- l'effacement des tampons par mots.
 
+**Trafic réel**, après un banc de production de 1 846 opérations natives :
+
+| Mesure | Valeur |
+|---|---|
+| Temps moyen passé dans le moteur | 1 734 cycles |
+| — préparation (clé, contrôle de clé, registres) | 854 cycles |
+| — en-tête authentifié (AAD) | 219 cycles |
+| — données | 231 cycles |
+| — fin (contexte, MIC, recopie) | 431 cycles |
+| Contrôles logiciels | 13, soit 1 sur 141 : environ 530 cycles amortis par trame |
+| Écarts détectés | 0 |
+| Erreurs DMA ou de clé | 0 |
+| Trames repassées en logiciel | 0 |
+
+Le reste des 3 171 cycles du banc vient de la couche de contrôle autour du moteur : verrou, vérification de MIC suspect et effacement.
+
+Le mode natif garde des contrôles que ZeroStack ne décrit pas :
 - la clé chargée dans le moteur est vérifiée toutes les 16 opérations ;
 - une opération sur 64 à 191, tirée au hasard, est recalculée en logiciel ;
 - chaque trame rejetée est revérifiée en logiciel.
 
-Le contrôle aléatoire coûte en moyenne environ 600 cycles par trame. Une trame à MIC falsifié coûte donc l'opération native plus une opération logicielle.
-
-**En attente de mesure sur le dongle :** la version qui suit 7455a80 n'est pas sur le dongle. Elle apporte trois changements :
-
-- la copie des données pendant le traitement de l'en-tête par le moteur ;
-- l'effacement des tampons DMA par mots de 32 bits ;
-- l'espacement des contrôles logiciels : 1 sur 64 à 191, au lieu de 1 sur 32 à 95.
-
-Elle expose aussi le profil par phase du moteur dans le DIAG (`ccm_prof_*`). Aucun gain n'est revendiqué avant cette mesure.
+Une trame à MIC falsifié coûte donc l'opération native plus une opération logicielle. **Résultat : un coût moyen du même ordre que les 3 824 à 3 968 cycles publiés par ZeroStack.** Leur protocole de mesure n'est pas publié ; ce n'est pas une comparaison à conditions identiques.
 
 ## 3. CPU : charges décrites par SMLIGHT, sur notre code émulé
 
@@ -93,10 +107,9 @@ Banc `tools/bench_freertos.py`, scénarios dans `firmware/freertos/tests/arm_per
 | Bruit UART (64 octets collés à une commande) | 0 ping perdu, reprise en 40 ms | 0 ping perdu, reprise en 3 à 55 ms | 8,84 s d'interruption |
 
 Ce qui reste en retrait de ZeroStack :
-
-- **Le déchiffrement,** environ 2,3 fois leur chiffre en mode natif. L'écart vient de nos copies et attentes DMA, ainsi que de nos contrôles. Le profil par phase servira à le localiser.
-- **Le rejet d'un MIC falsifié :** la revérification logicielle est un choix de sûreté.
-- **L'endurance du store :** 405 écritures entre deux compactions contre 1 013 annoncées, avec un store vide chez eux.
+- **le rejet d'un MIC falsifié :** la revérification logicielle est un choix de sûreté ;
+- **l'endurance du store :** 405 écritures entre deux compactions contre 1 013 annoncées, avec un store vide chez eux ;
+- **la trame rejouée :** 2 474 cycles contre 1 550.
 
 ## 4. Capacités et mémoire
 
@@ -109,7 +122,7 @@ Ce qui reste en retrait de ZeroStack :
 | Table anti-doublon des broadcasts | 32 | 30 (`MAX_BCAST`) | 40 |
 | Réessais MAC | 3 par tour, 3 tours (file de 32 trames) | 7 | non publié |
 | Store non volatil | **2 × 56 Kio** (disposition 2) | NV Z-Stack (géométrie non comparée ici) | non publié |
-| Flash occupée | 94 644 o (image `--hw-aes`) | 178 669 o (20240710) | non publié |
+| Flash occupée | 94 660 o (image `--hw-aes` 1 Mbaud) | 178 669 o (20240710) | non publié |
 | SRAM | 76 808 o statiques, **sans tas** | 42 228 o statiques + tas dynamique de 33 371 o | 88 Ko de SRAM sur CC2652P, sans précision |
 
 ## Ce qui n'est pas mesuré
