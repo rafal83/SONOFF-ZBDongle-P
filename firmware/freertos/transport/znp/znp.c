@@ -1016,12 +1016,11 @@ static uint8_t af_send(znp_t *z, uint16_t dst, bool group, uint8_t dst_ep, uint8
     if (status != ZB_SEND_OK) {
         z->stats.af_tx_failed++;
         /* Z-Stack codes herdsman knows how to recover from. */
-        /* A full local transmit queue is congestion: reported as
-         * MAC_CHANNEL_ACCESS_FAILURE, which herdsman retries after a delay
-         * ("many commands at once"), whereas MAC_TRANSACTION_OVERFLOW (0xF1)
-         * made it give the command up. */
+        /* A full local transmit queue is reported as BUFFER_FULL (0x11), which
+         * herdsman retries after a delay ("many commands at once"), whereas
+         * MAC_TRANSACTION_OVERFLOW (0xF1) made it give the command up. */
         uint8_t code = status == ZB_SEND_NO_ROUTE ? ST_NWK_NO_ROUTE :
-                       status == ZB_SEND_MAC_REFUSED ? 0xE1 /* MAC channel access failure */ : ST_FAILURE;
+                       status == ZB_SEND_MAC_REFUSED ? 0x11 /* ZStatus BUFFER_FULL */ : ST_FAILURE;
         data_confirm(z, code, src_ep, transid);
         return ST_SUCCESS;
     }

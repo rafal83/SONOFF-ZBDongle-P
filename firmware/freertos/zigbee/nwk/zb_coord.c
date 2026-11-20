@@ -257,6 +257,7 @@ static uint8_t mac_send(zb_coord_t *c, uint8_t dst_mode, uint16_t dst_short, uin
 
 static void sleepy_copies(zb_coord_t *c, const uint8_t *plain, size_t hl, size_t len);
 static bool disc_hold(zb_coord_t *c, uint16_t dst, uint8_t radius, const uint8_t *payload, size_t len, bool secured);
+static bool disc_pending_for(const zb_coord_t *c, uint16_t dst);
 static void bcast_queue(zb_coord_t *c, const uint8_t *plain, size_t hl, size_t len, uint16_t src, uint8_t seq,
                         uint32_t due, uint8_t sends, bool sleepy, uint8_t already_sent);
 
@@ -272,7 +273,11 @@ static uint8_t nwk_tx(zb_coord_t *c, uint8_t type, uint16_t dst, uint8_t radius,
     if (!broadcast && !ext_dst && !next_hop(c, dst, &hop)) {
         c->stats.no_route++;
         if (type == NWK_TYPE_DATA) {
-            (void)zb_coord_discover_route(c, dst);
+            /* One Route Request per destination: frames that find a
+             * discovery already pending for it just wait for its reply
+             * (a burst to unknown routes was sending one broadcast each). */
+            if (disc_pending_for(c, dst)) c->stats.rreq_coalesced++;
+            else (void)zb_coord_discover_route(c, dst);
             /* Held, not failed: sent as soon as the Route Reply arrives. */
             if (c->forced_handle < 0 && disc_hold(c, dst, radius, payload, len, secured)) return ZB_SEND_OK;
         }
@@ -488,6 +493,15 @@ static bool disc_hold(zb_coord_t *c, uint16_t dst, uint8_t radius, const uint8_t
     return false;
 }
 
+/* A frame already waits for a route to `dst`, its Route Request sent less
+ * than ZB_DISC_WAIT_MS ago. */
+static bool disc_pending_for(const zb_coord_t *c, uint16_t dst) {
+    if (!c->disc_count) return false;
+    for (unsigned i = 0; i < ZB_DISC_PENDING; i++)
+        if (c->disc[i].used && c->disc[i].dst == dst && (int32_t)(c->now_ms - c->disc[i].due_ms) < 0) return true;
+    return false;
+}
+
 static void disc_release(zb_coord_t *c, unsigned i) {
     wipe(c->disc[i].payload, sizeof c->disc[i].payload);
     c->disc[i].used = false;
@@ -515,7 +529,7 @@ static void disc_service(zb_coord_t *c) {
             if (st == ZB_SEND_OK) {
                 c->stats.disc_sent++;
             } else if (c->upper.send_confirm) {
-                c->upper.send_confirm(c->upper.ctx, handle, st == ZB_SEND_MAC_REFUSED ? MAC_STATUS_TRANSACTION_OVERFLOW
+                c->upper.send_confirm(c->upper.ctx, handle, st == ZB_SEND_MAC_REFUSED ? ZB_STATUS_BUFFER_FULL
                                                                                     : ZB_STATUS_NWK_NO_ROUTE);
             }
         } else if ((int32_t)(c->now_ms - c->disc[i].due_ms) >= 0) {

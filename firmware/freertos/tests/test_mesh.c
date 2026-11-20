@@ -325,20 +325,26 @@ int main(void) {
     {
         CHECK(zb_coord_import_device(&coord, NWK_DEVICE_NONE, 0xA4C1380000000199ull, 0x3333, false, 0, 0xFF));
         const uint8_t zcl[3] = {0x01, 0x11, 0x00};
-        /* Held during the discovery (Z-Stack does the same), not failed. */
-        CHECK(zb_coord_send_aps(&coord, 0x3333, 1, 1, 6, 0x0104, zcl, 3, false) == ZB_SEND_OK);
-        CHECK(coord.stats.disc_buffered == 1);
+        /* Held during the discovery (Z-Stack does the same), not failed.
+         * Three frames for the same destination: ONE Route Request. */
+        uint32_t rreq0 = coord.stats.rreq_tx;
+        for (unsigned k = 0; k < 3; k++)
+            CHECK(zb_coord_send_aps(&coord, 0x3333, 1, 1, 6, 0x0104, zcl, 3, false) == ZB_SEND_OK);
+        CHECK(coord.stats.disc_buffered == 3 && coord.stats.rreq_tx == rreq0 + 1 && coord.stats.rreq_coalesced == 2);
         CHECK(rx_frame(&r, &m));
         CHECK(m.payload[0] == 0x01 && m.payload[1] == 0x00 && m.payload[3] == 0x33 && m.payload[4] == 0x33);
+        CHECK(!rx_frame(&r, &m));                                       /* no second Route Request */
         uint8_t id = m.payload[2];
         const uint8_t rrep[8] = {0x02, 0x00, id, 0x00, 0x00, 0x33, 0x33, 4};
         nwk_header_t h = hdr(NWK_TYPE_COMMAND, 0x3333, 0x0000, 3);
         hop_send(&r, &h, rrep, sizeof rrep, 0x0000, true);
         CHECK(coord.stats.rrep_rx == 1);
-        /* The held frame leaves on the Route Reply, along the new route. */
-        CHECK(coord.stats.disc_sent == 1 && coord.disc_count == 0);
-        CHECK(rx_frame(&r, &m));
-        CHECK(m.mac.dst_short == r.short_addr && m.nwk.dst == 0x3333 && !m.nwk.source_route);
+        /* The held frames leave on the Route Reply, along the new route. */
+        CHECK(coord.stats.disc_sent == 3 && coord.disc_count == 0);
+        for (unsigned k = 0; k < 3; k++) {
+            CHECK(rx_frame(&r, &m));
+            CHECK(m.mac.dst_short == r.short_addr && m.nwk.dst == 0x3333 && !m.nwk.source_route);
+        }
         CHECK(zb_coord_send_aps(&coord, 0x3333, 1, 1, 6, 0x0104, zcl, 3, false) == ZB_SEND_OK);
         CHECK(rx_frame(&r, &m));
         CHECK(m.mac.dst_short == r.short_addr && m.nwk.dst == 0x3333 && !m.nwk.source_route);

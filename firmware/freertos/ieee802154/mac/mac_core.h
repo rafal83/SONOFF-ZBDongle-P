@@ -43,6 +43,13 @@
 #define MAC_DIRECT_QUEUE 32u
 #define MAC_URGENT_QUEUE 4u
 #define MAC_MAX_FRAME_RETRIES 3u
+/* Direct frames that failed (channel busy after CSMA-CA, or no ACK after
+ * MAC_MAX_FRAME_RETRIES) go back to the END of the queue for another round,
+ * up to MAC_TX_ROUNDS rounds: other frames go first and the cause (busy
+ * channel, collision, interference) has time to pass. Z-Stack does the same
+ * at its NWK layer (Koenkk builds: NWK_MAX_DATA_RETRIES 4, MAC retries 7):
+ * in a production burst, frames failing once on a busy channel were lost. */
+#define MAC_TX_ROUNDS 3u
 #define MAC_PERSISTENCE_MS 7680u     /* 0x01F4 unit periods x 15.36 ms */
 #define MAC_EXT_INDIRECT 4u
 #define MAC_DUP_ENTRIES 32u
@@ -100,7 +107,7 @@ enum { SLOT_FREE = 0, SLOT_DIRECT, SLOT_INDIRECT_SHORT, SLOT_INDIRECT_EXT, SLOT_
 
 typedef struct {
     uint8_t mpdu[MAC_MAX_MPDU];
-    uint8_t length, kind, handle, retries;
+    uint8_t length, kind, handle, retries, rounds;
     bool ack, confirm, comm_status, in_flight, queued;
     uint16_t dst_short;
     uint64_t dst_ext;
@@ -114,6 +121,7 @@ typedef struct {
     uint32_t beacons, assoc_requests, data_requests, polls_served, polls_empty;
     uint32_t indirect_expired, queue_full, pool_full;
     uint32_t kicks_deferred;     /* send from a confirm callback, transmitted after it */
+    uint32_t tx_rounds;          /* failed direct frames re-queued for another round */
 } mac_stats_t;
 
 typedef struct {

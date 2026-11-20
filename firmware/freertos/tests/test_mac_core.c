@@ -177,26 +177,40 @@ int main(void) {
     CHECK(comm_count == 1 && last_comm_dev == DEV_EXT && last_comm_status == MAC_STATUS_SUCCESS);
     CHECK(!sm[sm_count - 1].pending && sm[sm_count - 1].addr == DEV_EXT);
 
-    /* Direct unicast: 1 + 3 retries on NO_ACK, same DSN, then NO_ACK confirm. */
+    /* Direct unicast: MAC_TX_ROUNDS rounds of 1 + 3 retries on NO_ACK (same
+     * DSN), the frame going back to the end of the queue between rounds,
+     * then the NO_ACK confirm. */
     before = sent_count;
     CHECK(data(0x4E21, 10, false) == MAC_STATUS_SUCCESS);
     uint8_t dsn = sent[sent_count - 1].mpdu[2];
-    for (unsigned i = 0; i < 4; i++) {
+    const unsigned attempts = MAC_TX_ROUNDS * (1u + MAC_MAX_FRAME_RETRIES);
+    for (unsigned i = 0; i < attempts; i++) {
         CHECK(sent_count == before + 1 + i && sent[sent_count - 1].ack && sent[sent_count - 1].mpdu[2] == dsn);
         mac_tx_done(&mac, MAC_TX_NO_ACK, false);
     }
-    CHECK(sent_count == before + 4 && confirm_count == 1 && confirms[0][0] == 10 && confirms[0][1] == MAC_STATUS_NO_ACK);
-    CHECK(mac.stats.tx_retries == 3);
+    CHECK(sent_count == before + attempts && confirm_count == 1 && confirms[0][0] == 10 &&
+          confirms[0][1] == MAC_STATUS_NO_ACK);
+    CHECK(mac.stats.tx_retries == MAC_TX_ROUNDS * MAC_MAX_FRAME_RETRIES && mac.stats.tx_rounds == MAC_TX_ROUNDS - 1);
     /* Success after one retry. */
     CHECK(data(0x4E21, 11, false) == MAC_STATUS_SUCCESS);
     mac_tx_done(&mac, MAC_TX_NO_ACK, false);
     mac_tx_done(&mac, MAC_TX_OK, false);
     CHECK(confirm_count == 2 && confirms[1][0] == 11 && confirms[1][1] == MAC_STATUS_SUCCESS);
-    /* CSMA failure: reported without retry. */
+    /* CSMA failure: another round at the END of the queue (a frame queued
+     * meanwhile goes first), CHANNEL_ACCESS_FAILURE after MAC_TX_ROUNDS. */
     before = sent_count;
     CHECK(data(0x4E21, 12, false) == MAC_STATUS_SUCCESS);
-    mac_tx_done(&mac, MAC_TX_BUSY, false);
-    CHECK(sent_count == before + 1 && confirms[2][1] == MAC_STATUS_CHANNEL_ACCESS_FAILURE);
+    CHECK(data(0x4E22, 15, false) == MAC_STATUS_SUCCESS);   /* waits behind 12 */
+    mac_tx_done(&mac, MAC_TX_BUSY, false);                  /* 12 busy: re-queued after 15 */
+    CHECK(sent_count == before + 2 && last_sent().dst_short == 0x4E22);
+    mac_tx_done(&mac, MAC_TX_OK, false);                    /* 15 sent */
+    CHECK(confirm_count == 3 && confirms[2][0] == 15 && confirms[2][1] == MAC_STATUS_SUCCESS);
+    for (unsigned r = 1; r < MAC_TX_ROUNDS; r++) {
+        CHECK(last_sent().dst_short == 0x4E21);
+        mac_tx_done(&mac, MAC_TX_BUSY, false);
+    }
+    CHECK(sent_count == before + 1 + MAC_TX_ROUNDS && confirm_count == 4 && confirms[3][0] == 12 &&
+          confirms[3][1] == MAC_STATUS_CHANNEL_ACCESS_FAILURE);
     /* Broadcast: no ACK request. */
     CHECK(data(0xFFFF, 13, false) == MAC_STATUS_SUCCESS && !sent[sent_count - 1].ack);
     mac_tx_done(&mac, MAC_TX_OK, false);
