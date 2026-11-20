@@ -12,7 +12,7 @@
  *     recovery (BUFFER_FULL / channel busy / no route...: 2 s pause then a new
  *     attempt, at most 4; response timeout: one more attempt);
  *   - UART at --baud (10 bits per byte), NPI framing (5 bytes + payload),
- *     ZNP queues of the firmware (8 frames each way): when the output queue
+ *     ZNP queues of the firmware (4 frames each way): when the output queue
  *     is full the radio task blocks, as znp_send() does;
  *   - radio task: one CPU; per iteration, as radio_task.c: RF entries drained,
  *     TX completion, again, zb_coord_tick, then up to 8 ZNP frames. CPU time of
@@ -83,7 +83,7 @@ static struct {
     const char *json, *label;
 } cfg = {
     .rate = 100, .duration_s = 20, .warmup_s = 5, .loss_pct = 1, .sed_share = 0,
-    .hops = {16, 9, 3}, .seds_coord = 0, .seds_router = 0, .concurrency = 16, .rx_entries = 4, .znp_out_q = 8,
+    .hops = {16, 9, 3}, .seds_coord = 0, .seds_router = 0, .concurrency = 16, .rx_entries = 4, .znp_out_q = 4,
     .router_indirect = 8, .poll_ms = 2000, .sed_sync = 0, .resp_min_ms = 2, .resp_max_ms = 10, .sed_resp_ms = 5,
     .fast_polls = 3, .fast_poll_ms = 250, .sed_wait_ms = 50,
     .baud = 1000000, .timeout_ms = 10000, .kill_router = 0, .kill_at_s = 0, .congest_router = 0, .congest_queue = 2,

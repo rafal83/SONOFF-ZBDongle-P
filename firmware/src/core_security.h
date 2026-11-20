@@ -38,6 +38,9 @@ void core_security_clear(core_security_t *);
 bool core_security_set_key(core_security_t *, unsigned slot, uint8_t sequence, const uint8_t key[16]);
 bool core_security_register(core_security_t *, const uint8_t address[8]);
 bool core_security_unregister(core_security_t *, const uint8_t address[8]);
+/* Last authenticated incoming counter of `address` under the key `sequence`
+ * (false: none for that key). */
+bool core_security_peer_counter(core_security_t *, const uint8_t address[8], uint8_t sequence, uint32_t *counter);
 bool core_security_restore_peer_counter(core_security_t *, const uint8_t address[8],
     uint8_t sequence, uint32_t authenticated_counter);
 bool core_security_seal(core_security_t *, unsigned key_slot, const uint8_t local_address[8],
