@@ -481,13 +481,14 @@ static void bcast_heard(zb_coord_t *c, uint16_t src, uint8_t seq, uint16_t mac_s
     for (unsigned n = 0; n < NWK_NEIGHBORS; n++) {
         if (!c->routes.neighbors[n].used || c->routes.neighbors[n].addr != mac_src) continue;
         for (unsigned i = 0; i < ZB_BCAST_PENDING; i++)
-            if (c->bcast[i].used && c->bcast[i].src == src && c->bcast[i].seq == seq) c->bcast[i].heard |= 1u << n;
+            if (c->bcast[i].used && c->bcast[i].src == src && c->bcast[i].seq == seq) c->bcast[i].heard |= (uint64_t)1 << n;
     }
 }
 
-static bool all_neighbours_heard(const zb_coord_t *c, uint32_t heard) {
+_Static_assert(NWK_NEIGHBORS <= 64u, "bcast heard bitmap: one bit per neighbour slot");
+static bool all_neighbours_heard(const zb_coord_t *c, uint64_t heard) {
     for (unsigned n = 0; n < NWK_NEIGHBORS; n++)
-        if (c->routes.neighbors[n].used && !(heard & (1u << n))) return false;
+        if (c->routes.neighbors[n].used && !(heard & ((uint64_t)1 << n))) return false;
     return true;
 }
 
@@ -1410,31 +1411,36 @@ size_t zb_coord_zdo_local(zb_coord_t *c, uint16_t cluster, const uint8_t *p, siz
     }
     case 0x0032: {   /* Mgmt_Rtg_req(start index): next-hop and source routes */
         if (len < 2 || broadcast) return 0;
+        /* Entries emitted while counting (next-hop routes, then source
+         * routes): no copy of the tables on the stack (it took ~1.2 KB of
+         * the radio task's stack). */
         uint8_t start = p[1];
-        uint16_t dsts[NWK_TABLE_ROUTES + NWK_SOURCE_ROUTES], hops[NWK_TABLE_ROUTES + NWK_SOURCE_ROUTES];
-        uint8_t flags[NWK_TABLE_ROUTES + NWK_SOURCE_ROUTES];
-        unsigned total = 0;
-        for (unsigned i = 0; i < NWK_TABLE_ROUTES; i++) {
-            if (!c->routes.table[i].used) continue;
-            dsts[total] = c->routes.table[i].dst; hops[total] = c->routes.table[i].next_hop; flags[total++] = 0x00;
-        }
-        for (unsigned i = 0; i < NWK_SOURCE_ROUTES; i++) {
-            const nwk_source_route_t *sr = &c->routes.source[i];
-            if (!sr->used) continue;
-            dsts[total] = sr->dst;
-            hops[total] = sr->count ? sr->relays[sr->count - 1] : sr->dst;
-            flags[total++] = 0x20;   /* active, route record (source route) */
-        }
         r[n++] = ZDO_SUCCESS;
-        r[n++] = (uint8_t)total;
+        size_t total_at = n++;
         r[n++] = start;
         size_t count_at = n++;
+        unsigned total = 0;
         uint8_t count = 0;
-        for (unsigned i = start; i < total && count < 10; i++, count++) {
-            put16(r + n, dsts[i]); n += 2;
-            r[n++] = flags[i];
-            put16(r + n, hops[i]); n += 2;
+        for (unsigned i = 0; i < NWK_TABLE_ROUTES + NWK_SOURCE_ROUTES; i++) {
+            uint16_t dst, hop;
+            uint8_t flags;
+            if (i < NWK_TABLE_ROUTES) {
+                const nwk_table_route_t *tr = &c->routes.table[i];
+                if (!tr->used) continue;
+                dst = tr->dst; hop = tr->next_hop; flags = 0x00;
+            } else {
+                const nwk_source_route_t *sr = &c->routes.source[i - NWK_TABLE_ROUTES];
+                if (!sr->used) continue;
+                dst = sr->dst; hop = sr->count ? sr->relays[sr->count - 1] : sr->dst;
+                flags = 0x20;   /* active, route record (source route) */
+            }
+            if (total++ < start || count >= 10) continue;
+            put16(r + n, dst); n += 2;
+            r[n++] = flags;
+            put16(r + n, hop); n += 2;
+            count++;
         }
+        r[total_at] = (uint8_t)(total > 255u ? 255u : total);
         r[count_at] = count;
         break;
     }

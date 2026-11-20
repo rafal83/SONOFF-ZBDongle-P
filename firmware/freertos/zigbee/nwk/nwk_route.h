@@ -13,10 +13,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define NWK_NEIGHBORS 32u
+#define NWK_NEIGHBORS 48u              /* Z-Stack (Koenkk): 50 ; was 32, near a 28-router production network */
 #define NWK_SOURCE_ROUTES 200u          /* one per device of the table (137 in production) */
 #define NWK_ROUTE_MAX_RELAYS 10u
-#define NWK_TABLE_ROUTES 32u
+#define NWK_TABLE_ROUTES 48u           /* also holds reverse routes of the Route Requests we relay */
 #define NWK_BTT_SIZE 32u
 #define NWK_BTT_MS 9000u                 /* nwkBroadcastDeliveryTime */
 #define NWK_ROUTER_AGE_LIMIT 3u          /* link status periods without news */

@@ -459,6 +459,43 @@ int main(void) {
                "assocRemove/assocAdd served\n");
     }
 
+    /* 10. 45 neighbour routers kept (the table held 32); Mgmt_Rtg_rsp pages
+     *     through next-hop and source routes, no entry lost or repeated. */
+    {
+        nwk_routes_t *rt = &coord.routes;
+        for (unsigned i = 0; i < 45; i++) {
+            const uint8_t none[3] = {0};
+            (void)nwk_neighbor_link_status(rt, (uint16_t)(0x5000 + i), 220, 0x0000, none, 0, false);
+        }
+        unsigned used = 0;
+        for (unsigned i = 0; i < NWK_NEIGHBORS; i++) used += rt->neighbors[i].used && rt->neighbors[i].addr >= 0x5000;
+        CHECK(NWK_NEIGHBORS >= 48u && used == 45);
+        for (unsigned i = 0; i < 40; i++) nwk_table_route_set(rt, (uint16_t)(0x6000 + i), 0x5000);
+        unsigned expected = 0;
+        for (unsigned i = 0; i < NWK_TABLE_ROUTES; i++) expected += rt->table[i].used;
+        for (unsigned i = 0; i < NWK_SOURCE_ROUTES; i++) expected += rt->source[i].used;
+        CHECK(expected >= 40);
+        uint8_t out[128];
+        unsigned seen = 0, distinct_tables = 0;
+        for (unsigned start = 0; start < expected;) {
+            const uint8_t req[2] = {0x55, (uint8_t)start};
+            size_t n = zb_coord_zdo_local(&coord, 0x0032, req, 2, false, out, sizeof out);
+            CHECK(n >= 5 && out[1] == 0 && out[2] == (expected > 255 ? 255 : expected) && out[3] == start);
+            unsigned got = out[4];
+            CHECK(got > 0 && got <= 10 && n == 5u + 5u * got);
+            for (unsigned k = 0; k < got; k++) {
+                uint16_t dst = (uint16_t)(out[5 + 5 * k] | out[6 + 5 * k] << 8);
+                distinct_tables += dst >= 0x6000 && dst < 0x6028;
+            }
+            seen += got;
+            start += got;
+        }
+        CHECK(seen == expected && distinct_tables == 40);
+        for (unsigned i = 0; i < 45; i++) nwk_neighbor_remove(rt, (uint16_t)(0x5000 + i));
+        for (unsigned i = 0; i < 40; i++) nwk_routes_forget(rt, (uint16_t)(0x6000 + i));
+        printf("reliability: 45 neighbours kept, Mgmt_Rtg pages over %u routes\n", expected);
+    }
+
     /* 8. Native CCM* rejections: a flood of forged frames is re-verified in
      *    software within the budget only; an engine that then rejects
      *    genuine frames is still caught (audit) and abandoned. */
