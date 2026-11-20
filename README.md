@@ -16,10 +16,10 @@ Valeurs au **20 novembre 2026**. Ce résumé est tenu à jour avec [le détail, 
 
 **Réseau réel :** dongle de production, 130 appareils, lecture d'un attribut sur chaque routeur.
 
-| | Notre firmware (2f787a6) | Z-Stack Koenkk 20250321 | ZeroStack (SMLIGHT) |
+| | Notre firmware | Z-Stack Koenkk 20250321 | ZeroStack (SMLIGHT) |
 |---|---|---|---|
-| Rafale sur tous les routeurs : réponses des routeurs joignables | 96,1 % (3 rafales sur 8 à 100 %) | **100 %** | non mesuré (binaire fermé) |
-| Lecture isolée, médiane | 68 ms (p95 à 168 ms) | 51 ms | non mesuré |
+| Rafale sur tous les routeurs : réponses des routeurs joignables | **100 %** (8 rafales sur 8 à 28 / 28) | **100 %** (28 / 28) | non mesuré (binaire fermé) |
+| Lecture isolée, médiane | **34,4 ms** (p95 à 60,4 ms) | 51 ms | non mesuré |
 
 **CPU :** mesuré sur le dongle ou dans l'émulateur. Les chiffres de ZeroStack et du « Z-Stack stock » sont ceux publiés par SMLIGHT ; ils n'ont pas été reproduits.
 

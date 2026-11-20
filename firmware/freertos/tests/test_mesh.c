@@ -974,15 +974,17 @@ int main(void) {
     {
         drain();
         const uint16_t TARGET = 0x146D;
-        /* Route known via router R */
+        /* Even if TARGET was heard in the neighbour table, an explicit route
+         * takes precedence and a Network Status waits for the Route Reply. */
+        (void)nwk_neighbor_link_status(&coord.routes, TARGET, 120, 0x0000, 0, 0, true);
         nwk_table_route_set(&coord.routes, TARGET, r.short_addr);
         uint32_t rreq_before = coord.stats.rreq_tx;
         uint32_t retries_before = coord.stats.net_status_retries;
         uint32_t disc_sent_before = coord.stats.disc_sent;
         uint8_t disc_before = coord.disc_count;
-        const uint8_t zcl[3] = {0x00, 0x12, 0x00};
+        const uint8_t zcl_read[5] = {0x00, 0x42, 0x00, 0x00, 0x00};   /* ZCL Read Attributes */
         /* Send frame to TARGET: sent via R */
-        CHECK(zb_coord_send_aps(&coord, TARGET, 1, 1, 6, 0x0104, zcl, 3, false) == ZB_SEND_OK);
+        CHECK(zb_coord_send_aps(&coord, TARGET, 1, 1, 0, 0x0104, zcl_read, sizeof zcl_read, false) == ZB_SEND_OK);
         drain();
         /* R reports Network Status 0x01 (Tree/link failure) for TARGET */
         const uint8_t ns[4] = {0x03 /* NWK_CMD_NETWORK_STATUS */, 0x01, (uint8_t)TARGET, (uint8_t)(TARGET >> 8)};
@@ -1000,6 +1002,14 @@ int main(void) {
         /* Held frame was retried and sent */
         CHECK(coord.disc_count == disc_before);
         CHECK(coord.stats.disc_sent == disc_sent_before + 1);
+        /* Silence after a ZCL read triggers a level-1 retry at ZB_RECENT_RETRY1_MS */
+        CHECK(zb_coord_send_aps(&coord, TARGET, 1, 1, 0, 0x0104, zcl_read, sizeof zcl_read, false) == ZB_SEND_OK);
+        drain();
+        uint32_t ret1 = coord.stats.net_status_retries;
+        zb_coord_tick(&coord, coord.now_ms + ZB_RECENT_RETRY1_MS + 10u);
+        drain();
+        CHECK(coord.stats.net_status_retries == ret1 + 1);
+        nwk_neighbor_remove(&coord.routes, TARGET);
     }
 
     printf("mesh: %u checks passed\n", frt_checks);

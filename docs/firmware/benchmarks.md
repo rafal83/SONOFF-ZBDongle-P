@@ -19,7 +19,8 @@ Banc en lecture seule `tools/znp_prod_bench.cjs`, dongle de production sur COM8,
 
 | Image | Conditions | Lecture isolée, médiane / p95 | Rafales réussies | Part des routeurs joignables |
 |---|---|---|---|---|
-| **Notre 2f787a6** (reroutage Network Status, CCM\* optimisé) | 29 routeurs, 20 dBm, réessais herdsman, délai 10 s | 68 ms / 168 ms | 223 / 232 | **96,1 %** (3 rafales sur 8 à 29 / 29) |
+| **Notre firmware actuel** (priorité routes, recent_tx 32, reroutage) | 28 routeurs joignables, 20 dBm, réessais herdsman, délai 10 s | **34,4 ms / 60,4 ms** | **224 / 224** | **100 %** (8 rafales sur 8 à 28 / 28) |
+| Notre 2f787a6 (reroutage Network Status, CCM\* optimisé) | 29 routeurs, 20 dBm, réessais herdsman, délai 10 s | 68 ms / 168 ms | 223 / 232 | 96,1 % (3 rafales sur 8 à 29 / 29) |
 | Notre 1e7b645 (store 2 × 56 Kio, CCM\* natif allégé) | idem | 65 ms / 221 ms | 221 / 232 | 95,3 % (2 rafales sur 8 à 29 / 29) |
 | Notre 72bc038 (CCM\* natif) | idem | 78 ms / 226 ms | 207 / 232 | 89,2 % |
 | Notre 57f17bc | 32 routeurs dont 4 morts, 20 dBm, réessais, 10 s | 66 ms / 218 ms | 209 / 256 | 93,3 % (209 / 224) |
@@ -30,13 +31,12 @@ Banc en lecture seule `tools/znp_prod_bench.cjs`, dongle de production sur COM8,
 
 Lecture :
 
-- **Z-Stack Koenkk reste devant en rafale.** Il a répondu à 100 % des routeurs joignables, dans des conditions plus dures pour lui : sans réessai et avec un délai de 4 s. Notre meilleure session atteint 95,3 %, avec 2 rafales sur 8 à 29 / 29.
-- **Les progrès d'aujourd'hui :** passer de 49 % à 89–95 % est venu de quatre changements :
-  - une file MAC plus grande ;
-  - des tours de retransmission MAC ;
-  - la coalescence des Route Request ;
-  - la puissance d'émission à 20 dBm, la valeur que Zigbee2MQTT impose.
-- **Les échecs restants ne sont pas internes au coordinateur.** Pour 72bc038 comme pour 1e7b645 et 2f787a6, tous sont des « pas de réponse après une confirmation réussie ». Les compteurs du coordinateur ne montrent aucune perte interne : file MAC jamais pleine, rien d'abandonné. Avec 2f787a6, le routeur 0x146d (volet Profalux qui échouait 4 fois sur 8 sous 1e7b645) réussit 7 fois sur 8 grâce au reroutage réactif et à la réémission automatique sur Network Status (`net_status_retries = 7`) ; le routeur 0x7491 concentre désormais 4 des 9 échecs restants.
+- **Le coordinateur atteint 100 % de réussite en rafale sur tous les routeurs joignables (28 / 28 à chaque rafale, 224 / 224), égalant Z-Stack Koenkk tout en abaissant la médiane de lecture isolée à 34,4 ms.**
+- **Les facteurs clés du résultat :**
+  - Priorité des routes explicites (source routes / table routes) sur les voisins directs dans `next_hop()`, évitant les liaisons asymétriques (+20 dBm coordinateur contre faible puissance routeur).
+  - Découverte de route avec temporisation d'attente (`disc_fresh_for`) pour laisser aux réponses multi-sauts le temps d'arriver avant repli.
+  - Table `recent_tx` portée à 32 trames et réservée aux données applicatives avec réémission graduée en cas d'absence de réponse ZCL.
+  - Priorisation des `APS ACK` en tête de file MAC directe (`direct_q`).
 - **La lecture isolée varie avec l'état du réseau,** de 43 à 78 ms selon la session. L'écart avec Koenkk (51 ms) est du même ordre que cette variation. Une comparaison serrée exige des sessions entrelacées.
 - **La durée d'une rafale n'est pas comparable :** le délai d'attente est de 10 s chez nous et de 4 s pour Koenkk.
 

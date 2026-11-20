@@ -62,7 +62,11 @@
 #define ZB_BCAST_RETRIES 2u            /* nwkMaxBroadcastRetries */
 #define ZB_SLEEPY_BCAST_COPIES 8u
 #define ZB_APS_DUP_TABLE 32u
-#define ZB_RECENT_TX 6u
+#define ZB_RECENT_TX 32u
+#define ZB_RECENT_MAX 96u
+#define ZB_RECENT_RETRY1_MS 1100u
+#define ZB_RECENT_RETRY2_MS 1100u
+#define ZB_RECENT_RETRY3_MS 1500u
 #define ZB_TX_TRACK MAC_POOL_SLOTS   /* unicasts awaiting their MAC confirm: one per MAC buffer */
 #define ZB_DISC_PENDING 16u          /* local frames held while their route is discovered */
 /* A destination whose route discovery got no reply is not searched again
@@ -247,13 +251,14 @@ typedef struct {
     } disc[ZB_DISC_PENDING];
     uint8_t disc_count;
     struct {
-        uint8_t payload[MAC_MAX_PAYLOAD];
-        uint8_t len, radius;
+        uint8_t payload[ZB_RECENT_MAX];
+        uint8_t len, radius, retries;
         uint16_t dst;
         uint32_t sent_ms;
-        bool used, secured, retried;
+        bool used, secured, expects_reply;
     } recent_tx[ZB_RECENT_TX];
     uint8_t recent_tx_next;
+    bool sending_ack, retrying_recent;
     zb_frag_rx_t frag_rx[ZB_FRAG_RX_SESSIONS];
     zb_frag_tx_t frag_tx;                  /* one fragmented transmission at a time */
     int16_t forced_handle;           /* >= 0: MAC handle imposed on the next frame */

@@ -200,7 +200,7 @@ uint8_t mac_data_request(mac_t *m, const mac_data_request_t *r) {
     slot->enqueued_ms = m->now_ms;
     if (!r->indirect) {
         slot->kind = SLOT_DIRECT;
-        if (!push(m->direct_q, MAC_DIRECT_QUEUE, &m->direct_head, &m->direct_count, s, false)) {
+        if (!push(m->direct_q, MAC_DIRECT_QUEUE, &m->direct_head, &m->direct_count, s, r->priority)) {
             free_slot(m, s);
             m->stats.queue_full++;
             return MAC_STATUS_TRANSACTION_OVERFLOW;
