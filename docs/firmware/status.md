@@ -33,7 +33,19 @@ Relevés `DIAG` sur le dongle, avant le redémarrage de Z2M :
 
 Ces piles sont relevées avant tout trafic radio : les valeurs sous charge restent à relever, Z2M arrêté.
 
-**Le 19 novembre vers 13:43**, avec l'accord du propriétaire, la production est passée sur l'image `--hw-aes` du commit **`7c24ecc`** (SHA-256 `23e19dbc…`). Cette image garde une trame sans route pendant la découverte de route, jusqu'à 5 s, au lieu de renvoyer `NWK_NO_ROUTE` : c'est le comportement de Z-Stack. Elle ne confirme plus non plus de succès sans attendre quand sa table de confirmations est pleine. Z2M a repris le réseau (`resumed`).
+**Le 20 novembre en fin d'après-midi**, avec l'accord explicite du propriétaire, la production est passée sur l'image **`--hw-aes` à 1 Mbaud du commit `666f804`** (SHA-256 `cf7814a2…`), store de disposition 2 (2 × 56 Kio) conservé.
+Cette version intègre :
+- Le moteur CCM\* natif allégé (1 119 cycles DWT en moyenne en trafic réel, ~40,6 µs par trame de 40 octets contre 1,56 ms en logiciel).
+- La priorité absolue aux routes explicites (`nwk_source_route` et `nwk_table_route`) sur les voisins directs dans `next_hop()`, résolvant les liens radio asymétriques.
+- La découverte de route avec temporisation d'attente (`disc_fresh_for`) pour laisser arriver les réponses multi-sauts.
+- L'extension de `recent_tx` à 32 trames avec réémissions graduées et suppression du backoff `0xcd` sur les retours internes.
+- La priorisation des `APS ACK` en tête de file directe MAC.
+
+**Résultats mesurés sur le réseau réel (banc de production, 20 novembre) :**
+- Rafales simultanées sur tous les routeurs joignables : **100 % de réussite (8 rafales sur 8 à 28/28, soit 224 / 224, 0 échec)**.
+- Lecture séquentielle isolée : **médiane de 34,4 ms** (p95 à 60,4 ms).
+- Piles observées sous charge : radio marge 420 mots, hôte marge 308 mots, superviseur 232 mots, idle 109 mots.
+- Charge CPU pic sous rafale : 31,2 %, 0 erreur DMA/AES, intégrité complète du store conservée.
 
 Diagnostic du « retard de la Douche » (journal Z2M en debug, 19 novembre) :
 - Le firmware répondait `NWK_NO_ROUTE` à la première commande après plusieurs minutes d'inactivité, puis herdsman réessayait 2 s plus tard. C'est corrigé par `7c24ecc`.
