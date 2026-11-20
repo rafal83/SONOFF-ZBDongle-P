@@ -45,6 +45,12 @@ const {AdapterNvMemory} = lab('zigbee-herdsman/dist/adapter/z-stack/adapter/adap
 const {AdapterBackup} = lab('zigbee-herdsman/dist/adapter/z-stack/adapter/adapter-backup.js');
 const {BackupUtils} = lab('zigbee-herdsman/dist/utils/index.js');
 const {Subsystem, Type} = lab('zigbee-herdsman/dist/adapter/z-stack/unpi/constants.js');
+const {Frame: UnpiFrame} = lab('zigbee-herdsman/dist/adapter/z-stack/unpi/frame.js');
+/* FreeRTOS DIAG counters (read-only commands of subsystem 0x1F), names from
+ * tools/freertos_lab_session.py; absent on a Z-Stack coordinator (no reply). */
+const LAB = fs.readFileSync(path.join(ROOT, 'tools/freertos_lab_session.py'), 'utf8');
+const pyList = name => JSON.parse(new RegExp(`^${name} = (\\[[^\\]]*\\])`, 'm').exec(LAB)[1]);
+const DIAG_SETS = {0x15: pyList('COORD_NAMES'), 0x18: pyList('MESH_NAMES')};
 
 const READS = Number(args.reads ?? 10), BURSTS = Number(args.bursts ?? 5), TIMEOUT = Number(args.timeout ?? 4000);
 const RETRIES = 'herdsman-retries' in args;
@@ -82,6 +88,34 @@ async function main() {
         sent[name] = (sent[name] ?? 0) + 1;
         return raw(subsystem, name, payload, ...rest);
     };
+    /* Raw DIAG requests on the same link (herdsman has no definition for them). */
+    const diagWaiters = [];
+    const onFrame = znp.onFrame.bind(znp);
+    znp.onFrame = (buffer, dataLength, fcsPosition) => {
+        if (buffer[2] === 0x7F && diagWaiters.length) {   /* SRSP of subsystem 0x1F */
+            const w = diagWaiters.shift();
+            w(buffer.subarray(4, 4 + dataLength));
+            return;
+        }
+        onFrame(buffer, dataLength, fcsPosition);
+    };
+    async function diag(cmd) {
+        const reply = new Promise(res => { diagWaiters.push(res); setTimeout(() => res(null), 1500); });
+        znp.transport.write(new UnpiFrame(Type.SREQ, 0x1F, cmd, Buffer.alloc(0)).toBuffer());
+        return reply;
+    }
+    async function counters() {
+        const out = {};
+        for (const [cmd, names] of Object.entries(DIAG_SETS)) {
+            const d = await diag(Number(cmd));
+            if (!d || d.length < 1) return null;
+            const n = d[0];
+            for (let i = 0; i < n && i < names.length && 1 + 4 * i + 4 <= d.length; i++) out[names[i]] = d.readUInt32LE(1 + 4 * i);
+        }
+        return out;
+    }
+    const delta = (a, b) => (a && b) ? Object.fromEntries(Object.keys(b).filter(k => b[k] !== a[k] &&
+        !['devices', 'permit', 'pan_id', 'channel', 'neighbors'].includes(k)).map(k => [k, b[k] - a[k]])) : null;
     const report = {started_at: new Date().toISOString(), port: args.port, baudRate, read_only: true,
                     adapter_start_called: false, permit_join: false, device_writes: 0};
     try {
@@ -208,11 +242,15 @@ async function main() {
             /* --spacing MS: requests of a burst issued MS apart (as a slower
              * UART would spread them: ~2.5 ms per request at 115200 baud). */
             const spacing = Number(args.spacing ?? 0);
+            const c0 = await counters();
             const res = await Promise.all(group.map((r, j) => sleep(j * spacing).then(() => read(r))));
+            await sleep(1000);
+            const c1 = await counters();
             const ok = res.filter(x => x.ok).map(x => x.ms);
             bursts.push({sent: res.length, ok: ok.length, ...stats(ok), wall_ms: Date.now() - t0,
                          errors: res.filter(x => !x.ok).map(x => x.error),
-                         failed: res.map((x, i) => x.ok ? null : {nwk: group[i].nwk, error: x.error, attempts: x.attempts}).filter(Boolean)});
+                         failed: res.map((x, i) => x.ok ? null : {nwk: group[i].nwk, error: x.error, attempts: x.attempts}).filter(Boolean),
+                         coordinator_counters_delta: delta(c0, c1)});
             console.log(`burst ${b + 1}: ${ok.length}/${res.length} ok, median ${quantile(ok, 0.5)?.toFixed(1)} ms, max ${Math.max(...ok).toFixed(1)} ms`);
             await sleep(3000);
         }
