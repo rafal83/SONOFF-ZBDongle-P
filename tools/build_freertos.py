@@ -267,6 +267,11 @@ def firmware(exe, baud, hw_aes=False):
     missing = [s for s in required if s not in symbols]
     if missing:
         raise SystemExit(f"Missing symbols: {missing}")
+    if hw_aes:
+        required_hw = ["hal_aes_selftest", "hal_aes_ccm_selftest", "hal_aes_ccm",
+                       "zb_ccm_backend_set_native", "zb_ccm_backend_hw"]
+        if any(name not in symbols for name in required_hw):
+            raise SystemExit('Hardware AES/CCM* backend or startup self-tests missing from ELF')
     forbidden = [s for s in symbols if s in ("malloc", "free", "pvPortMalloc", "Power_init", "RF_open",
                                                "BIOS_start", "osal_init_system", "NVOCMP_initNvApi")]
     if forbidden:
@@ -318,6 +323,7 @@ def firmware(exe, baud, hw_aes=False):
                               "docs/firmware/installation.md and docs/firmware/restauration.md",
         },
         "uart_baud": baud,
+        "hardware_aes": hw_aes,
         "image_identity": {"address": 0x100, "version": 1, "storage_layout": 1},
         "build_revision": revision,
         "compiler": "Zig cc 0.13.0 (clang/LLD)",
@@ -381,7 +387,7 @@ def main():
         firmware(exe, args.baud, args.hw_aes)
     if args.target == "all":
         for baud in (115200, 1000000):
-            firmware(exe, baud)
+            firmware(exe, baud, args.hw_aes)
 
 
 if __name__ == "__main__":

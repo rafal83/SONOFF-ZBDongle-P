@@ -46,8 +46,8 @@ jobs:
           python tools/test_core_engines.py
           python tools/build.py host
           node tests/herdsman_framing.mjs
-      - name: Build both FreeRTOS images and run host and ARM tests
-        run: python tools/build_freertos.py all
+      - name: Build the hardware-accelerated images and run host and ARM tests
+        run: python tools/build_freertos.py all --hw-aes
       - run: python -m unittest discover -s tests -v
       - name: Install the pinned zigbee-herdsman 11.2.1 (integrity-checked lock)
         run: python tools/setup_herdsman_lab.py
@@ -111,7 +111,7 @@ jobs:
           Commit: ${GITHUB_SHA}
           Validation: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
 
-          The ZIP contains the 115200 and 1000000 baud firmware images, their
+          The ZIP contains the hardware-accelerated 115200 and 1000000 baud images, their
           manifests, host/ARM test reports and third-party licenses.
           Read the manifests and included documentation for hardware validation
           status, installation and backup restoration instructions.
