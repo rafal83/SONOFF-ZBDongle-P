@@ -67,16 +67,33 @@
 #define ZB_RECENT_RETRY1_MS 1100u
 #define ZB_RECENT_RETRY2_MS 1100u
 #define ZB_RECENT_RETRY3_MS 1500u
+/* Destinations that answered one of our reads recently: their route works
+ * both ways, so an unanswered read is a lost frame (congestion), not a route
+ * to rebuild; and a failed discovery does not ban them (see recent_service). */
+#define ZB_ANSWERED 16u
+#define ZB_ANSWERED_MS 10000u
+/* ZCL re-sends are rate limited (token bucket: one every ZB_RETX_TOKEN_MS,
+ * bursts of ZB_RETX_BURST): the few answers lost in a burst are re-requested
+ * at once, but a saturated channel gets no extra load that would lose more
+ * of them. Network benchmark (28 routers): at 50 reads/s 2 herdsman retries
+ * instead of 28; at 180/s offered, 137 reads/s served (139 without any
+ * re-send, 119 with 4 re-sends/s, 122 unbounded). */
+#define ZB_RETX_TOKEN_MS 1000u
+#define ZB_RETX_BURST 8u
 #define ZB_TX_TRACK MAC_POOL_SLOTS   /* unicasts awaiting their MAC confirm: one per MAC buffer */
 #define ZB_DISC_PENDING 16u          /* local frames held while their route is discovered */
 /* A destination whose route discovery got no reply is not searched again
- * for a backoff (30 s, doubling up to 5 min), cleared as soon as it is heard:
+ * for a backoff (4 s, doubling up to 5 min), cleared as soon as it is heard:
  * each Route Request is rebroadcast by every router, and requests repeated
  * for devices offline for months flooded the production network (324 Route
  * Requests, 20 000 rebroadcast copies in 15 min; responses of reachable
- * routers were lost in the collisions). */
+ * routers were lost in the collisions). A dead device still costs only ~9
+ * requests per 15 min; the first backoff was 30 s, which banned LIVE routers
+ * whose single Route Request or Reply was lost in a busy channel (network
+ * benchmark at 100/s: hundreds of commands refused at once, NWK_NO_ROUTE).
+ * Destinations that answered recently are never banned (ZB_ANSWERED). */
 #define ZB_RDISC_FAIL 8u
-#define ZB_RDISC_BACKOFF_MS 30000u
+#define ZB_RDISC_BACKOFF_MS 4000u
 #define ZB_RDISC_BACKOFF_MAX_MS 300000u
 #define ZB_DISC_WAIT_MS 5000u        /* then confirmed NWK_NO_ROUTE (0xCD) */
 #define ZB_STATUS_NWK_NO_ROUTE 0xCDu
@@ -191,7 +208,24 @@ typedef struct {
     uint32_t frag_rx_ok, frag_rx_dropped, frag_tx_ok, frag_tx_failed, frag_tx_retries;
     uint32_t channel_changes, key_updates, key_switches, gpdf_rx;
     uint32_t net_status_retries; /* local unicast frames re-held/retried on Network Status */
+    uint32_t zcl_retx_sleepy_skipped; /* no ZCL re-send to a device known to sleep */
+    uint32_t zcl_answers_dropped;     /* second answer to a re-sent ZCL read, not passed up */
+    uint32_t poll_children;           /* devices found polling us: made our (sleepy) children */
+    uint32_t capabilities_learnt;     /* MAC capability taken from a Node Descriptor response */
+    uint32_t zcl_route_rebuilds;      /* unanswered read, nothing answered lately: route rebuilt */
+    uint32_t bcast_seq_skipped;       /* NWK sequence numbers skipped: still in a broadcast table */
+    uint32_t zcl_retx_deferred;       /* ZCL re-send postponed: re-send budget used up */
 } zb_coord_stats_t;
+
+/* Recent unicast data frame: re-sent on Network Status (route failure),
+ * and ZCL reads re-sent when unanswered (see recent_service). */
+typedef struct {
+    uint8_t payload[ZB_RECENT_MAX];
+    uint8_t len, radius, retries, answer_cmd;
+    uint16_t dst;
+    uint32_t sent_ms;
+    bool used, secured, expects_reply, answered;   /* answered: kept to drop a second answer */
+} zb_recent_tx_t;
 
 typedef struct {
     mac_t mac;
@@ -250,14 +284,12 @@ typedef struct {
         bool used, secured, notify_confirm;
     } disc[ZB_DISC_PENDING];
     uint8_t disc_count;
-    struct {
-        uint8_t payload[ZB_RECENT_MAX];
-        uint8_t len, radius, retries;
-        uint16_t dst;
-        uint32_t sent_ms;
-        bool used, secured, expects_reply;
-    } recent_tx[ZB_RECENT_TX];
+    zb_recent_tx_t recent_tx[ZB_RECENT_TX];
     uint8_t recent_tx_next;
+    struct { uint16_t dst; uint32_t ms; } answered[ZB_ANSWERED];
+    uint8_t answered_next;
+    uint8_t retx_tokens;
+    uint32_t retx_refill_ms;
     bool sending_ack, retrying_recent;
     zb_frag_rx_t frag_rx[ZB_FRAG_RX_SESSIONS];
     zb_frag_tx_t frag_tx;                  /* one fragmented transmission at a time */

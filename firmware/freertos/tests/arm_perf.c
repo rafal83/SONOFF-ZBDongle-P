@@ -310,3 +310,67 @@ uint32_t arm_nv_write(uint32_t id, uint32_t len, uint32_t tag) {
 }
 uint32_t arm_nv_compactions(void) { return bench_log.stats.compactions; }
 
+
+/* ---- CPU of each step of a host transaction, CCM* excluded ----------------
+ * For tools/bench_transaction_cpu.py -> firmware/freertos/sim/net_bench.c:
+ * the network benchmark charges these instruction counts per step, plus the
+ * CCM* operations it counts, at the cost measured on the dongle (native
+ * engine) or of the software AES. Both ends use the same pass-through CCM*
+ * here (plaintext, zero MIC), so every path runs as for a genuine frame. */
+static bool null_ccm(void *ctx, bool encrypt, const uint8_t key[16], const uint8_t nonce[13], const uint8_t *aad,
+                     size_t aad_len, const uint8_t *in, size_t len, uint8_t *out, uint8_t mic[4]) {
+    (void)ctx; (void)key; (void)nonce; (void)aad; (void)aad_len;
+    for (size_t i = 0; i < len; i++) out[i] = in[i];
+    if (encrypt) for (unsigned i = 0; i < 4; i++) mic[i] = 0;
+    else for (unsigned i = 0; i < 4; i++) if (mic[i]) return false;
+    return true;
+}
+uint32_t arm_perf_null_ccm(uint32_t on) {
+    coord.security.ccm = on ? null_ccm : zb_ccm_backend_active;
+    dev_sec.ccm = on ? null_ccm : zb_ccm_backend_sw;
+    return 1;
+}
+
+/* Measured: MAC confirm of the frame in flight -> route outcome -> ZNP
+ * AF_DATA_CONFIRM (after arm_perf_znp_af). */
+uint32_t arm_perf_tx_done_confirm(void) {
+    uint32_t before = arm_perf_znp_out;
+    zb_coord_tx_done(&coord, MAC_TX_OK, false);
+    return arm_perf_znp_out - before;
+}
+
+/* Measured: one radio task tick with nothing due (timers, queues scanned). */
+uint32_t arm_perf_tick_idle(void) {
+    coord.next_link_status_ms = coord.now_ms + 100000u;
+    coord.next_mtorr_ms = coord.now_ms + 100000u;
+    zb_coord_tick(&coord, coord.now_ms + 10u);
+    return 1;
+}
+
+/* Data poll of a sleepy child with one frame queued for it. */
+#define SLEEPY_EXT 0xA4C1380000000099ull
+#define SLEEPY_SHORT 0x5A5Au
+static uint8_t sleepy_seq;
+uint32_t arm_perf_poll_setup(void) {
+    if (nwk_devices_find_short(&coord.devices, SLEEPY_SHORT) == NWK_DEVICE_NONE) {
+        (void)zb_coord_import_device(&coord, NWK_DEVICE_NONE, SLEEPY_EXT, SLEEPY_SHORT, true, 0, 0xFF);
+        uint16_t s = nwk_devices_find_short(&coord.devices, SLEEPY_SHORT);
+        coord.devices.dev[s].capability = 0x80;
+        coord.devices.dev[s].capability_guessed = false;
+    }
+    const uint8_t zcl[5] = {0x00, 0x51, 0x00, 0x05, 0x00};
+    return zb_coord_send_aps(&coord, SLEEPY_SHORT, 1, 1, 0, 0x0104, zcl, 5, false) == ZB_SEND_OK;
+}
+/* Measured: MAC data request received -> indirect frame handed to the radio. */
+uint32_t arm_perf_poll(void) {
+    mac_frame_t f = {0};
+    f.type = MAC_TYPE_COMMAND; f.ack_request = true; f.pan_id_compression = true; f.seq = sleepy_seq++;
+    f.dst_mode = MAC_ADDR_SHORT; f.dst_pan = 0x1A62; f.dst_short = 0x0000;
+    f.src_mode = MAC_ADDR_SHORT; f.src_short = SLEEPY_SHORT;
+    const uint8_t cmd = MAC_CMD_DATA_REQUEST;
+    uint8_t mpdu[32];
+    size_t n = mac_frame_build(&f, &cmd, 1, mpdu, sizeof mpdu);
+    uint32_t before = arm_perf_tx;
+    zb_coord_rx(&coord, mpdu, (uint8_t)n, 200, -50);
+    return arm_perf_tx - before;
+}

@@ -117,6 +117,7 @@ HOST_TESTS = {
     "test_frt_mesh_scale": ["firmware/freertos/tests/test_mesh_scale.c"],
     "test_frt_sleepy": ["firmware/freertos/tests/test_sleepy.c"],
     "test_frt_gp": ["firmware/freertos/tests/test_gp.c"],
+    "test_frt_reliability": ["firmware/freertos/tests/test_reliability.c"],
 }
 
 
@@ -367,6 +368,10 @@ def sim(exe):
     libs = ["-lws2_32"] if os.name == "nt" else []
     run([exe, "cc", *flags, *PORTABLE, "firmware/freertos/sim/znp_sim.c", "-o", binary, *libs])
     print(f"sim: {binary.relative_to(ROOT)}")
+    # Network benchmark (simulation only): tools/bench_throughput.py drives it.
+    bench = out / ("net_bench" + (".exe" if os.name == "nt" else ""))
+    run([exe, "cc", *[f for f in flags if f != "-O1"], "-O2", *PORTABLE, "firmware/freertos/sim/net_bench.c", "-o", bench])
+    print(f"sim: {bench.relative_to(ROOT)}")
     return binary
 
 

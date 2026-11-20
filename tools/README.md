@@ -12,6 +12,7 @@
 | Web flasher | `package_web_flasher.py`, `tests/web_flasher.test.mjs` |
 | Sauvegarde et restauration | `capture_dongle.py`, `freertos_lab_session.py`, `freertos_store.py`, `znp_migration_rehearsal.cjs` |
 | Fuzzing | `fuzz_freertos.py`, `fuzz/Dockerfile` |
+| Performances (sans matériel) | `bench_freertos.py` (CPU émulé), `bench_transaction_cpu.py` (CPU par étape d'une transaction), `bench_throughput.py` (débit soutenu et endormis, **simulation** : `sim/net_bench.c`) |
 
 Les données du dongle et clés restent sous `private/`, hors Git et hors paquets. Les outils matériels demandent une séance, une identité explicite et l'arrêt de Zigbee2MQTT. Le [flasher](../docs/firmware/restauration.md) restaure une application compatible en conservant les données réseau actuelles. Un build n'effectue aucune action matérielle.
 

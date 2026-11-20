@@ -594,9 +594,17 @@ static void radio(void *arg) {
             if (mode == MODE_COORD || mode == MODE_ZNP) poll_tx();
             drain_rx();
             if (mode == MODE_ZNP) { poll_tx(); gp_service(); }
-            if (mode == MODE_COORD || mode == MODE_ZNP) {
+            /* Timers have a 1 ms resolution: one tick (and statistics
+             * snapshot) per millisecond is enough. Under load the task wakes
+             * for every RF event, several times per millisecond, and each
+             * tick scans the MAC buffers and the stack's tables (~2 100
+             * cycles): ~4 % of the CPU at 180 transactions/s. */
+            static uint32_t last_tick_ms = UINT32_MAX;
+            uint32_t t_ms = now_ms();
+            if ((mode == MODE_COORD || mode == MODE_ZNP) && t_ms != last_tick_ms) {
+                last_tick_ms = t_ms;
                 uint32_t t0 = hal_cycles();
-                zb_coord_tick(&coord, now_ms());
+                zb_coord_tick(&coord, t_ms);
                 uint32_t dt = hal_cycles() - t0;
                 if (dt > app_perf.tick_max) app_perf.tick_max = dt;
                 snapshot();

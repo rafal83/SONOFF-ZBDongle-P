@@ -41,7 +41,12 @@
  * many-to-one requests) always finds MAC_POOL_SLOTS - MAC_INDIRECT_SLOTS. */
 #define MAC_INDIRECT_SLOTS 16u
 #define MAC_DIRECT_QUEUE 32u
-#define MAC_URGENT_QUEUE 4u
+/* Frames answering a data poll (and beacons) go before everything else: the
+ * device waits for them only macMaxFrameTotalWaitTime (~30 ms) after the ACK
+ * that announced them. With 4, simultaneous wake-ups (20-40 sleepy children)
+ * overflowed it: frame-pending ACK, nothing sent, data delayed by a whole
+ * poll period or expired (network benchmark, sleepy suite). */
+#define MAC_URGENT_QUEUE 12u
 #define MAC_MAX_FRAME_RETRIES 3u
 /* Direct frames that failed (channel busy after CSMA-CA, or no ACK after
  * MAC_MAX_FRAME_RETRIES) go back to the END of the queue for another round,
@@ -51,7 +56,12 @@
  * in a production burst, frames failing once on a busy channel were lost. */
 #define MAC_TX_ROUNDS 3u
 #define MAC_PERSISTENCE_MS 7680u     /* 0x01F4 unit periods x 15.36 ms */
-#define MAC_EXT_INDIRECT 4u
+/* Extended-address transactions: association and rejoin responses. When a
+ * router with many sleepy children dies, they all rejoin through us within a
+ * few seconds: with 4, most Rejoin Responses were refused, the devices kept
+ * polling with their IEEE address and the frames queued under their short
+ * address expired (network benchmark, parent loss: 13 % success). */
+#define MAC_EXT_INDIRECT 12u
 #define MAC_DUP_ENTRIES 32u
 #define MAC_DUP_WINDOW_MS 2000u
 /* Largest MAC payload: short destination and source with PAN ID compression
@@ -122,6 +132,7 @@ typedef struct {
     uint32_t indirect_expired, queue_full, pool_full;
     uint32_t kicks_deferred;     /* send from a confirm callback, transmitted after it */
     uint32_t tx_rounds;          /* failed direct frames re-queued for another round */
+    uint32_t poll_queue_full;    /* data for a poll left queued: urgent queue full (of queue_full) */
 } mac_stats_t;
 
 typedef struct {

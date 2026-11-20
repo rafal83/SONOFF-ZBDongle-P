@@ -42,6 +42,7 @@ typedef struct {
     bool hw_disabled;        /* accelerator abandoned until reboot */
     uint32_t native_ops;     /* of hw_ops: done by the native CCM* of the engine */
     uint32_t tag_suspect;    /* native MIC all zero, or repeated for another nonce: redone */
+    uint32_t reject_unverified;   /* rejections not re-verified in software (budget used up) */
 } zb_ccm_hw_stats_t;
 void zb_ccm_backend_hw_stats(zb_ccm_hw_stats_t *out);
 /* Backend used by the coordinator (software unless the platform selected

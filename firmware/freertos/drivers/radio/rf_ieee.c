@@ -31,6 +31,13 @@
 #define RF_BOOT0 0xE0000011u
 #define RF_BOOT1 0x00000080u
 #define WAIT_BUDGET_CYCLES (48000000u / 20u)   /* 50 ms */
+/* RF core receive buffers. The radio task cannot drain them while the CPU
+ * stalls on a Flash erase (store compaction: 7 sector erases, every few
+ * hours under load); a frame finding them full is dropped WITHOUT ACK and
+ * the sender retries. Network benchmark (100 reports/s + 20 transactions/s,
+ * 76 ms stalls): ~10 frames dropped per stall with 4 buffers, 1 with 8, all
+ * delivered by the MAC retries either way. 4 kept: 8 would cost ~580 B of
+ * the last ~1.2 KB of SRAM. */
 #define RX_ENTRIES 4u
 #define RX_ENTRY_DATA 136u                     /* >= RF_RX_ELEMENT_MAX */
 #define ACK_TIMEOUT_RAT 4000u                  /* 1 ms at 4 MHz (54 symbols = 864 us) */

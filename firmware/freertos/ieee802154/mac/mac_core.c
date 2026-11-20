@@ -448,6 +448,7 @@ static void serve_poll(mac_t *m, const mac_frame_t *f) {
             m->stats.polls_served++;
         } else {
             m->stats.queue_full++;
+            m->stats.poll_queue_full++;
             keep_pending(m, s);
             s = NO_SLOT;
         }

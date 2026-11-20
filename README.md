@@ -33,6 +33,14 @@ Valeurs au **20 novembre 2026**. Ce résumé est tenu à jour avec [le détail, 
 | Bruit UART : reprise | 40 ms | 3 à 55 ms | 8,84 s |
 | Tas dynamique | **aucun** | oui | oui |
 
+**Débit soutenu : SIMULATION, pas une mesure physique.** La vraie pile tourne face à un canal 802.15.4 temporisé, 28 routeurs simulés et un modèle de herdsman. Voir [la méthode et les conditions](docs/firmware/benchmarks.md#5-débit-soutenu-et-appareils-endormis--simulation).
+
+| | Firmware FreeRTOS (simulation) | ZeroStack (publié) |
+|---|---|---|
+| Messages entrants (rapports), 28 routeurs à 1 saut | **190 /s soutenus** (≥ 99,8 % livrés, p99 ≈ 60 ms, CPU ≈ 3 %), ≈ 195 /s au plafond ; ≈ 110 /s dans un arbre à 3 niveaux | « 180 messages/s », conditions non publiées |
+| Transactions complètes (lecture ZCL aller-retour), débit stable | 53 /s (arbre à 3 niveaux) à 103 /s (1 saut) : limite de l'air et de la fenêtre de 16 de herdsman, pas du CPU | non publié |
+| 20 appareils endormis, parent perdu | 98,5 % des lectures servies, réassociation par le coordinateur | non publié |
+
 ## Construire et tester
 
 Python 3.13, Git, Node 22 et Zig 0.13.0 sont utilisés par la CI Ubuntu 24.04. Les commandes suivantes construisent et testent sans ouvrir de port série :
