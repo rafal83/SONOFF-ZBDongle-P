@@ -55,8 +55,9 @@ typedef struct {
 typedef struct { int status; uint8_t tx_result, frame_pending; } radio_reply_t;
 bool radio_task_request(const radio_request_t *req, radio_reply_t *reply, uint32_t timeout_ms);
 
-/* Frames received in sniffer/diagnostic mode, forwarded to the host task. */
-#define RADIO_FRAME_QUEUE 8u
+/* Frames received in sniffer/diagnostic mode, forwarded to the host task
+ * (laboratory modes only, unused in ZNP mode; 4 frames = 544 B). */
+#define RADIO_FRAME_QUEUE 4u
 extern QueueHandle_t app_radio_frames;
 extern volatile uint32_t app_radio_frames_dropped;
 /* Laboratory coordinator: join events and a counter snapshot refreshed by
@@ -88,8 +89,13 @@ extern app_coord_snapshot_t app_coord;
 
 /* ZNP frames host <-> radio task (the radio task owns the coordinator). */
 #include "npi.h"
-#define ZNP_IN_QUEUE 8u
-#define ZNP_OUT_QUEUE 8u
+/* 4 frames each (253 B per frame): herdsman sends one request at a time and
+ * waits for its SRSP; output is followed by the host task's TX queue (8
+ * encoded frames) and the 1 KB UART ring. Network benchmark, 115 200 baud,
+ * channel saturated: at most 4 output frames waiting, radio task never
+ * blocked. 8 + 8 cost 2 KB more of the last SRAM. */
+#define ZNP_IN_QUEUE 4u
+#define ZNP_OUT_QUEUE 4u
 extern QueueHandle_t app_znp_in, app_znp_out;
 extern volatile uint32_t app_znp_out_dropped, app_znp_in_refused;
 void radio_task_znp_notify(void);

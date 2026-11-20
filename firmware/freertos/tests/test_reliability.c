@@ -21,6 +21,7 @@
 #include "zb_ccm_backend.h"
 #include "zb_coord.h"
 #include "znp.h"
+#include "nv_log.h"
 
 #define PAN 0x7E57
 static const uint8_t KEY[16] = {0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x07, 0x18, 0x29, 0x3A, 0x4B, 0x5C, 0x6D, 0x7E, 0x8F, 0x90};
@@ -130,6 +131,53 @@ static void nwk_from(node_dev_t *sealer, uint16_t mac_src, uint16_t src, uint8_t
     uint8_t mpdu[MAC_MAX_MPDU];
     size_t n = mac_frame_build(&f, nwk, total, mpdu, sizeof mpdu);
     zb_coord_rx(&coord, mpdu, (uint8_t)n, 200, -50);
+}
+/* Same frame built for another coordinator (returns the MPDU length). */
+static size_t build_from(node_dev_t *sealer, uint16_t mac_src, uint16_t src, uint8_t type, const uint8_t *p, size_t len,
+                         uint8_t *mpdu) {
+    nwk_header_t h = {0};
+    h.type = type; h.src = src; h.dst = 0x0000; h.radius = 30; h.seq = sealer->nwk_seq++;
+    uint8_t nwk[CORE_SECURITY_MAX_FRAME];
+    size_t hl = nwk_build(&h, nwk, sizeof nwk);
+    memcpy(nwk + hl, p, len);
+    uint8_t local[8];
+    for (unsigned i = 0; i < 8; i++) local[i] = (uint8_t)(sealer->ext >> (8 * i));
+    size_t total;
+    CHECK(core_security_seal(&sealer->sec, 0, local, nwk, hl, len, sizeof nwk, &total));
+    mac_frame_t f = {0};
+    f.type = MAC_TYPE_DATA; f.ack_request = true; f.pan_id_compression = true; f.seq = sealer->mac_seq++;
+    f.dst_mode = MAC_ADDR_SHORT; f.dst_pan = PAN; f.dst_short = 0x0000;
+    f.src_mode = MAC_ADDR_SHORT; f.src_short = mac_src;
+    return mac_frame_build(&f, nwk, total, mpdu, MAC_MAX_MPDU);
+}
+static void dev_init_on(zb_coord_t *c, node_dev_t *d, uint16_t s, uint64_t ext) {
+    d->short_addr = s;
+    d->ext = ext;
+    core_security_init(&d->sec, 1, zb_ccm_backend_sw, reserve, 0);
+    CHECK(core_security_set_key(&d->sec, 0, 0, KEY));
+    CHECK(zb_coord_import_device(c, NWK_DEVICE_NONE, ext, s, false, 0, 0xFF));
+}
+/* NOR flash in RAM for a store (2 banks of 16 KB, 8 KB sectors). */
+#define NOR_BANK 0x4000u
+#define NOR_SECTOR 0x2000u
+static uint8_t nor[2 * NOR_BANK];
+static bool nor_read(void *c, uint32_t a, void *b, size_t n) {
+    (void)c;
+    if (a + n > sizeof nor) return false;
+    memcpy(b, nor + a, n);
+    return true;
+}
+static bool nor_program(void *c, uint32_t a, const void *d, size_t n) {
+    (void)c;
+    if (a + n > sizeof nor) return false;
+    for (size_t i = 0; i < n; i++) nor[a + i] &= ((const uint8_t *)d)[i];
+    return true;
+}
+static bool nor_erase(void *c, uint32_t a) {
+    (void)c;
+    if (a + NOR_SECTOR > sizeof nor) return false;
+    memset(nor + a, 0xFF, NOR_SECTOR);
+    return true;
 }
 static void cmd_from(node_dev_t *d, const uint8_t *p, size_t len) {
     nwk_from(d, d->short_addr, d->short_addr, NWK_TYPE_COMMAND, p, len);
@@ -494,6 +542,57 @@ int main(void) {
         for (unsigned i = 0; i < 45; i++) nwk_neighbor_remove(rt, (uint16_t)(0x5000 + i));
         for (unsigned i = 0; i < 40; i++) nwk_routes_forget(rt, (uint16_t)(0x6000 + i));
         printf("reliability: 45 neighbours kept, Mgmt_Rtg pages over %u routes\n", expected);
+    }
+
+    /* 11. Incoming NWK frame counters survive a reboot (floor every 1024):
+     *     an old frame replayed after the reboot is refused; a re-joined
+     *     device (counters restarted) is accepted at once. */
+    {
+        static nv_log_t log;
+        static const nv_flash_ops_t OPS = {nor_read, nor_program, nor_erase, 0};
+        memset(nor, 0xFF, sizeof nor);
+        CHECK(nv_log_mount(&log, &OPS, 0, NOR_BANK, NOR_SECTOR) || nv_log_format(&log));
+        static zb_coord_t c1, c2;
+        const uint8_t epid2[8] = {9, 9, 9, 9, 9, 9, 9, 9};
+        zb_coord_init(&c1, &RADIO, &upper, 0x00124B000000AAAAull, 0x1111u, 1);
+        zb_coord_attach_store(&c1, &log);
+        zb_coord_form(&c1, PAN, 25, epid2, KEY, 0);
+        node_dev_t d;
+        memset(&d, 0, sizeof d);
+        dev_init_on(&c1, &d, 0x7777, 0x00158D0000CC0001ull);
+        d.sec.tx_next = d.sec.tx_reserved = 1020;
+        uint8_t old[MAC_MAX_MPDU], late[MAC_MAX_MPDU];
+        size_t old_len = 0, late_len = 0;
+        for (unsigned i = 0; i < 10; i++) {   /* counters 1020 .. 1029 */
+            uint8_t mpdu[MAC_MAX_MPDU];
+            const uint8_t aps[8 + 3] = {0x00, 0x01, 0x06, 0x00, 0x04, 0x01, 0x01, d.aps++, 0x18, (uint8_t)i, 0x0A};
+            size_t n = build_from(&d, d.short_addr, d.short_addr, NWK_TYPE_DATA, aps, sizeof aps, mpdu);
+            if (i == 2) { memcpy(old, mpdu, n); old_len = n; }    /* 1022: below the stored floor (1024) */
+            if (i == 6) { memcpy(late, mpdu, n); late_len = n; }  /* 1026: inside the window */
+            zb_coord_rx(&c1, mpdu, (uint8_t)n, 200, -50);
+        }
+        CHECK(c1.stats.nwk_auth_failures == 0 && c1.stats.nwk_counters_stored == 2);   /* first frame, then 1024 */
+        air_head = air_tail;
+        /* reboot */
+        zb_coord_init(&c2, &RADIO, &upper, 0x00124B000000AAAAull, 0x2222u, 1);
+        zb_coord_attach_store(&c2, &log);
+        CHECK(zb_coord_restore(&c2) && c2.stats.nwk_counters_restored == 1);
+        old[2] ^= 0x33;    /* new MAC sequence number: only NWK replay protection can stop it */
+        zb_coord_rx(&c2, old, (uint8_t)old_len, 200, -50);
+        CHECK(c2.stats.nwk_auth_failures == 1);
+        late[2] ^= 0x33;
+        zb_coord_rx(&c2, late, (uint8_t)late_len, 200, -50);   /* window of 1024: accepted (documented) */
+        CHECK(c2.stats.nwk_auth_failures == 1);
+        /* the device is re-paired (fresh counters): import = new life in its slot */
+        CHECK(zb_coord_import_device(&c2, NWK_DEVICE_NONE, d.ext, d.short_addr, false, 0, 0xFF));
+        d.sec.tx_next = d.sec.tx_reserved = 1;
+        uint8_t mpdu[MAC_MAX_MPDU];
+        const uint8_t aps[8 + 3] = {0x00, 0x01, 0x06, 0x00, 0x04, 0x01, 0x01, d.aps++, 0x18, 0x77, 0x0A};
+        size_t n = build_from(&d, d.short_addr, d.short_addr, NWK_TYPE_DATA, aps, sizeof aps, mpdu);
+        zb_coord_rx(&c2, mpdu, (uint8_t)n, 200, -50);
+        CHECK(c2.stats.nwk_auth_failures == 1);
+        air_head = air_tail;
+        printf("reliability: incoming NWK counters restored after a reboot (old frame refused), reset on re-join\n");
     }
 
     /* 8. Native CCM* rejections: a flood of forged frames is re-verified in

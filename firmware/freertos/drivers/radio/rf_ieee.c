@@ -37,7 +37,7 @@
  * the sender retries. Network benchmark (100 reports/s + 20 transactions/s,
  * 76 ms stalls): ~10 frames dropped per stall with 4 buffers, 1 with 8, all
  * delivered by the MAC retries either way. 4 kept: 8 would cost ~580 B of
- * the last ~1.2 KB of SRAM. */
+ * SRAM for a marginal gain. */
 #define RX_ENTRIES 4u
 #define RX_ENTRY_DATA 136u                     /* >= RF_RX_ELEMENT_MAX */
 #define ACK_TIMEOUT_RAT 4000u                  /* 1 ms at 4 MHz (54 symbols = 864 us) */

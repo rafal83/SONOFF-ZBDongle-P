@@ -77,6 +77,12 @@ bool core_security_restore_peer_counter(core_security_t *s, const uint8_t addres
     if (r->epoch[k]==s->network_keys[k].epoch && counter<r->counter[k]) return false;
     r->counter[k]=counter; r->epoch[k]=s->network_keys[k].epoch; return true;
 }
+bool core_security_peer_counter(core_security_t *s, const uint8_t address[8], uint8_t sequence, uint32_t *counter) {
+    int k=key_slot(s,sequence);
+    uint16_t peer=address?core_index_find(&s->peers,address_key(address)):CORE_INDEX_NONE;
+    if (k<0 || peer==CORE_INDEX_NONE || s->replay[peer].epoch[k]!=s->network_keys[k].epoch) return false;
+    *counter=s->replay[peer].counter[k]; return true;
+}
 bool core_security_seal(core_security_t *s, unsigned k, const uint8_t local[8], uint8_t *frame,
     size_t header, size_t payload, size_t capacity, size_t *length) {
     if (length) *length=0;

@@ -36,8 +36,10 @@
  *    (unsolicited Rejoin Response with a new address).
  * NOT implemented yet: APS retries of unfragmented frames (herdsman sends
  * without APS ACK request), many-to-one requests of other concentrators.
- * Incoming NWK/APS replay counters are NOT persisted:
- * after a reboot an old frame from a device could be replayed once.
+ * Incoming NWK and APS replay counters are persisted every 1024 values
+ * (NWK: 16 devices per store record): after a reboot, a replay is only
+ * possible within that window. A device that joins again from scratch has
+ * its NWK replay state reset (its counters restart).
  */
 #ifndef ZB_COORD_H
 #define ZB_COORD_H
@@ -220,6 +222,7 @@ typedef struct {
     uint32_t zcl_retx_deferred;       /* ZCL re-send postponed: re-send budget used up */
     uint32_t children_aged;           /* children silent beyond their End Device Timeout */
     uint32_t children_moved;          /* children heard through a router: no longer ours */
+    uint32_t nwk_counters_stored, nwk_counters_restored;   /* incoming NWK counter floors (store) */
 } zb_coord_stats_t;
 
 /* Recent unicast data frame: re-sent on Network Status (route failure),

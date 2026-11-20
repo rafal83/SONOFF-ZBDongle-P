@@ -129,8 +129,8 @@ Ce qui dépasse désormais ZeroStack :
 | Table anti-doublon des broadcasts | 32 | 30 (`MAX_BCAST`) | 40 |
 | Réessais MAC | 3 par tour, 3 tours (file de 32 trames) | 7 | non publié |
 | Store non volatil | **2 × 56 Kio** (disposition 2) | NV Z-Stack (géométrie non comparée ici) | non publié |
-| Flash occupée | 98 444 o (image `--hw-aes` 1 Mbaud de l'arbre de travail du 20 novembre, non flashée) | 178 669 o (20240710) | non publié |
-| SRAM | 81 088 o statiques sur 81 920, piles et MSP comprises, **sans tas** | 42 228 o statiques + tas dynamique de 33 371 o | 88 Ko de SRAM sur CC2652P, sans précision |
+| Flash occupée | 99 692 o (image `--hw-aes` 1 Mbaud de l'arbre de travail du 20 novembre, non flashée) | 178 669 o (20240710) | non publié |
+| SRAM | 78 536 o statiques sur 81 920 (3 384 libres), piles et MSP comprises, **sans tas** | 42 228 o statiques + tas dynamique de 33 371 o | 88 Ko de SRAM sur CC2652P, sans précision |
 
 ## 5. Débit soutenu et appareils endormis : SIMULATION
 
@@ -228,7 +228,7 @@ Une compaction du store efface 7 secteurs. Pendant ce temps, le CPU, qui exécut
 | 4 (firmware) | 138 | 99,97 % | 69 ms |
 | 8 | 10 | 100 % | 61 ms |
 
-Les émetteurs réessaient les trames non acquittées, donc presque rien n'est perdu. La compaction n'arrive que toutes les quelques heures en charge. **Les 4 tampons sont gardés :** 4 de plus coûteraient ≈ 580 o sur les ≈ 1,2 Kio de SRAM restants.
+Les émetteurs réessaient les trames non acquittées, donc presque rien n'est perdu. La compaction n'arrive que toutes les quelques heures en charge. **Les 4 tampons sont gardés :** 4 de plus coûteraient ≈ 580 o de SRAM pour un gain marginal (3,4 Kio libres au 20 novembre au soir).
 
 ## Ce qui n'est pas mesuré
 

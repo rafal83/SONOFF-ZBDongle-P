@@ -14,6 +14,14 @@
 #define STORE_ID_NETWORK 1u
 #define STORE_ID_COUNTERS 2u
 #define STORE_ID_DEVICE0 16u
+/* Floors of the incoming NWK frame counters, 16 devices per record (ids
+ * 224..236: the 512 ids of the store are otherwise all assigned). Entry =
+ * IEEE tag u16 (never 0) + counter u32, the record bound to a key sequence. */
+#define STORE_ID_NWKCTR0 224u
+#define NWKCTR_PER_RECORD 16u
+#define NWKCTR_VERSION 1u
+#define NWKCTR_LEN (2u + 6u * NWKCTR_PER_RECORD)
+#define NWKCTR_STEP_SHIFT 10u   /* persisted every 1024 counter values, as the APS ones */
 #define STORE_NET_VERSION 2u
 #define STORE_COUNTERS_VERSION 2u
 #define STORE_COUNTERS_V1_LEN 8u
@@ -141,6 +149,44 @@ static void save_device(zb_coord_t *c, uint16_t slot) {
     if (d->aps_in_seen) le_u32(&w, d->aps_in_counter);   /* last authenticated incoming APS counter */
     (void)store_put(c, (uint16_t)(STORE_ID_DEVICE0 + slot), b, (uint16_t)w.len);
     wipe(b, sizeof b);
+}
+
+static uint16_t ext_tag(uint64_t ext) {
+    uint32_t x = (uint32_t)ext ^ (uint32_t)(ext >> 32);
+    x ^= x >> 16;
+    return (uint16_t)(x | 1u);
+}
+
+/* Incoming NWK frame counter of the device in `slot` made durable (0 clears
+ * the entry). After a reboot, frames at or below it are refused as replays:
+ * the replay window is bounded by 1024, as for the APS counters (before,
+ * any frame captured before the reboot could be replayed once). */
+static void nwkctr_store(zb_coord_t *c, uint16_t slot, uint8_t key_seq, uint32_t counter) {
+    if (!c->store || slot >= NWK_MAX_DEVICES) return;
+    uint8_t b[NWKCTR_LEN];
+    uint16_t len = 0, id = (uint16_t)(STORE_ID_NWKCTR0 + slot / NWKCTR_PER_RECORD);
+    if (!nv_log_read(c->store, id, b, sizeof b, &len) || len != NWKCTR_LEN || b[0] != NWKCTR_VERSION || b[1] != key_seq) {
+        if (!counter) return;   /* nothing to clear */
+        memset(b, 0, sizeof b);
+        b[0] = NWKCTR_VERSION;
+        b[1] = key_seq;
+    }
+    uint8_t *e = b + 2 + 6u * (slot % NWKCTR_PER_RECORD);
+    uint16_t tag = counter ? ext_tag(c->devices.dev[slot].ext) : 0;
+    e[0] = (uint8_t)tag; e[1] = (uint8_t)(tag >> 8);
+    for (unsigned i = 0; i < 4; i++) e[2 + i] = (uint8_t)(counter >> (8u * i));
+    if (store_put(c, id, b, NWKCTR_LEN)) c->stats.nwk_counters_stored++;
+}
+
+/* A device that (re)joined from scratch restarts its NWK frame counter: its
+ * replay state and stored floor must go, or all its frames are refused as
+ * replays until our next reboot (re-pairing without restarting). */
+static void nwkctr_forget(zb_coord_t *c, uint16_t slot) {
+    if (slot >= NWK_MAX_DEVICES || !c->devices.dev[slot].ext) return;
+    uint8_t a[8];
+    put64(a, c->devices.dev[slot].ext);
+    (void)core_security_unregister(&c->security, a);
+    nwkctr_store(c, slot, c->key_seq, 0);
 }
 
 /* NWK outgoing counter window: durable before any frame uses it. */
@@ -1072,6 +1118,7 @@ static void on_assoc(void *ctx, uint64_t device, uint8_t capability, uint8_t lqi
     if (status != NWK_ASSOC_SUCCESS) { c->stats.associations_denied++; return; }
     c->stats.associations_accepted++;
     save_device(c, nwk_devices_find_ext(&c->devices, device));
+    nwkctr_forget(c, nwk_devices_find_ext(&c->devices, device));   /* a joiner starts its counters over */
     for (unsigned i = 0; i < ZB_AWAITING_KEY; i++) if (c->awaiting_key[i] == device) return;
     for (unsigned i = 0; i < ZB_AWAITING_KEY; i++) {
         if (!c->awaiting_key[i]) { c->awaiting_key[i] = device; return; }
@@ -1571,6 +1618,7 @@ static void handle_update_device(zb_coord_t *c, uint16_t parent, const uint8_t *
         d->unique_key = false;
         d->aps_in_seen = false;
         d->authorized = false;
+        nwkctr_forget(c, slot);
     }
     save_device(c, slot);
     if (status == 1 || status == 3) {
@@ -1895,6 +1943,9 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
         if (f->src_mode == MAC_ADDR_SHORT) bcast_heard(c, h.src, h.seq, f->src_short);
         return;
     }
+    uint32_t nwk_prev = 0;
+    bool nwk_had = h.payload_len >= 14 &&
+                   core_security_peer_counter(&c->security, h.payload + 5, h.payload[13], &nwk_prev);
     size_t payload_len = 0;
     if (!core_security_open_authenticated_peer(&c->security, frame, f->payload_len, h.header_len, &payload_len)) {
         c->stats.nwk_auth_failures++;
@@ -1917,6 +1968,12 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
         c->stats.learned_members++;
     }
     c->devices.dev[dev].last_seen_ms = c->now_ms;
+    if (h.payload[13] == c->key_seq) {
+        uint32_t nwk_now = (uint32_t)h.payload[1] | (uint32_t)h.payload[2] << 8 | (uint32_t)h.payload[3] << 16 |
+                           (uint32_t)h.payload[4] << 24;
+        if (!nwk_had || (nwk_prev >> NWKCTR_STEP_SHIFT) != (nwk_now >> NWKCTR_STEP_SHIFT))
+            nwkctr_store(c, dev, h.payload[13], nwk_now);
+    }
     disc_heard(c, h.src);
     if (f->src_mode == MAC_ADDR_SHORT) disc_heard(c, f->src_short);
     if (h.dst == 0x0000 && f->src_mode == MAC_ADDR_SHORT && f->src_short != h.src) {
@@ -2138,6 +2195,7 @@ void zb_coord_forget(zb_coord_t *c) {
 bool zb_coord_remove_device(zb_coord_t *c, uint64_t ext) {
     uint16_t slot = nwk_devices_find_ext(&c->devices, ext);
     if (slot == NWK_DEVICE_NONE) return false;
+    nwkctr_forget(c, slot);
     (void)nwk_devices_remove(&c->devices, ext);
     if (c->store) (void)nv_log_delete(c->store, (uint16_t)(STORE_ID_DEVICE0 + slot));
     return true;
@@ -2284,6 +2342,7 @@ bool zb_coord_import_device(zb_coord_t *c, uint16_t slot_hint, uint64_t ext, uin
     }
     nwk_devices_rebuild_free(&c->devices);
     save_device(c, slot);
+    nwkctr_forget(c, slot);   /* imported (backup): no floor of another device's life in this slot */
     wipe(&dev, sizeof dev);
     return true;
 }
@@ -2461,6 +2520,25 @@ bool zb_coord_restore(zb_coord_t *c) {
         wipe(&dev, sizeof dev);
     }
     nwk_devices_rebuild_free(&c->devices);
+    for (unsigned g = 0; g * NWKCTR_PER_RECORD < NWK_MAX_DEVICES; g++) {
+        uint8_t b[NWKCTR_LEN];
+        if (!nv_log_read(c->store, (uint16_t)(STORE_ID_NWKCTR0 + g), b, sizeof b, &len) || len != NWKCTR_LEN ||
+            b[0] != NWKCTR_VERSION || b[1] != key_seq)
+            continue;
+        for (unsigned k = 0; k < NWKCTR_PER_RECORD; k++) {
+            uint16_t slot = (uint16_t)(g * NWKCTR_PER_RECORD + k);
+            const uint8_t *e = b + 2 + 6u * k;
+            uint16_t tag = (uint16_t)(e[0] | e[1] << 8);
+            uint32_t counter = (uint32_t)e[2] | (uint32_t)e[3] << 8 | (uint32_t)e[4] << 16 | (uint32_t)e[5] << 24;
+            if (!counter || slot >= NWK_MAX_DEVICES || !c->devices.dev[slot].ext ||
+                tag != ext_tag(c->devices.dev[slot].ext))
+                continue;
+            uint8_t a[8];
+            put64(a, c->devices.dev[slot].ext);
+            if (core_security_register(&c->security, a) && core_security_restore_peer_counter(&c->security, a, key_seq, counter))
+                c->stats.nwk_counters_restored++;
+        }
+    }
     c->restore_status = ZB_RESTORE_OK;
     /* Re-write the counters in the current (v2, key-bound) format. */
     if (counters_len == STORE_COUNTERS_V1_LEN) (void)save_counters(c, c->nwk_reserved, c->aps_reserved);
