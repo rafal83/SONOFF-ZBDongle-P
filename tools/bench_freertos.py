@@ -123,7 +123,7 @@ def main(elf_path, out_path):
         "level": "our code only: ARM Cortex-M4 instructions in Unicorn 2.1.3, no peripherals/RTOS/flash timing",
         "elf_sha256": hashlib.sha256(Path(elf_path).read_bytes()).hexdigest(),
         "cycles_per_instruction_calibration": {"ratio": round(CPI, 4), "from": CALIBRATION, "clock_mhz": MHZ},
-        "aes": "software AES in this run; hardware CCM* measured on the dongle: 21 609 cycles per 40 B frame",
+        "aes": "software AES in this run; native hardware CCM* measured on the dongle: 8 984 cycles per 40 B frame",
         "results": r,
         "hardware_tested": False,
         "other_firmwares_measured": False,

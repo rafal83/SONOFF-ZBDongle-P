@@ -10,6 +10,29 @@ La branche `freeRTOS` est la cible maintenue. Consulter [son état détaillé](d
 
 Le [flasher USB](https://rafal83.github.io/SONOFF-ZBDongle-P/) est disponible sur GitHub Pages, en sources et en artefact CI. Voir [son utilisation](docs/firmware/README.md#flasher-depuis-le-navigateur).
 
+## Comparatif
+
+Valeurs au **20 novembre 2026**. Ce résumé est tenu à jour avec [le détail, les conditions et la méthode](docs/firmware/benchmarks.md).
+
+**Réseau réel :** dongle de production, 130 appareils, lecture d'un attribut sur chaque routeur.
+
+| | Notre firmware (72bc038) | Z-Stack Koenkk 20250321 | ZeroStack (SMLIGHT) |
+|---|---|---|---|
+| Rafale sur tous les routeurs : réponses des routeurs joignables | 89,2 % (meilleure session : 93,3 %) | **100 %** | non mesuré (binaire fermé) |
+| Lecture isolée, médiane | 66 à 78 ms selon la session | 51 ms | non mesuré |
+
+**CPU :** mesuré sur le dongle ou dans l'émulateur. Les chiffres de ZeroStack et du « Z-Stack stock » sont ceux publiés par SMLIGHT ; ils n'ont pas été reproduits.
+
+| | Notre firmware | ZeroStack (publié) | Z-Stack « stock » (selon SMLIGHT) |
+|---|---|---|---|
+| Sécurité d'une trame (CCM\*), sur le dongle | 8 984 cycles (0,19 ms), CCM natif | **≈ 3 900 cycles** | 532 182 cycles |
+| Écho de broadcast (1 000 échos, 50 routeurs) | **≈ 53 ms** au total | 151 ms | 3 s |
+| Trame rejouée | 2 474 cycles | **1 550 cycles** | 143 802 cycles |
+| Écritures avant compaction, 200 appareils | 405 | **1 013** (store vide) | 69 |
+| Coupures de courant testées, 0 perte | **27 980** | 22 959 | — |
+| Bruit UART : reprise | 40 ms | 3 à 55 ms | 8,84 s |
+| Tas dynamique | **aucun** | oui | oui |
+
 ## Construire et tester
 
 Python 3.13, Git, Node 22 et Zig 0.13.0 sont utilisés par la CI Ubuntu 24.04. Les commandes suivantes construisent et testent sans ouvrir de port série :

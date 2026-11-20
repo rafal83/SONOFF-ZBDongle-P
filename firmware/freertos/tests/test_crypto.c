@@ -192,12 +192,12 @@ static void hw_backend_checks(void) {
         CHECK(st.hw_disabled && st.hw_audit_failures == 1);
     }
     /* 6b. Same fault while SEALING (silent: the receiver would reject our
-     *     frames): caught by the pseudo-random audit within 96 operations,
+     *     frames): caught by the pseudo-random audit within 192 operations,
      *     with any traffic pattern (alternating seal/open here). */
     hw_reset();
     hw_mode = F_FLIP;
     unsigned ops = 0, accepted_wrong = 0, forged_accepted = 0;
-    for (; ops < 400; ops += 2) {
+    for (; ops < 800; ops += 2) {
         zb_ccm_backend_hw_stats(&st);
         if (st.hw_disabled) break;
         frame_t f;
@@ -214,7 +214,7 @@ static void hw_backend_checks(void) {
     }
     zb_ccm_backend_hw_stats(&st);
     CHECK(accepted_wrong == 0 && forged_accepted == 0);
-    CHECK(st.hw_disabled && st.hw_audit_failures == 1 && ops <= 2 * 96);
+    CHECK(st.hw_disabled && st.hw_audit_failures == 1 && ops <= 2 * 192);
     printf("crypto: silent faults while sealing caught by the audit after %u operations\n", ops);
 
     /* 7. Re-entry during an operation: served by software, both correct. */

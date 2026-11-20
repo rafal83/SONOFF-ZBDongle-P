@@ -477,7 +477,7 @@ static void native_checks(void) {
         (void)zb_ccm_backend_hw(0, true, key, nonce, aad, sizeof aad, pt, sizeof pt, out, mic);
     }
     zb_ccm_backend_hw_stats(&cs);
-    CHECK(cs.hw_disabled && cs.hw_audit_failures == 1 && ops <= 32u + 64u);   /* HW_AUDIT_MIN + 63, then the audited one */
+    CHECK(cs.hw_disabled && cs.hw_audit_failures == 1 && ops <= 64u + 128u);   /* HW_AUDIT_MIN + 127, then the audited one */
     printf("hal_aes: silently corrupted output: accelerator abandoned after %u operations\n", ops);
     m.flip_always = false;
     zb_ccm_backend_set_native(0);

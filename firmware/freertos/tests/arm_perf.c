@@ -273,9 +273,9 @@ uint32_t arm_perf_truncated(uint32_t keep) {
 }
 
 /* ---- nv_log on a RAM model of the production store geometry
- * (2 banks x 16 KiB, 8 KiB sectors, NOR programming = AND). ---- */
+ * (storage layout 2: 2 banks x 56 KiB, 8 KiB sectors, NOR programming = AND). ---- */
 #define BENCH_SECTOR 0x2000u
-#define BENCH_BANK 0x4000u
+#define BENCH_BANK 0xE000u
 static uint8_t bench_nor[2u * BENCH_BANK];
 static nv_log_t bench_log;
 uint32_t arm_nv_programmed, arm_nv_erases;

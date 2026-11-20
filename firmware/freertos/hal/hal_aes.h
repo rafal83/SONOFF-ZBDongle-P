@@ -12,6 +12,10 @@ typedef struct {
     uint32_t resets, reset_timeouts, busy;
     uint32_t ccm_ops;              /* native CCM* operations completed */
     uint32_t key_check_failures;   /* engine key differed from the requested one */
+    /* Native CCM* profile, cycles summed over ccm_ops: setup (key, key check,
+     * registers, IV), AAD DMA, data (copy in + engine + output DMA), tail
+     * (context saved, tag, copy out). */
+    uint32_t prof_setup, prof_aad, prof_data, prof_tail;
 } hal_aes_stats_t;
 
 #define HAL_AES_CCM_MAX 128u   /* AAD and data, bytes (one Zigbee frame) */

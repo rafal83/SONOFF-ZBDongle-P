@@ -207,6 +207,8 @@ static int diag_perf(le_writer_t *w) {
         /* 37..43: Green Power TempMaster transmissions */
         app_gp.tx_started, app_gp.tx_ok, app_gp.tx_failed, app_gp.tx_missed, app_gp.coord_tx_deferred,
         app_gp.channel_moves, app_gp.channel_failed,
+        /* 44..47: native CCM* profile (cycles summed over aes_ccm_ops) */
+        hs.prof_setup, hs.prof_aad, hs.prof_data, hs.prof_tail,
     };
     le_u8(w, (uint8_t)(sizeof values / sizeof values[0]));
     for (unsigned i = 0; i < sizeof values / sizeof values[0]; i++) le_u32(w, values[i]);
