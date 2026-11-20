@@ -103,21 +103,25 @@ def main(elf_path, out_path):
     r["store_identical_write_100B_x48"] = summary(same) | {
         "flash_bytes_programmed": sym("arm_nv_programmed") - programmed}
 
-    def until_compaction(prefill):
+    def until_compaction(prefill, write_len):
         assert arm.call("arm_nv_setup")[0] == 1
         for i in range(prefill):
             assert arm.call("arm_nv_write", 100 + i, 48, i)[0] == 1
         base_c, base_e = arm.call("arm_nv_compactions")[0], sym("arm_nv_erases")
         writes, last = 0, 0
         while arm.call("arm_nv_compactions")[0] == base_c:
-            ok, last = arm.call("arm_nv_write", 7, 100, writes + 2)
+            ok, last = arm.call("arm_nv_write", 7, write_len, writes + 2)
             assert ok == 1
             writes += 1
         return {"writes_until_first_compaction": writes, "compacting_write_instructions": last,
                 "compacting_write_ms_estimated_cpu_only": round(last * CPI / MHZ / 1000, 2),
                 "sector_erases_in_compaction": sym("arm_nv_erases") - base_e}
-    r["store_compaction_empty"] = until_compaction(0)
-    r["store_compaction_200_live_records"] = until_compaction(200)
+    r["store_compaction_empty_44B"] = until_compaction(0, 44)
+    r["store_compaction_empty_100B"] = until_compaction(0, 100)
+    r["store_compaction_200_live_records_48B"] = until_compaction(200, 48)
+    r["store_compaction_200_live_records_100B"] = until_compaction(200, 100)
+    r["store_compaction_empty"] = r["store_compaction_empty_100B"]
+    r["store_compaction_200_live_records"] = r["store_compaction_200_live_records_100B"]
 
     report = {
         "level": "our code only: ARM Cortex-M4 instructions in Unicorn 2.1.3, no peripherals/RTOS/flash timing",

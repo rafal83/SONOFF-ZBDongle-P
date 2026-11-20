@@ -31,6 +31,12 @@ void *memmove(void *dst, const void *src, size_t n) {
 
 void *memset(void *dst, int value, size_t n) {
     uint8_t *d = dst;
+    if (n >= 4 && ((uintptr_t)d & 3u) == 0) {
+        uint32_t w = (uint8_t)value;
+        w |= w << 8;
+        w |= w << 16;
+        for (; n >= 4; n -= 4, d += 4) *(uint32_t *)(void *)d = w;
+    }
     while (n--) *d++ = (uint8_t)value;
     return dst;
 }

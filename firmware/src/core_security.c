@@ -2,13 +2,18 @@
 #include "core_security.h"
 #include <string.h>
 static void clear(void *p, size_t n) { volatile uint8_t *v=p; while (n--) *v++=0; }
-static uint64_t address_key(const uint8_t p[8]) {
-    uint64_t key=0; for (unsigned i=0;i<8;i++) key|=(uint64_t)p[i]<<(i*8u); return key;
+typedef struct __attribute__((packed)) { uint32_t lo, hi; } u64_packed_t;
+typedef struct __attribute__((packed)) { uint32_t v; } u32_packed_t;
+static inline uint64_t address_key(const uint8_t p[8]) {
+    const u64_packed_t *u = (const u64_packed_t *)(const void *)p;
+    return (uint64_t)u->lo | ((uint64_t)u->hi << 32u);
 }
-static uint32_t read32(const uint8_t p[4]) {
-    return (uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);
+static inline uint32_t read32(const uint8_t p[4]) {
+    return ((const u32_packed_t *)(const void *)p)->v;
 }
-static void write32(uint8_t p[4], uint32_t n) { for (unsigned i=0;i<4;i++) p[i]=(uint8_t)(n>>(i*8u)); }
+static inline void write32(uint8_t p[4], uint32_t n) {
+    ((u32_packed_t *)(void *)p)->v = n;
+}
 static int key_slot(core_security_t *s, uint8_t sequence) {
     for (unsigned i=0;i<2;i++) if (s->network_keys[i].valid && s->network_keys[i].sequence==sequence) return (int)i;
     return -1;

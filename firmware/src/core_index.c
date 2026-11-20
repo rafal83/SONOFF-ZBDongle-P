@@ -2,7 +2,10 @@
 #include "core_index.h"
 #include <string.h>
 static bool leaf(uint16_t node) { return (node & CORE_INDEX_LEAF) != 0; }
-static unsigned direction(uint64_t key, uint8_t bit) { return (unsigned)((key >> (63u-bit)) & 1u); }
+static inline unsigned direction(uint64_t key, uint8_t bit) {
+    if (bit < 32u) return (unsigned)(((uint32_t)(key >> 32u) >> (31u - bit)) & 1u);
+    return (unsigned)(((uint32_t)key >> (63u - bit)) & 1u);
+}
 static bool occupied(const core_index_t *index, uint16_t slot) {
     return (index->occupied[slot >> 3] & (1u << (slot & 7))) != 0;
 }
@@ -25,12 +28,13 @@ bool core_index_init(core_index_t *index, core_index_branch_t *branches,
 }
 uint16_t core_index_find(core_index_t *index, uint64_t key) {
     uint16_t node=index->root;
-    index->last_steps=0;
-    if (node==CORE_INDEX_NONE) return CORE_INDEX_NONE;
+    if (node==CORE_INDEX_NONE) { index->last_steps=0; return CORE_INDEX_NONE; }
+    uint8_t steps=0;
     while (!leaf(node)) {
-        index->last_steps++;
+        steps++;
         node=index->branches[node].child[direction(key,index->branches[node].bit)];
     }
+    index->last_steps=steps;
     uint16_t slot=(uint16_t)(node & ~CORE_INDEX_LEAF);
     return index->keys[slot]==key?slot:CORE_INDEX_NONE;
 }

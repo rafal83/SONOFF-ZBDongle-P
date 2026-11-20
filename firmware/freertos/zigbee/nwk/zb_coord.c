@@ -4,6 +4,7 @@
  * Confirm Key), 2.2.5.1 (APS frames and ACK), 2.4.3/2.4.4 (ZDO).
  */
 #include "zb_coord.h"
+#include <string.h>
 #include "aps_security.h"
 #include "trust_center.h"
 #include "zb_ccm_backend.h"
@@ -1855,7 +1856,7 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
     }
     if (f->payload_len > CORE_SECURITY_MAX_FRAME) { c->stats.nwk_malformed++; return; }
     uint8_t frame[CORE_SECURITY_MAX_FRAME];
-    for (size_t i = 0; i < f->payload_len; i++) frame[i] = f->payload[i];
+    memcpy(frame, f->payload, f->payload_len);
     nwk_header_t h;
     if (nwk_parse(frame, f->payload_len, &h) != NWK_OK) { c->stats.nwk_malformed++; return; }
     /* After joining, every NWK frame must be secured with the network key,
@@ -1866,11 +1867,6 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
             handle_rejoin(c, f, &h, h.payload[1], false);
         else
             c->stats.nwk_unsecured_dropped++;
-        return;
-    }
-    nwk_aux_t aux;
-    if (nwk_aux_parse(h.payload, h.payload_len, &aux) != NWK_OK || !aux.extended_nonce) {
-        c->stats.nwk_malformed++;
         return;
     }
     /* Copy of a broadcast already received (or sent by us): the BTT only
@@ -1886,20 +1882,22 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
         if (f->src_mode == MAC_ADDR_SHORT) bcast_heard(c, h.src, h.seq, f->src_short);
         return;
     }
-    uint16_t dev = nwk_devices_find_ext(&c->devices, aux.source);
     size_t payload_len = 0;
     if (!core_security_open_authenticated_peer(&c->security, frame, f->payload_len, h.header_len, &payload_len)) {
         c->stats.nwk_auth_failures++;
         return;
     }
+    uint64_t aux_source;
+    memcpy(&aux_source, h.payload + 5, sizeof aux_source);
+    uint16_t dev = nwk_devices_find_ext(&c->devices, aux_source);
     if (dev == NWK_DEVICE_NONE) {
         /* Authenticated by the network key, hence a network member we did
          * not know (e.g. a device herdsman's restore could not carry): learn
          * the transmitting node (security source = MAC source's IEEE). */
         c->stats.nwk_unknown_source++;
-        if (f->src_mode != MAC_ADDR_SHORT || !nwk_devices_learn(&c->devices, aux.source, f->src_short, NWK_REL_NONE))
+        if (f->src_mode != MAC_ADDR_SHORT || !nwk_devices_learn(&c->devices, aux_source, f->src_short, NWK_REL_NONE))
             return;
-        dev = nwk_devices_find_ext(&c->devices, aux.source);
+        dev = nwk_devices_find_ext(&c->devices, aux_source);
         if (dev == NWK_DEVICE_NONE) return;
         c->devices.dev[dev].authorized = true;
         save_device(c, dev);
@@ -1980,7 +1978,7 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
     }
     if (a.type == APS_TYPE_COMMAND) {
         if (a.payload_len < 1) return;
-        uint64_t sender = aux.source;
+        uint64_t sender = aux_source;
         if (a.payload[0] == APS_CMD_REQUEST_KEY && a.security)
             handle_request_key(c, h.src, sender, a.payload, a.payload_len);
         else if (a.payload[0] == APS_CMD_UPDATE_DEVICE)   /* APS-secured (R21) or NWK-only (legacy) */
@@ -2010,7 +2008,7 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
     if (!aps_fresh(c, h.src, a.counter, a.cluster, a.payload, a.payload_len)) { c->stats.aps_duplicates++; return; }
     if (a.profile == ZDO_PROFILE && a.dst_endpoint == 0 && a.delivery != APS_DELIVERY_GROUP) {
         if (a.cluster == ZDO_DEVICE_ANNOUNCE) {
-            handle_announce(c, &h, f->src_mode == MAC_ADDR_SHORT ? f->src_short : 0xFFFF, aux.source, a.payload,
+            handle_announce(c, &h, f->src_mode == MAC_ADDR_SHORT ? f->src_short : 0xFFFF, aux_source, a.payload,
                             a.payload_len);
             return;
         }
