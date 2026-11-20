@@ -197,7 +197,7 @@ def main(elf_path, report_path):
 
     # Coordinator MAC with the test-only simulated radio (arm_sim.c).
     arm.reset_heap()
-    mac = arm.alloc(0x2000)
+    mac = arm.alloc(0x3000)   # >= sizeof(mac_t) (10 264 B with 48 MAC buffers)
     arm.call("arm_sim_mac_setup", mac)
     def sim(name, n=4):
         return int.from_bytes(arm.read(arm.sym[name], n), "little")

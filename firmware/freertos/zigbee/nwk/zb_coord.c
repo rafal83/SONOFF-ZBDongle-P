@@ -232,17 +232,29 @@ static void track_tx(zb_coord_t *c, uint8_t handle, uint16_t dst, uint16_t mac_d
     c->tx_track[slot].relayed_src = relayed_src;
 }
 
-static bool disc_handle_reserved(const zb_coord_t *c, uint8_t handle) {
+/* A handle still owned by a frame whose confirmation is pending: held during
+ * route discovery, fragmented message in progress, or any MAC buffer that
+ * will be confirmed (an indirect frame waits up to 7.68 s). The 8-bit counter
+ * alone wrapped in ~1.4 s at 180 frames/s: two pending frames then shared a
+ * handle and the host received the confirmation of the other request. */
+static bool handle_in_use(const zb_coord_t *c, uint8_t handle) {
     if (c->frag_tx.used && c->frag_tx.handle == handle) return true;
-    if (!c->disc_count) return false;
-    for (unsigned i = 0; i < ZB_DISC_PENDING; i++)
-        if (c->disc[i].used && c->disc[i].handle == handle) return true;
+    if (c->disc_count)
+        for (unsigned i = 0; i < ZB_DISC_PENDING; i++)
+            if (c->disc[i].used && c->disc[i].handle == handle) return true;
+    for (unsigned i = 0; i < MAC_POOL_SLOTS; i++) {
+        const mac_slot_t *s = &c->mac.slots[i];
+        if (s->kind != SLOT_FREE && s->confirm && s->handle == handle) return true;
+    }
     return false;
 }
 
+/* At most MAC_POOL_SLOTS + ZB_DISC_PENDING + 1 handles are in use: one is
+ * always found within that many draws. */
 static uint8_t next_mac_handle(zb_coord_t *c) {
     uint8_t h;
-    do h = c->mac_handle++; while (disc_handle_reserved(c, h));
+    unsigned guard = 0;
+    do h = c->mac_handle++; while (handle_in_use(c, h) && ++guard < 256u);
     return h;
 }
 
@@ -272,6 +284,7 @@ static void sleepy_copies(zb_coord_t *c, const uint8_t *plain, size_t hl, size_t
 static bool disc_hold(zb_coord_t *c, uint16_t dst, uint8_t radius, const uint8_t *payload, size_t len, bool secured,
                       bool notify_confirm);
 static bool disc_suppressed(const zb_coord_t *c, uint16_t dst);
+static bool answered_recently(const zb_coord_t *c, uint16_t dst);
 static void bcast_queue(zb_coord_t *c, const uint8_t *plain, size_t hl, size_t len, uint16_t src, uint8_t seq,
                         uint32_t due, uint8_t sends, bool sleepy, uint8_t already_sent);
 
@@ -307,6 +320,19 @@ static uint8_t nwk_tx(zb_coord_t *c, uint8_t type, uint16_t dst, uint8_t radius,
     h.dst = dst;
     h.src = 0x0000;
     h.radius = radius;
+    if (broadcast) {
+        /* The NWK sequence number advances with every frame, unicasts
+         * included: under load it wraps within 1-3 s, and a broadcast reusing
+         * the number of one of ours still held in the routers' broadcast
+         * transaction tables (nwkBroadcastDeliveryTime) is dropped by the
+         * whole network as a copy (network benchmark at 100/s: up to 90 Route
+         * Requests and many-to-one requests lost per 30 s). Our own
+         * broadcasts are in our BTT: their numbers are skipped. */
+        for (unsigned guard = 0; guard < 256u && nwk_btt_seen(&c->routes, 0x0000, c->nwk_seq, c->now_ms); guard++) {
+            c->nwk_seq++;
+            c->stats.bcast_seq_skipped++;
+        }
+    }
     h.seq = c->nwk_seq++;
     h.discover_route = type == NWK_TYPE_DATA && !broadcast ? 1 : 0;
     if (ext_dst) { h.has_dst_ieee = true; h.dst_ieee = ext_dst; h.has_src_ieee = true; h.src_ieee = c->ext_addr; }
@@ -337,18 +363,36 @@ static uint8_t nwk_tx(zb_coord_t *c, uint8_t type, uint16_t dst, uint8_t radius,
         if (!c->sending_ack) track_tx(c, tracked, dst, hop.mac_dst, 0xFFFF);
         if (type == NWK_TYPE_DATA && !c->sending_ack && !c->retrying_recent &&
             len >= 8 && (payload[0] & 0x03u) == APS_TYPE_DATA && len <= ZB_RECENT_MAX) {
-            unsigned idx = ZB_RECENT_TX;
+            /* One entry per outstanding READ (destination + ZCL sequence
+             * number; herdsman's own retries reuse the number), one per
+             * destination for other frames. Keyed by destination only, every
+             * new request to a device erased the follow-up of the previous
+             * one: under load (a request to each router every few hundred ms)
+             * a lost response was never re-requested and cost herdsman its
+             * 10 s timeout. Full table: an answered entry, else the oldest. */
+            bool reply = is_zcl_read_request(payload, len);
+            unsigned idx = ZB_RECENT_TX, victim = 0;
             for (unsigned i = 0; i < ZB_RECENT_TX; i++) {
-                if (c->recent_tx[i].used && c->recent_tx[i].dst == dst) { idx = i; break; }
-                if (!c->recent_tx[i].used && idx == ZB_RECENT_TX) idx = i;
+                const zb_recent_tx_t *e = &c->recent_tx[i];
+                if (e->used && e->dst == dst && e->expects_reply == reply && (!reply || e->payload[9] == payload[9])) {
+                    idx = i;
+                    break;
+                }
+                if (!e->used) { if (idx == ZB_RECENT_TX) idx = i; continue; }
+                const zb_recent_tx_t *v = &c->recent_tx[victim];
+                bool e_done = e->answered || !e->expects_reply, v_done = v->answered || !v->expects_reply;
+                if (!v->used || (e_done && !v_done) ||
+                    (e_done == v_done && (int32_t)(e->sent_ms - v->sent_ms) < 0))
+                    victim = i;
             }
-            if (idx == ZB_RECENT_TX) idx = c->recent_tx_next++ % ZB_RECENT_TX;
+            if (idx == ZB_RECENT_TX) idx = victim;
             c->recent_tx[idx].used = true;
+            c->recent_tx[idx].answered = false;
             c->recent_tx[idx].dst = dst;
             c->recent_tx[idx].radius = radius;
             c->recent_tx[idx].secured = secured;
             c->recent_tx[idx].retries = 0;
-            c->recent_tx[idx].expects_reply = is_zcl_read_request(payload, len);
+            c->recent_tx[idx].expects_reply = reply;
             c->recent_tx[idx].len = (uint8_t)len;
             c->recent_tx[idx].sent_ms = c->now_ms;
             for (size_t i = 0; i < len; i++) c->recent_tx[idx].payload[i] = payload[i];
@@ -624,12 +668,27 @@ static void disc_service(zb_coord_t *c) {
                                                                                     : ZB_STATUS_NWK_NO_ROUTE);
             }
         } else if ((int32_t)(c->now_ms - c->disc[i].due_ms) >= 0) {
-            if (notify) disc_failed(c, c->disc[i].dst);
+            if (notify && !answered_recently(c, c->disc[i].dst)) disc_failed(c, c->disc[i].dst);
             disc_release(c, i);
             c->stats.disc_expired++;
             if (notify && c->upper.send_confirm) c->upper.send_confirm(c->upper.ctx, handle, ZB_STATUS_NWK_NO_ROUTE);
         }
     }
+}
+
+static void note_answer(zb_coord_t *c, uint16_t dst) {
+    unsigned slot = c->answered_next % ZB_ANSWERED;
+    for (unsigned i = 0; i < ZB_ANSWERED; i++)
+        if (c->answered[i].dst == dst && c->answered[i].ms) { slot = i; break; }
+    if (slot == c->answered_next % ZB_ANSWERED) c->answered_next++;
+    c->answered[slot].dst = dst;
+    c->answered[slot].ms = c->now_ms | 1u;   /* never 0: 0 marks an empty entry */
+}
+
+static bool answered_recently(const zb_coord_t *c, uint16_t dst) {
+    for (unsigned i = 0; i < ZB_ANSWERED; i++)
+        if (c->answered[i].ms && c->answered[i].dst == dst && c->now_ms - c->answered[i].ms < ZB_ANSWERED_MS) return true;
+    return false;
 }
 
 static bool tx_in_flight_for(const zb_coord_t *c, uint16_t dst) {
@@ -638,7 +697,26 @@ static bool tx_in_flight_for(const zb_coord_t *c, uint16_t dst) {
     return false;
 }
 
+/* Known not to listen while idle (announce, rejoin, association, poll or
+ * Node Descriptor): it fetches its frames from its parent when it polls,
+ * seconds later, so a missing response after 1.1 s says nothing about the
+ * route. Re-sending would queue a second copy at the parent (answered twice)
+ * and the route rebuild would flood a Route Request for a working route. */
+static bool known_sleepy(zb_coord_t *c, uint16_t addr) {
+    uint16_t s = nwk_devices_find_short(&c->devices, addr);
+    if (s == NWK_DEVICE_NONE) return false;
+    const nwk_device_t *d = &c->devices.dev[s];
+    return !d->capability_guessed && !(d->capability & NWK_CAP_RX_ON_IDLE);
+}
+
 static void recent_service(zb_coord_t *c) {
+    /* refill the re-send budget */
+    uint32_t elapsed = c->now_ms - c->retx_refill_ms;
+    if (elapsed >= ZB_RETX_TOKEN_MS) {
+        uint32_t add = elapsed / ZB_RETX_TOKEN_MS;
+        c->retx_tokens = (uint8_t)(c->retx_tokens + add > ZB_RETX_BURST ? ZB_RETX_BURST : c->retx_tokens + add);
+        c->retx_refill_ms += add * ZB_RETX_TOKEN_MS;
+    }
     for (unsigned i = 0; i < ZB_RECENT_TX; i++) {
         if (!c->recent_tx[i].used) continue;
         int32_t age = (int32_t)(c->now_ms - c->recent_tx[i].sent_ms);
@@ -646,42 +724,46 @@ static void recent_service(zb_coord_t *c) {
             c->recent_tx[i].used = false;
             continue;
         }
-        if (!c->recent_tx[i].expects_reply) continue;
+        if (!c->recent_tx[i].expects_reply || c->recent_tx[i].answered) continue;
         uint16_t dst = c->recent_tx[i].dst;
         if (disc_pending_for(c, dst) || tx_in_flight_for(c, dst)) continue;
-        if (c->recent_tx[i].retries == 0 && age >= (int32_t)ZB_RECENT_RETRY1_MS) {
-            c->recent_tx[i].retries = 1;
-            c->recent_tx[i].sent_ms = c->now_ms;
-            c->recent_tx[i].payload[7] = c->aps_counter++;
-            c->retrying_recent = true;
-            c->forced_handle = next_mac_handle(c);
-            uint8_t st = nwk_tx(c, NWK_TYPE_DATA, dst, c->recent_tx[i].radius, c->recent_tx[i].payload,
-                                c->recent_tx[i].len, 0, c->recent_tx[i].secured, false);
-            c->forced_handle = -1;
-            c->retrying_recent = false;
-            if (st == ZB_SEND_OK) c->stats.net_status_retries++;
-        } else if (c->recent_tx[i].retries == 1 && age >= (int32_t)ZB_RECENT_RETRY2_MS) {
-            c->recent_tx[i].retries = 2;
-            c->recent_tx[i].sent_ms = c->now_ms;
-            c->recent_tx[i].payload[7] = c->aps_counter++;
+        if (known_sleepy(c, dst)) {
+            c->recent_tx[i].used = false;
+            c->stats.zcl_retx_sleepy_skipped++;
+            continue;
+        }
+        uint8_t r = c->recent_tx[i].retries;
+        uint32_t due = r == 0 ? ZB_RECENT_RETRY1_MS : r == 1 ? ZB_RECENT_RETRY2_MS : ZB_RECENT_RETRY3_MS;
+        if (r >= 3 || age < (int32_t)due) continue;
+        if (!c->retx_tokens) { c->stats.zcl_retx_deferred++; continue; }   /* budget: retried later or left to the host */
+        c->recent_tx[i].retries = (uint8_t)(r + 1);
+        c->retx_tokens--;
+        c->recent_tx[i].sent_ms = c->now_ms;
+        c->recent_tx[i].payload[7] = c->aps_counter++;
+        if (r == 1 && !answered_recently(c, dst)) {
+            /* Second miss and nothing answered lately: the route itself may
+             * be broken (asymmetric link, relay gone): rebuild it. A
+             * destination that answered other reads within ZB_ANSWERED_MS
+             * has a working route; its lost answer was congestion, and the
+             * rebuild (route forgotten, Route Request flood, held frames)
+             * only made it worse: under load, a lost Route Reply then banned
+             * reachable routers for 30 s (network benchmark at 100/s). */
             nwk_routes_forget(&c->routes, dst);
             disc_heard(c, dst);
             if (!disc_pending_for(c, dst)) (void)zb_coord_discover_route(c, dst);
             if (disc_hold(c, dst, c->recent_tx[i].radius, c->recent_tx[i].payload, c->recent_tx[i].len,
                           c->recent_tx[i].secured, false))
                 c->stats.net_status_retries++;
-        } else if (c->recent_tx[i].retries == 2 && age >= (int32_t)ZB_RECENT_RETRY3_MS) {
-            c->recent_tx[i].retries = 3;
-            c->recent_tx[i].sent_ms = c->now_ms;
-            c->recent_tx[i].payload[7] = c->aps_counter++;
-            c->retrying_recent = true;
-            c->forced_handle = next_mac_handle(c);
-            uint8_t st = nwk_tx(c, NWK_TYPE_DATA, dst, c->recent_tx[i].radius, c->recent_tx[i].payload,
-                                c->recent_tx[i].len, 0, c->recent_tx[i].secured, false);
-            c->forced_handle = -1;
-            c->retrying_recent = false;
-            if (st == ZB_SEND_OK) c->stats.net_status_retries++;
+            c->stats.zcl_route_rebuilds++;
+            continue;
         }
+        c->retrying_recent = true;
+        c->forced_handle = next_mac_handle(c);
+        uint8_t st = nwk_tx(c, NWK_TYPE_DATA, dst, c->recent_tx[i].radius, c->recent_tx[i].payload,
+                            c->recent_tx[i].len, 0, c->recent_tx[i].secured, false);
+        c->forced_handle = -1;
+        c->retrying_recent = false;
+        if (st == ZB_SEND_OK) c->stats.net_status_retries++;
     }
 }
 
@@ -1010,7 +1092,7 @@ static void send_transport_key(zb_coord_t *c, uint16_t slot) {
     size_t n = tc_build_transport_network_key(&p, frame, sizeof frame);
     if (!n) { c->stats.transport_key_failures++; return; }
     mac_data_request_t r = {
-        .dst_mode = MAC_ADDR_SHORT, .dst_short = d->short_addr, .handle = c->mac_handle++,
+        .dst_mode = MAC_ADDR_SHORT, .dst_short = d->short_addr, .handle = next_mac_handle(c),
         .ack_request = true, .indirect = !(d->capability & NWK_CAP_RX_ON_IDLE),
         .payload = frame, .length = (uint8_t)n,
     };
@@ -1027,6 +1109,17 @@ static void on_poll(void *ctx, uint16_t short_addr, uint64_t ext, bool served) {
     if (slot == NWK_DEVICE_NONE && ext) slot = nwk_devices_find_ext(&c->devices, ext);
     if (slot == NWK_DEVICE_NONE) return;
     nwk_device_t *d = &c->devices.dev[slot];
+    /* Polling with its SHORT address, an end device has us as its parent:
+     * it is our child even if we had it behind a router (e.g. the first copy
+     * we heard of its Device Announce was relayed, or it moved back to us
+     * without a rejoin we saw). Otherwise its frames went to a route that no
+     * longer leads to it, until it rejoined. Known routers never poll. */
+    if (short_addr < 0xFFF8u && d->relationship != NWK_REL_CHILD &&
+        (d->capability_guessed || !(d->capability & NWK_CAP_FFD))) {
+        d->relationship = NWK_REL_CHILD;
+        c->stats.poll_children++;
+        if (!d->capability_guessed) { save_device(c, slot); return; }
+    }
     /* Every joiner polls once for its association response: only a device
      * whose capability is unknown (imported) is classified by polling. */
     if (!d->capability_guessed) return;
@@ -1635,7 +1728,8 @@ static void handle_nwk_command(zb_coord_t *c, const mac_frame_t *f, const nwk_he
                 disc_heard(c, about);   /* clear failure backoff so route discovery can proceed */
                 bool already_pending = disc_pending_for(c, about);
                 for (unsigned idx = 0; idx < ZB_RECENT_TX; idx++) {
-                    if (c->recent_tx[idx].used && c->recent_tx[idx].dst == about && c->recent_tx[idx].retries < 2 &&
+                    if (c->recent_tx[idx].used && !c->recent_tx[idx].answered && c->recent_tx[idx].dst == about &&
+                        c->recent_tx[idx].retries < 2 &&
                         (int32_t)(c->now_ms - c->recent_tx[idx].sent_ms) < 4000) {
                         c->recent_tx[idx].retries++;
                         c->recent_tx[idx].sent_ms = c->now_ms;
@@ -1897,16 +1991,22 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
     }
     if (a.ack_request && !nwk_is_broadcast(h.dst) && a.delivery == APS_DELIVERY_UNICAST)
         send_aps_ack(c, &h, &a, a.security ? aps_key : 0);   /* re-acknowledged even if duplicate */
+    bool answered_twice = false;
     for (unsigned i = 0; i < ZB_RECENT_TX; i++) {
-        if (!c->recent_tx[i].used || c->recent_tx[i].dst != h.src) continue;
-        if (c->recent_tx[i].expects_reply) {
-            uint16_t req_cluster = (uint16_t)(c->recent_tx[i].payload[2] | (c->recent_tx[i].payload[3] << 8));
-            if (a.cluster == req_cluster && a.payload_len >= 3 && a.payload[1] == c->recent_tx[i].payload[9])
-                c->recent_tx[i].used = false;
-        } else {
-            c->recent_tx[i].used = false;
-        }
+        zb_recent_tx_t *e = &c->recent_tx[i];
+        if (!e->used || e->dst != h.src) continue;
+        if (!e->expects_reply) { e->used = false; continue; }
+        uint16_t req_cluster = (uint16_t)(e->payload[2] | (e->payload[3] << 8));
+        if (a.cluster != req_cluster || a.payload_len < 3 || a.payload[1] != e->payload[9]) continue;
+        /* A re-sent read can be answered twice (the first answer was only
+         * late): the second answer, same command from the server side, is
+         * not passed up again. Entries never re-sent are freed at once. */
+        if (e->answered) { answered_twice |= (a.payload[0] & 0x08u) && a.payload[2] == e->answer_cmd; continue; }
+        note_answer(c, h.src);
+        if (e->retries) { e->answered = true; e->answer_cmd = a.payload[2]; }
+        else e->used = false;
     }
+    if (answered_twice) { c->stats.zcl_answers_dropped++; return; }
     if (!aps_fresh(c, h.src, a.counter, a.cluster, a.payload, a.payload_len)) { c->stats.aps_duplicates++; return; }
     if (a.profile == ZDO_PROFILE && a.dst_endpoint == 0 && a.delivery != APS_DELIVERY_GROUP) {
         if (a.cluster == ZDO_DEVICE_ANNOUNCE) {
@@ -1917,6 +2017,22 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
         if (a.cluster < 0x8000u) {
             handle_zdo_request(c, &h, a.cluster, a.payload, a.payload_len);
             return;
+        }
+    }
+    /* Node_Desc_rsp passing up (host interview): its MAC capability tells a
+     * sleepy device from a listening one, which a backup does not carry
+     * (imported devices stay "guessed" otherwise). Stored only on change. */
+    if (a.profile == ZDO_PROFILE && a.cluster == 0x8002u && a.payload_len >= 17 && a.payload[1] == ZDO_SUCCESS) {
+        uint16_t s = nwk_devices_find_short(&c->devices, get16(a.payload + 2));
+        if (s != NWK_DEVICE_NONE) {
+            nwk_device_t *d = &c->devices.dev[s];
+            uint8_t cap = a.payload[6];
+            if (d->capability_guessed || d->capability != cap) {
+                d->capability = cap;
+                d->capability_guessed = false;
+                c->stats.capabilities_learnt++;
+                save_device(c, s);
+            }
         }
     }
     if (c->upper.aps_data) {

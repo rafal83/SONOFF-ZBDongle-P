@@ -65,6 +65,17 @@ bool zb_ccm_backend_sw(void *context, bool encrypt, const uint8_t key[16], const
  * operation on average (1 in 32..95 added ~1 200). Rejected frames are still
  * ALL re-verified in software. */
 #define HW_AUDIT_MIN 64u
+/* Software re-verification of the frames the accelerator REJECTS: a token
+ * bucket of HW_REJECT_BURST, one token back every HW_REJECT_REFILL operations
+ * the accelerator completed with success. Without a bound, each forged frame
+ * with a fresh counter (it passes the replay check) cost a full software
+ * CCM* (~75 000 cycles): at the ~500 short frames/s the channel carries, a
+ * forger alone could hold the CPU at ~80 %. Genuine traffic with occasional
+ * rejections keeps every one re-verified; under a flood, a silent fault that
+ * rejects genuine frames is still caught by the random audits (<= 191
+ * operations) and by the re-verifications the bucket allows. */
+#define HW_REJECT_BURST 8u
+#define HW_REJECT_REFILL 16u
 
 static zb_aes_block_fn hw_block;
 static zb_ccm_native_fn hw_native;
@@ -74,6 +85,7 @@ static zb_ccm_hw_stats_t hw_stats;
 static uint32_t hw_consecutive_faults;
 static volatile uint32_t hw_busy;
 static uint32_t hw_audit_count, hw_audit_next = HW_AUDIT_MIN, hw_audit_rng = 0x9E3779B9u;
+static uint32_t hw_reject_tokens = HW_REJECT_BURST, hw_reject_refill;
 /* Software round keys of the last key, for the first-block check. */
 static aes128_ctx_t verify_aes;
 static uint8_t verify_key[16];
@@ -85,6 +97,8 @@ void zb_ccm_backend_set_block(zb_aes_block_fn fn) {
     hw_consecutive_faults = 0;
     hw_audit_count = 0;
     hw_audit_next = HW_AUDIT_MIN;
+    hw_reject_tokens = HW_REJECT_BURST;
+    hw_reject_refill = 0;
 }
 
 void zb_ccm_backend_set_native(zb_ccm_native_fn fn) {
@@ -207,7 +221,14 @@ bool zb_ccm_backend_hw(void *context, bool encrypt, const uint8_t key[16], const
     } else {
         hw_consecutive_faults = 0;
         hw_stats.hw_ops++;
-        bool audit = ++hw_audit_count >= hw_audit_next || (!encrypt && !ok);
+        bool audit = ++hw_audit_count >= hw_audit_next;
+        if (!encrypt && !ok) {
+            if (hw_reject_tokens) { hw_reject_tokens--; audit = true; }
+            else hw_stats.reject_unverified++;   /* rejected on the accelerator's verdict */
+        } else if (++hw_reject_refill >= HW_REJECT_REFILL) {
+            hw_reject_refill = 0;
+            if (hw_reject_tokens < HW_REJECT_BURST) hw_reject_tokens++;
+        }
         if (audit) {
             if (hw_audit_count >= hw_audit_next) {
                 hw_audit_count = 0;

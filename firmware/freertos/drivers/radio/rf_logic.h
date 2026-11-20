@@ -61,7 +61,7 @@ const rf_pa_entry_t *rf_pa_lookup(const rf_pa_entry_t *table, size_t count, int8
  * while RX runs, the RF core owns the enable/pending words and they are only
  * changed through CMD_IEEE_MOD_SRC_MATCH. */
 #define RF_SRC_SHORT_ENTRIES 24u   /* = core_indirect global quota */
-#define RF_SRC_EXT_ENTRIES 4u      /* = MAC extended-address transactions */
+#define RF_SRC_EXT_ENTRIES 12u     /* = MAC extended-address transactions */
 typedef struct {
     uint32_t enable[1], pending[1];
     uint32_t entry[RF_SRC_SHORT_ENTRIES];      /* shortAddr | panId << 16 */
