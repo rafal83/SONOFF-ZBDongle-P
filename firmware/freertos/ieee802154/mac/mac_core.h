@@ -98,7 +98,7 @@ typedef struct {
     uint16_t dst_short;
     uint64_t dst_ext;
     uint8_t handle;
-    bool ack_request, indirect;
+    bool ack_request, indirect, priority;
     const uint8_t *payload;
     uint8_t length;
 } mac_data_request_t;

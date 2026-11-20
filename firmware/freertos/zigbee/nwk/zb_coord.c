@@ -193,13 +193,15 @@ typedef struct {
     const nwk_source_route_t *source;   /* non-NULL: source-routed */
 } hop_t;
 
-/* How to reach `dst`: child / neighbour router directly, else through a
- * source route (Route Record) or a next-hop route (Route Reply). */
+static bool disc_pending_for(const zb_coord_t *c, uint16_t dst);
+static bool disc_fresh_for(const zb_coord_t *c, uint16_t dst);
+
+/* How to reach `dst`: child directly, else through a source route (Route
+ * Record) or a next-hop route (Route Reply), else a neighbour router. */
 static bool next_hop(zb_coord_t *c, uint16_t dst, hop_t *hop) {
     *hop = (hop_t){.mac_dst = dst};
     uint16_t slot = nwk_devices_find_short(&c->devices, dst);
     const nwk_device_t *d = slot == NWK_DEVICE_NONE ? 0 : &c->devices.dev[slot];
-    if (nwk_neighbor(&c->routes, dst)) return true;   /* sends link status: a router, always listening */
     if (d && d->relationship == NWK_REL_CHILD) {
         hop->indirect = !(d->capability & NWK_CAP_RX_ON_IDLE);
         return true;
@@ -211,6 +213,7 @@ static bool next_hop(zb_coord_t *c, uint16_t dst, hop_t *hop) {
     }
     uint16_t nh;
     if (nwk_table_route(&c->routes, dst, &nh)) { hop->mac_dst = nh; return true; }
+    if (!disc_fresh_for(c, dst) && nwk_neighbor(&c->routes, dst)) return true;   /* sends link status: a router, always listening */
     return false;
 }
 
@@ -249,16 +252,25 @@ static uint8_t mac_send(zb_coord_t *c, uint8_t dst_mode, uint16_t dst_short, uin
     uint8_t handle = c->forced_handle >= 0 ? (uint8_t)c->forced_handle : next_mac_handle(c);
     mac_data_request_t r = {
         .dst_mode = dst_mode, .dst_short = dst_short, .dst_ext = dst_ext, .handle = handle,
-        .ack_request = !broadcast, .indirect = indirect, .payload = frame, .length = (uint8_t)len,
+        .ack_request = !broadcast, .indirect = indirect, .priority = c->sending_ack,
+        .payload = frame, .length = (uint8_t)len,
     };
-    c->last_send_handle = r.handle;
+    if (!c->sending_ack && !c->retrying_recent) c->last_send_handle = r.handle;
     return mac_data_request(&c->mac, &r) == MAC_STATUS_SUCCESS ? ZB_SEND_OK : ZB_SEND_MAC_REFUSED;
+}
+
+static bool is_zcl_read_request(const uint8_t *payload, size_t len) {
+    if (len < 13 || (payload[0] & 0xAFu) != 0x00u) return false;
+    uint16_t profile = (uint16_t)(payload[4] | (payload[5] << 8));
+    if (profile != 0x0104u) return false;
+    uint8_t zcl_fc = payload[8];
+    if ((zcl_fc & 0x0Fu) != 0x00u) return false;
+    return payload[10] == 0x00u && ((len - 11u) & 1u) == 0u;
 }
 
 static void sleepy_copies(zb_coord_t *c, const uint8_t *plain, size_t hl, size_t len);
 static bool disc_hold(zb_coord_t *c, uint16_t dst, uint8_t radius, const uint8_t *payload, size_t len, bool secured,
                       bool notify_confirm);
-static bool disc_pending_for(const zb_coord_t *c, uint16_t dst);
 static bool disc_suppressed(const zb_coord_t *c, uint16_t dst);
 static void bcast_queue(zb_coord_t *c, const uint8_t *plain, size_t hl, size_t len, uint16_t src, uint8_t seq,
                         uint32_t due, uint8_t sends, bool sleepy, uint8_t already_sent);
@@ -273,6 +285,7 @@ static uint8_t nwk_tx(zb_coord_t *c, uint8_t type, uint16_t dst, uint8_t radius,
     bool broadcast = nwk_is_broadcast(dst);
     hop_t hop = {.mac_dst = 0xFFFF};
     if (!broadcast && !ext_dst && !next_hop(c, dst, &hop)) {
+        if (c->sending_ack) return ZB_SEND_NO_ROUTE;
         c->stats.no_route++;
         if (type == NWK_TYPE_DATA && disc_suppressed(c, dst)) {
             c->stats.rreq_suppressed++;      /* in backoff: fail at once, no flood */
@@ -320,14 +333,22 @@ static uint8_t nwk_tx(zb_coord_t *c, uint8_t type, uint16_t dst, uint8_t radius,
     uint8_t status = ext_dst ? mac_send(c, MAC_ADDR_EXT, 0, ext_dst, indirect_ext, frame, total)
                              : mac_send(c, MAC_ADDR_SHORT, hop.mac_dst, 0, hop.indirect, frame, total);
     if (status == ZB_SEND_OK && !broadcast && !ext_dst) {
-        track_tx(c, c->last_send_handle, dst, hop.mac_dst, 0xFFFF);
-        if (type == NWK_TYPE_DATA && len <= MAC_MAX_PAYLOAD) {
-            unsigned idx = c->recent_tx_next++ % ZB_RECENT_TX;
+        uint8_t tracked = c->forced_handle >= 0 ? (uint8_t)c->forced_handle : c->last_send_handle;
+        if (!c->sending_ack) track_tx(c, tracked, dst, hop.mac_dst, 0xFFFF);
+        if (type == NWK_TYPE_DATA && !c->sending_ack && !c->retrying_recent &&
+            len >= 8 && (payload[0] & 0x03u) == APS_TYPE_DATA && len <= ZB_RECENT_MAX) {
+            unsigned idx = ZB_RECENT_TX;
+            for (unsigned i = 0; i < ZB_RECENT_TX; i++) {
+                if (c->recent_tx[i].used && c->recent_tx[i].dst == dst) { idx = i; break; }
+                if (!c->recent_tx[i].used && idx == ZB_RECENT_TX) idx = i;
+            }
+            if (idx == ZB_RECENT_TX) idx = c->recent_tx_next++ % ZB_RECENT_TX;
             c->recent_tx[idx].used = true;
             c->recent_tx[idx].dst = dst;
             c->recent_tx[idx].radius = radius;
             c->recent_tx[idx].secured = secured;
-            c->recent_tx[idx].retried = false;
+            c->recent_tx[idx].retries = 0;
+            c->recent_tx[idx].expects_reply = is_zcl_read_request(payload, len);
             c->recent_tx[idx].len = (uint8_t)len;
             c->recent_tx[idx].sent_ms = c->now_ms;
             for (size_t i = 0; i < len; i++) c->recent_tx[idx].payload[i] = payload[i];
@@ -508,7 +529,7 @@ static bool disc_hold(zb_coord_t *c, uint16_t dst, uint8_t radius, const uint8_t
         for (size_t k = 0; k < len; k++) c->disc[i].payload[k] = payload[k];
         c->disc[i].due_ms = c->now_ms + ZB_DISC_WAIT_MS;
         c->disc_count++;
-        c->last_send_handle = c->disc[i].handle;
+        if (notify_confirm) c->last_send_handle = c->disc[i].handle;
         c->stats.disc_buffered++;
         return true;
     }
@@ -521,6 +542,15 @@ static bool disc_pending_for(const zb_coord_t *c, uint16_t dst) {
     if (!c->disc_count) return false;
     for (unsigned i = 0; i < ZB_DISC_PENDING; i++)
         if (c->disc[i].used && c->disc[i].dst == dst && (int32_t)(c->now_ms - c->disc[i].due_ms) < 0) return true;
+    return false;
+}
+
+static bool disc_fresh_for(const zb_coord_t *c, uint16_t dst) {
+    if (!c->disc_count) return false;
+    for (unsigned i = 0; i < ZB_DISC_PENDING; i++)
+        if (c->disc[i].used && c->disc[i].dst == dst &&
+            (int32_t)(c->disc[i].due_ms - c->now_ms) > (int32_t)(ZB_DISC_WAIT_MS - 1000u))
+            return true;
     return false;
 }
 
@@ -582,7 +612,9 @@ static void disc_service(zb_coord_t *c) {
             for (unsigned k = 0; k < len; k++) frame[k] = c->disc[i].payload[k];
             disc_release(c, i);
             c->forced_handle = handle;
+            c->retrying_recent = !notify;
             uint8_t st = nwk_tx(c, NWK_TYPE_DATA, dst, radius, frame, len, 0, secured, false);
+            c->retrying_recent = false;
             c->forced_handle = -1;
             wipe(frame, sizeof frame);
             if (st == ZB_SEND_OK) {
@@ -592,10 +624,63 @@ static void disc_service(zb_coord_t *c) {
                                                                                     : ZB_STATUS_NWK_NO_ROUTE);
             }
         } else if ((int32_t)(c->now_ms - c->disc[i].due_ms) >= 0) {
-            disc_failed(c, c->disc[i].dst);
+            if (notify) disc_failed(c, c->disc[i].dst);
             disc_release(c, i);
             c->stats.disc_expired++;
             if (notify && c->upper.send_confirm) c->upper.send_confirm(c->upper.ctx, handle, ZB_STATUS_NWK_NO_ROUTE);
+        }
+    }
+}
+
+static bool tx_in_flight_for(const zb_coord_t *c, uint16_t dst) {
+    for (unsigned i = 0; i < ZB_TX_TRACK; i++)
+        if (c->tx_track[i].used && c->tx_track[i].dst == dst) return true;
+    return false;
+}
+
+static void recent_service(zb_coord_t *c) {
+    for (unsigned i = 0; i < ZB_RECENT_TX; i++) {
+        if (!c->recent_tx[i].used) continue;
+        int32_t age = (int32_t)(c->now_ms - c->recent_tx[i].sent_ms);
+        if (age > 4500) {
+            c->recent_tx[i].used = false;
+            continue;
+        }
+        if (!c->recent_tx[i].expects_reply) continue;
+        uint16_t dst = c->recent_tx[i].dst;
+        if (disc_pending_for(c, dst) || tx_in_flight_for(c, dst)) continue;
+        if (c->recent_tx[i].retries == 0 && age >= (int32_t)ZB_RECENT_RETRY1_MS) {
+            c->recent_tx[i].retries = 1;
+            c->recent_tx[i].sent_ms = c->now_ms;
+            c->recent_tx[i].payload[7] = c->aps_counter++;
+            c->retrying_recent = true;
+            c->forced_handle = next_mac_handle(c);
+            uint8_t st = nwk_tx(c, NWK_TYPE_DATA, dst, c->recent_tx[i].radius, c->recent_tx[i].payload,
+                                c->recent_tx[i].len, 0, c->recent_tx[i].secured, false);
+            c->forced_handle = -1;
+            c->retrying_recent = false;
+            if (st == ZB_SEND_OK) c->stats.net_status_retries++;
+        } else if (c->recent_tx[i].retries == 1 && age >= (int32_t)ZB_RECENT_RETRY2_MS) {
+            c->recent_tx[i].retries = 2;
+            c->recent_tx[i].sent_ms = c->now_ms;
+            c->recent_tx[i].payload[7] = c->aps_counter++;
+            nwk_routes_forget(&c->routes, dst);
+            disc_heard(c, dst);
+            if (!disc_pending_for(c, dst)) (void)zb_coord_discover_route(c, dst);
+            if (disc_hold(c, dst, c->recent_tx[i].radius, c->recent_tx[i].payload, c->recent_tx[i].len,
+                          c->recent_tx[i].secured, false))
+                c->stats.net_status_retries++;
+        } else if (c->recent_tx[i].retries == 2 && age >= (int32_t)ZB_RECENT_RETRY3_MS) {
+            c->recent_tx[i].retries = 3;
+            c->recent_tx[i].sent_ms = c->now_ms;
+            c->recent_tx[i].payload[7] = c->aps_counter++;
+            c->retrying_recent = true;
+            c->forced_handle = next_mac_handle(c);
+            uint8_t st = nwk_tx(c, NWK_TYPE_DATA, dst, c->recent_tx[i].radius, c->recent_tx[i].payload,
+                                c->recent_tx[i].len, 0, c->recent_tx[i].secured, false);
+            c->forced_handle = -1;
+            c->retrying_recent = false;
+            if (st == ZB_SEND_OK) c->stats.net_status_retries++;
         }
     }
 }
@@ -1413,9 +1498,10 @@ static void send_aps_ack(zb_coord_t *c, const nwk_header_t *h, const aps_header_
     size_t hl = aps_build(&ack, hdr, sizeof hdr);
     if (!hl) return;
     uint8_t status;
+    c->sending_ack = true;
     if (key) {
         uint32_t fc;
-        if (!next_aps_counter(c, &fc)) return;
+        if (!next_aps_counter(c, &fc)) { c->sending_ack = false; return; }
         nwk_aux_t aux = {.key_id = APS_KEY_DATA, .extended_nonce = true, .frame_counter = fc,
                          .source = c->ext_addr};
         uint8_t aps[MAC_MAX_PAYLOAD];
@@ -1424,6 +1510,7 @@ static void send_aps_ack(zb_coord_t *c, const nwk_header_t *h, const aps_header_
     } else {
         status = send_nwk(c, h->src, hdr, hl);
     }
+    c->sending_ack = false;
     if (status == ZB_SEND_OK) c->stats.aps_acks_sent++;
 }
 
@@ -1543,16 +1630,17 @@ static void handle_nwk_command(zb_coord_t *c, const mac_frame_t *f, const nwk_he
         if (code <= 0x02u || code == 0x0Bu || code == 0x0Du) nwk_routes_forget(&c->routes, about);
         /* Route failures (incl. many-to-one 0x0C): rebuild the routes now. */
         if (code <= 0x02u || code == 0x0Bu || code == 0x0Cu) {
-            early_mtorr(c, MTORR_MIN_GAP_MS);
+            bool retransmitted = false;
             if (about != 0x0000 && !nwk_is_broadcast(about)) {
                 disc_heard(c, about);   /* clear failure backoff so route discovery can proceed */
-                bool retransmitted = false;
-                for (unsigned i = 0; i < ZB_RECENT_TX; i++) {
-                    unsigned idx = (c->recent_tx_next + ZB_RECENT_TX - 1u - i) % ZB_RECENT_TX;
-                    if (c->recent_tx[idx].used && c->recent_tx[idx].dst == about && !c->recent_tx[idx].retried &&
+                bool already_pending = disc_pending_for(c, about);
+                for (unsigned idx = 0; idx < ZB_RECENT_TX; idx++) {
+                    if (c->recent_tx[idx].used && c->recent_tx[idx].dst == about && c->recent_tx[idx].retries < 2 &&
                         (int32_t)(c->now_ms - c->recent_tx[idx].sent_ms) < 4000) {
-                        c->recent_tx[idx].retried = true;
-                        if (!disc_pending_for(c, about)) (void)zb_coord_discover_route(c, about);
+                        c->recent_tx[idx].retries++;
+                        c->recent_tx[idx].sent_ms = c->now_ms;
+                        if (c->recent_tx[idx].expects_reply) c->recent_tx[idx].payload[7] = c->aps_counter++;
+                        if (!already_pending) (void)zb_coord_discover_route(c, about);
                         (void)disc_hold(c, about, c->recent_tx[idx].radius, c->recent_tx[idx].payload,
                                         c->recent_tx[idx].len, c->recent_tx[idx].secured, false);
                         c->stats.net_status_retries++;
@@ -1560,10 +1648,11 @@ static void handle_nwk_command(zb_coord_t *c, const mac_frame_t *f, const nwk_he
                         break;
                     }
                 }
-                if (!retransmitted) {
-                    if (!disc_pending_for(c, about)) (void)zb_coord_discover_route(c, about);
+                if (!retransmitted && !already_pending) {
+                    (void)zb_coord_discover_route(c, about);
                 }
             }
+            early_mtorr(c, MTORR_MIN_GAP_MS);
         }
         return;
     }
@@ -1808,6 +1897,16 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
     }
     if (a.ack_request && !nwk_is_broadcast(h.dst) && a.delivery == APS_DELIVERY_UNICAST)
         send_aps_ack(c, &h, &a, a.security ? aps_key : 0);   /* re-acknowledged even if duplicate */
+    for (unsigned i = 0; i < ZB_RECENT_TX; i++) {
+        if (!c->recent_tx[i].used || c->recent_tx[i].dst != h.src) continue;
+        if (c->recent_tx[i].expects_reply) {
+            uint16_t req_cluster = (uint16_t)(c->recent_tx[i].payload[2] | (c->recent_tx[i].payload[3] << 8));
+            if (a.cluster == req_cluster && a.payload_len >= 3 && a.payload[1] == c->recent_tx[i].payload[9])
+                c->recent_tx[i].used = false;
+        } else {
+            c->recent_tx[i].used = false;
+        }
+    }
     if (!aps_fresh(c, h.src, a.counter, a.cluster, a.payload, a.payload_len)) { c->stats.aps_duplicates++; return; }
     if (a.profile == ZDO_PROFILE && a.dst_endpoint == 0 && a.delivery != APS_DELIVERY_GROUP) {
         if (a.cluster == ZDO_DEVICE_ANNOUNCE) {
@@ -2256,6 +2355,7 @@ void zb_coord_tick(zb_coord_t *c, uint32_t now_ms) {
     if (!c->mac.started) return;
     bcast_service(c);
     disc_service(c);
+    recent_service(c);
     frag_service(c);
     key_switch_service(c);
     if (c->pending_channel && (int32_t)(now_ms - c->channel_change_at) >= 0) {

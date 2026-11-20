@@ -590,6 +590,7 @@ static void radio(void *arg) {
         wd_quorum_checkin(&app_quorum, WD_BIT_RADIO);
         if (rf_is_powered()) {
             (void)rf_take_events();
+            drain_rx();
             if (mode == MODE_COORD || mode == MODE_ZNP) poll_tx();
             drain_rx();
             if (mode == MODE_ZNP) { poll_tx(); gp_service(); }
@@ -613,6 +614,10 @@ static void radio(void *arg) {
                 uint32_t dt = hal_cycles() - t0;
                 app_perf.znp_last = dt;
                 if (dt > app_perf.znp_max) app_perf.znp_max = dt;
+                if (rf_is_powered()) {
+                    drain_rx();
+                    if (mode == MODE_COORD || mode == MODE_ZNP) poll_tx();
+                }
             }
             if (uxQueueMessagesWaiting(app_znp_in)) xTaskNotifyIndexed(radio_handle, 0, EVT_ZNP, eSetBits);
             snapshot();
