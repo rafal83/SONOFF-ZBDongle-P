@@ -116,9 +116,17 @@ static uint64_t ieee64(void) {
 }
 
 /* ---- coordinator <-> radio adapter ------------------------------------ */
+/* Inter-PAN frame (stub NWK, frame type 3): Touchlink, meant for the channel
+ * the radio was moved to (interPanCtl), unlike the network's frames. */
+static bool is_interpan(const uint8_t *mpdu, uint8_t len) {
+    mac_frame_t f;
+    return mac_frame_parse(mpdu, len, &f) == MAC_OK && f.type == MAC_TYPE_DATA && !f.pan_id_compression &&
+           f.payload_len >= 1 && (f.payload[0] & 0x03u) == 0x03u;
+}
+
 static int coord_radio_tx(void *ctx, const uint8_t *mpdu, uint8_t len, bool ack) {
     (void)ctx;
-    if (gp_pending || gp_active || gp_off_channel) {
+    if (gp_pending || gp_active || (gp_off_channel && !is_interpan(mpdu, len))) {
         /* Completed as busy by poll_tx (never from inside the MAC's kick). */
         tx_fake_busy = true;
         tx_active = true;
@@ -181,7 +189,7 @@ static bool coord_reserve(void *ctx, uint32_t upper) { (void)ctx; (void)upper; r
 
 static const mac_radio_ops_t COORD_RADIO = {coord_radio_tx, coord_source_match, 0};
 static const zb_coord_upper_t COORD_UPPER = {coord_joined, coord_aps, coord_reserve, coord_random_key,
-                                             coord_key, 0, 0, 0, 0, 0};
+                                             coord_key, 0, 0, 0, 0, 0, 0};
 
 /* ---- ZNP platform ------------------------------------------------------- */
 static void znp_send(void *ctx, uint8_t cmd0, uint8_t cmd1, const uint8_t *payload, uint8_t len) {

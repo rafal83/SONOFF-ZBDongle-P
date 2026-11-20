@@ -524,10 +524,16 @@ static void bcast_queue(zb_coord_t *c, const uint8_t *plain, size_t hl, size_t l
 
 /* A copy of a pending broadcast was heard from neighbour `mac_src`. */
 static void bcast_heard(zb_coord_t *c, uint16_t src, uint8_t seq, uint16_t mac_src) {
+    /* Most copies are of broadcasts already done with: no neighbour scan. */
+    bool pending = false;
+    for (unsigned i = 0; i < ZB_BCAST_PENDING && !pending; i++)
+        pending = c->bcast[i].used && c->bcast[i].src == src && c->bcast[i].seq == seq;
+    if (!pending) return;
     for (unsigned n = 0; n < NWK_NEIGHBORS; n++) {
         if (!c->routes.neighbors[n].used || c->routes.neighbors[n].addr != mac_src) continue;
         for (unsigned i = 0; i < ZB_BCAST_PENDING; i++)
             if (c->bcast[i].used && c->bcast[i].src == src && c->bcast[i].seq == seq) c->bcast[i].heard |= (uint64_t)1 << n;
+        return;   /* one slot per neighbour */
     }
 }
 
@@ -594,6 +600,27 @@ static void address_conflict(zb_coord_t *c, uint16_t addr, uint64_t claimant) {
         send_rejoin_response(c, slot, 0x00, true);   /* unsolicited: "your address is now ..." */
         c->stats.addresses_reassigned++;
     }
+}
+
+uint8_t zb_coord_send_interpan(zb_coord_t *c, uint64_t dst_ext, uint16_t dst_pan, uint16_t cluster, uint16_t profile,
+                               const uint8_t *zcl, uint8_t len) {
+    if (!c->mac.started || !dst_pan || len > 80u) return ZB_SEND_TOO_LONG;
+    uint8_t f[7 + 80];
+    f[0] = 0x0B;                                     /* stub NWK: frame type inter-PAN, protocol version 2 */
+    f[1] = 0x00;
+    f[2] = (uint8_t)(0x03u | (dst_ext ? 0x00u : 0x08u));   /* stub APS: inter-PAN, unicast / broadcast */
+    put16(f + 3, cluster);
+    put16(f + 5, profile);
+    for (unsigned i = 0; i < len; i++) f[7 + i] = zcl[i];
+    mac_data_request_t r = {
+        .dst_mode = dst_ext ? MAC_ADDR_EXT : MAC_ADDR_SHORT, .dst_short = 0xFFFF, .dst_ext = dst_ext,
+        .handle = next_mac_handle(c), .ack_request = dst_ext != 0, .payload = f, .length = (uint8_t)(7u + len),
+        .dst_pan = dst_pan,
+    };
+    uint8_t st = mac_data_request(&c->mac, &r);
+    if (st != MAC_STATUS_SUCCESS) return st == MAC_STATUS_FRAME_TOO_LONG ? ZB_SEND_TOO_LONG : ZB_SEND_MAC_REFUSED;
+    c->stats.interpan_tx++;
+    return ZB_SEND_OK;
 }
 
 bool zb_coord_discover_route(zb_coord_t *c, uint16_t dst) {
@@ -1915,6 +1942,21 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
         if (c->upper.gpdf) c->upper.gpdf(c->upper.ctx, f->payload, f->payload_len, f->seq, lqi);
         return;
     }
+    if (f->payload_len >= 7 && (f->payload[0] & 0x03u) == 0x03u && ((f->payload[0] >> 2) & 0x0Fu) == 2u) {
+        /* Inter-PAN (stub NWK, frame type 3): APS stub = control, [group],
+         * cluster, profile, then ZCL. */
+        const uint8_t *p = f->payload;
+        uint8_t afc = p[2], delivery = (uint8_t)((afc >> 2) & 3u);
+        size_t k = 3 + (delivery == 3u ? 2u : 0u);
+        if ((afc & 3u) != 3u || f->payload_len < k + 4u) { c->stats.nwk_malformed++; return; }
+        c->stats.interpan_rx++;
+        if (c->upper.interpan)
+            c->upper.interpan(c->upper.ctx, f->src_mode == MAC_ADDR_EXT,
+                              f->src_mode == MAC_ADDR_EXT ? f->src_ext : f->src_short,
+                              f->has_src_pan ? f->src_pan : f->dst_pan, delivery != 0u, get16(p + k), get16(p + k + 2),
+                              p + k + 4, f->payload_len - k - 4u, lqi);
+        return;
+    }
     if (f->payload_len > CORE_SECURITY_MAX_FRAME) { c->stats.nwk_malformed++; return; }
     uint8_t frame[CORE_SECURITY_MAX_FRAME];
     memcpy(frame, f->payload, f->payload_len);
@@ -1944,10 +1986,10 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
         return;
     }
     uint32_t nwk_prev = 0;
-    bool nwk_had = h.payload_len >= 14 &&
-                   core_security_peer_counter(&c->security, h.payload + 5, h.payload[13], &nwk_prev);
+    bool nwk_had = false;
     size_t payload_len = 0;
-    if (!core_security_open_authenticated_peer(&c->security, frame, f->payload_len, h.header_len, &payload_len)) {
+    if (!core_security_open_authenticated_peer_ex(&c->security, frame, f->payload_len, h.header_len, &payload_len,
+                                                  &nwk_prev, &nwk_had)) {
         c->stats.nwk_auth_failures++;
         return;
     }

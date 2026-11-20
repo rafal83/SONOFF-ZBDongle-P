@@ -22,7 +22,7 @@ La révision ≥ 20210430 active la gestion de la LED côté herdsman ; `ledCont
 | APP_CNF | `bdbSetChannel`, `bdbStartCommissioning` (formation ; *steering* = ouverture 180 s), `bdbAddInstallCode` (code + CRC ou clé) | Formation depuis les items NV : premier canal du masque, PAN aléatoire si 0xFFFF, clé `PRECFGKEY` ou TRNG, graine TCLK tirée du TRNG |
 | ZDO | `startupFromApp`, `extNwkInfo`, `extFindGroup`, `extAddGroup`, `extRemoveGroup`, `extRouteDisc`, `extUpdateNwkKey`, `extSwitchNwkKey`, `mgmtNwkUpdateReq` (changement de canal) | `extRouteDisc` émet une vraie *Route Request*. Rotation de la clé réseau : diffusion de la nouvelle clé, puis bascule. Changement de canal : diffusion, puis bascule 10 s plus tard. |
 | ZDO requêtes | adresse NWK/IEEE, descripteurs nœud/simple/actifs, *match*, *server discovery*, *bind/unbind*, *mgmt LQI/Rtg/Bind/Leave/Permit join* | Coordinateur (0x0000) : réponse locale (LQI et routes réels) ; autres : trame ZDO envoyée, réponse remise en AREQ (format Z-Stack, y compris l'inversion *startIndex/numAssocDev*) |
-| AF | `register`, `dataRequest`, `dataRequestExt` (16 bits, 64 bits, broadcast, groupe) | Boucle locale vers 0x0000. Option `EN_SECURITY` = chiffrement APS avec la clé de lien du destinataire, refus explicite sans clé unique. Au-delà de 82 octets, fragmentation APS (230 octets au plus). Green Power : proxy et TempMaster. |
+| AF | `register`, `dataRequest`, `dataRequestExt` (16 bits, 64 bits, broadcast, groupe ; vers un autre PAN : inter-PAN), `interPanCtl` | Boucle locale vers 0x0000. Option `EN_SECURITY` = chiffrement APS avec la clé de lien du destinataire, refus explicite sans clé unique. Au-delà de 82 octets, fragmentation APS (230 octets au plus). Green Power : proxy et TempMaster. **Touchlink** : `interPanCtl` déplace la radio sur le canal demandé (1), enregistre l'extrémité (2), la ramène sur le canal du réseau (0). Pendant cette séance, `dataRequestExt` vers un autre PAN part en inter-PAN depuis l'IEEE du coordinateur ; les trames inter-PAN reçues remontent en `AF_INCOMING_MSG_EXT` (source 64 bits, extrémité 0xFE, PAN source). Hors séance, rien n'est émis ni remonté. |
 | AREQ émises | `SYS resetInd`, `ZDO stateChangeInd`, `tcDeviceInd`, `endDeviceAnnceInd`, `leaveInd`, `permitJoinInd`, réponses ZDO, `AF dataConfirm`, `AF incomingMsg`, `APP_CNF bdbComissioningNotification` | |
 
 `dataConfirm` reflète la livraison MAC au premier saut. herdsman n'active jamais l'ACK APS (`options = 0`, sauf `EN_SECURITY`) : c'est aussi ce que fait Z-Stack dans ce cas.
@@ -31,10 +31,10 @@ La révision ≥ 20210430 active la gestion de la LED côté herdsman ; `ledCont
 
 | Fonction | Conséquence |
 |---|---|
-| `AF interPanCtl` (Touchlink), `dataRetrieve`, `incomingMsgExt` | Touchlink impossible. Messages de plus de 230 octets refusés (statut 0x02) ou non remontés. |
+| `dataRetrieve`, `incomingMsgExt` pour les messages longs | Messages de plus de 230 octets refusés (statut 0x02) ou non remontés |
 | `mgmtNwkUpdateReq` : scan d'énergie, mise à jour du masque ou du gestionnaire | Statut d'échec, seul le changement de canal est servi |
 | `ledControl` | Pas de LED pilotée ; herdsman l'intercepte |
-| SAPI, BDB *finding & binding*, Touchlink | Statut d'échec |
+| SAPI, BDB *finding & binding* | Statut d'échec |
 
 ## Validation
 

@@ -111,6 +111,7 @@ typedef struct {
     bool ack_request, indirect, priority;
     const uint8_t *payload;
     uint8_t length;
+    uint16_t dst_pan;          /* 0 = our PAN; another PAN: inter-PAN frame from our IEEE (direct only) */
 } mac_data_request_t;
 
 enum { SLOT_FREE = 0, SLOT_DIRECT, SLOT_INDIRECT_SHORT, SLOT_INDIRECT_EXT, SLOT_INTERNAL };

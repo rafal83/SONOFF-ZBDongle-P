@@ -77,12 +77,6 @@ bool core_security_restore_peer_counter(core_security_t *s, const uint8_t addres
     if (r->epoch[k]==s->network_keys[k].epoch && counter<r->counter[k]) return false;
     r->counter[k]=counter; r->epoch[k]=s->network_keys[k].epoch; return true;
 }
-bool core_security_peer_counter(core_security_t *s, const uint8_t address[8], uint8_t sequence, uint32_t *counter) {
-    int k=key_slot(s,sequence);
-    uint16_t peer=address?core_index_find(&s->peers,address_key(address)):CORE_INDEX_NONE;
-    if (k<0 || peer==CORE_INDEX_NONE || s->replay[peer].epoch[k]!=s->network_keys[k].epoch) return false;
-    *counter=s->replay[peer].counter[k]; return true;
-}
 bool core_security_seal(core_security_t *s, unsigned k, const uint8_t local[8], uint8_t *frame,
     size_t header, size_t payload, size_t capacity, size_t *length) {
     if (length) *length=0;
@@ -111,7 +105,8 @@ bool core_security_seal(core_security_t *s, unsigned k, const uint8_t local[8], 
     }
     clear(out,sizeof(out)); clear(mic,sizeof(mic)); return ok;
 }
-static bool open_frame(core_security_t *s, uint8_t *frame, size_t length, size_t header, size_t *payload_len, bool admit) {
+static bool open_frame(core_security_t *s, uint8_t *frame, size_t length, size_t header, size_t *payload_len, bool admit,
+    uint32_t *previous, bool *had_previous) {
     if (payload_len) *payload_len=0;
     if (!s->ccm || length>CORE_SECURITY_MAX_FRAME || header>length || length-header<19 ||
         !header_valid(frame,length,header) || !(frame[1]&2)) return false;
@@ -123,7 +118,10 @@ static bool open_frame(core_security_t *s, uint8_t *frame, size_t length, size_t
     uint16_t peer=core_index_find(&s->peers,address_key(aux+5));
     if (peer==CORE_INDEX_NONE && !admit) return false;
     core_security_peer_t *r=peer==CORE_INDEX_NONE?NULL:&s->replay[peer]; uint32_t counter=read32(aux+1);
-    if (counter==UINT32_MAX || (r && r->epoch[k]==s->network_keys[k].epoch && counter<=r->counter[k])) return false;
+    bool had=r && r->epoch[k]==s->network_keys[k].epoch;
+    if (counter==UINT32_MAX || (had && counter<=r->counter[k])) return false;
+    if (had_previous) *had_previous=had;
+    if (previous) *previous=had?r->counter[k]:0;
     uint8_t aad[CORE_SECURITY_MAX_FRAME], out[CORE_SECURITY_MAX_FRAME], nonce[13], mic[4];
     size_t payload=length-header-18;
     memcpy(aad,frame,header+14); aad[header]=0x2d;
@@ -143,8 +141,12 @@ static bool open_frame(core_security_t *s, uint8_t *frame, size_t length, size_t
     clear(out,sizeof(out)); clear(mic,sizeof(mic)); return ok;
 }
 bool core_security_open(core_security_t *s, uint8_t *frame, size_t length, size_t header, size_t *payload_len) {
-    return open_frame(s,frame,length,header,payload_len,false);
+    return open_frame(s,frame,length,header,payload_len,false,NULL,NULL);
 }
 bool core_security_open_authenticated_peer(core_security_t *s, uint8_t *frame, size_t length, size_t header, size_t *payload_len) {
-    return open_frame(s,frame,length,header,payload_len,true);
+    return open_frame(s,frame,length,header,payload_len,true,NULL,NULL);
+}
+bool core_security_open_authenticated_peer_ex(core_security_t *s, uint8_t *frame, size_t length, size_t header,
+    size_t *payload_len, uint32_t *previous, bool *had_previous) {
+    return open_frame(s,frame,length,header,payload_len,true,previous,had_previous);
 }

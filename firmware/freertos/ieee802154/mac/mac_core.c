@@ -45,19 +45,27 @@ static int pop(uint8_t *q, uint8_t cap, uint8_t *head, uint8_t *count) {
     return s;
 }
 
+/* dst_pan 0: our PAN (PAN ID compression); else an inter-PAN frame from our
+ * extended address (Touchlink). */
 static size_t build(mac_t *m, mac_slot_t *slot, uint8_t type, uint8_t dst_mode, uint16_t dst_short,
-                    uint64_t dst_ext, bool ack, const uint8_t *payload, size_t len) {
+                    uint64_t dst_ext, bool ack, const uint8_t *payload, size_t len, uint16_t dst_pan) {
     mac_frame_t f = {0};
     f.type = type;
     f.ack_request = ack;
-    f.pan_id_compression = true;
+    f.pan_id_compression = !dst_pan || dst_pan == m->pan_id;
     f.seq = m->dsn++;
     f.dst_mode = dst_mode;
-    f.dst_pan = m->pan_id;
+    f.dst_pan = f.pan_id_compression ? m->pan_id : dst_pan;
     f.dst_short = dst_short;
     f.dst_ext = dst_ext;
-    f.src_mode = MAC_ADDR_SHORT;
-    f.src_short = m->short_addr;
+    if (f.pan_id_compression) {
+        f.src_mode = MAC_ADDR_SHORT;
+        f.src_short = m->short_addr;
+    } else {
+        f.src_mode = MAC_ADDR_EXT;
+        f.src_pan = m->pan_id;
+        f.src_ext = m->ext_addr;
+    }
     size_t n = mac_frame_build(&f, payload, len, slot->mpdu, sizeof slot->mpdu);
     slot->length = (uint8_t)n;
     slot->ack = ack;
@@ -191,7 +199,8 @@ uint8_t mac_data_request(mac_t *m, const mac_data_request_t *r) {
     if (s == NO_SLOT) return MAC_STATUS_TRANSACTION_OVERFLOW;
     mac_slot_t *slot = &m->slots[s];
     bool ack = !broadcast && (r->ack_request || r->indirect);
-    if (!build(m, slot, MAC_TYPE_DATA, r->dst_mode, r->dst_short, r->dst_ext, ack, r->payload, r->length)) {
+    if (r->dst_pan && r->dst_pan != m->pan_id && r->indirect) { free_slot(m, s); return MAC_STATUS_INVALID_PARAMETER; }
+    if (!build(m, slot, MAC_TYPE_DATA, r->dst_mode, r->dst_short, r->dst_ext, ack, r->payload, r->length, r->dst_pan)) {
         free_slot(m, s);
         return MAC_STATUS_FRAME_TOO_LONG;
     }

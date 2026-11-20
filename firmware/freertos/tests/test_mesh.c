@@ -61,7 +61,7 @@ static void up_left(void *ctx, uint16_t s, uint64_t e, bool rejoin) { (void)ctx;
 static const mac_radio_ops_t RADIO = {sim_tx, sim_match, 0};
 static unsigned channel_events, channel_last;
 static void up_channel(void *ctx, uint8_t ch) { (void)ctx; channel_events++; channel_last = ch; }
-static const zb_coord_upper_t UPPER = {up_joined, up_aps, up_reserve, up_random, 0, 0, up_left, 0, up_channel, 0};
+static const zb_coord_upper_t UPPER = {up_joined, up_aps, up_reserve, up_random, 0, 0, up_left, 0, up_channel, 0, 0};
 
 /* ---- simulated nodes -------------------------------------------------- */
 typedef struct {

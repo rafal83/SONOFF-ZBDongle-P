@@ -38,7 +38,7 @@ Lecture :
   - Table `recent_tx` portée à 32 trames et réservée aux données applicatives avec réémission graduée en cas d'absence de réponse ZCL.
   - Priorisation des `APS ACK` en tête de file MAC directe (`direct_q`).
 - **La lecture isolée varie avec l'état du réseau,** de 43 à 78 ms selon la session. L'écart avec Koenkk (51 ms) est du même ordre que cette variation. Une comparaison serrée exige des sessions entrelacées.
-- **La durée d'une rafale n'est pas comparable :** le délai d'attente est de 10 s chez nous et de 4 s pour Koenkk.
+- **La durée d'une rafale n'est pas comparable :** le délai d'attente est de 10 s pour le firmware FreeRTOS et de 4 s pour Koenkk.
 
 Données brutes : `private/perf-20261120-prod-117e5ba/bench-*/bench.json`, hors Git.
 
@@ -94,12 +94,12 @@ Banc `tools/bench_freertos.py`, scénarios dans `firmware/freertos/tests/arm_per
 
 | Charge (définition SMLIGHT) | Firmware FreeRTOS | ZeroStack (publié) | Z-Stack « stock » (selon SMLIGHT) |
 |---|---|---|---|
-| Écho d'un broadcast relayé (50 routeurs, 1 000 échos) | **≈ 1 766 cycles (37 µs) par écho, total ≈ 37 ms** : doublon reconnu avant tout déchiffrement | 7 076 cycles (147 µs), total 151 ms | 143 865 cycles (3 ms), total 3 s |
-| Trame rejouée | **≈ 1 444 cycles (30 µs)**, rejetée avant déchiffrement | 1 550 cycles | 143 802 cycles |
+| Écho d'un broadcast relayé (50 routeurs, 1 000 échos) | **≈ 1 692 cycles (35 µs) par écho, total ≈ 35 ms** : doublon reconnu avant tout déchiffrement | 7 076 cycles (147 µs), total 151 ms | 143 865 cycles (3 ms), total 3 s |
+| Trame rejouée | **≈ 1 449 cycles (30 µs)**, rejetée avant déchiffrement | 1 550 cycles | 143 802 cycles |
 | En-tête de sécurité tronqué | **≈ 1 082 cycles (23 µs)** | 320 à 6 631 cycles | défaut distant ≈ 3 ms |
 | MIC falsifié | ≈ 62 792 cycles en AES logiciel ; en production : CCM\* natif plus revérification logicielle | **4 760 cycles** | 143 058 cycles |
 | Réception d'un rapport ZCL sécurisé (MAC, NWK, APS), 200 appareils | ≈ 65 219 cycles (1,36 ms) en AES logiciel | — | — |
-| Appareil inconnu cherché dans une table pleine | **≈ 228 cycles (4,8 µs)**, 200 entrées | 326 cycles, 300 entrées | 1 486 228 cycles |
+| Appareil inconnu cherché dans une table pleine | **≈ 265 cycles (5,5 µs)**, 200 entrées (recherche dichotomique, 8 étapes au plus) | 326 cycles, 300 entrées | 1 486 228 cycles |
 | Allocation mémoire | **sans objet : aucun tas**, tout est statique | 218 cycles | 2 550 cycles |
 | Écriture identique de 100 octets, × 48 | ≈ 4 537 cycles (94,5 µs), 0 octet écrit | **3 770 cycles (78,5 µs)**, 0 octet | 100 714 cycles, 48 écritures |
 | Écritures avant la 1re compaction (store vide) | **1 024** (écritures 44 o) / **512** (100 o) | 1 013 (store vide) | 69 |
@@ -114,8 +114,8 @@ Ce qui reste en retrait de ZeroStack :
 - **l'écriture identique (sans écriture flash) :** 4 537 cycles contre 3 770 cycles chez ZeroStack.
 
 Ce qui dépasse désormais ZeroStack :
-- **la trame rejouée :** 1 444 cycles contre 1 550 annoncés ;
-- **l'écho de broadcast :** 1 766 cycles par écho (37 ms total) contre 7 076 cycles (151 ms) ;
+- **la trame rejouée :** 1 449 cycles contre 1 550 annoncés ;
+- **l'écho de broadcast :** 1 692 cycles par écho (35 ms total) contre 7 076 cycles (151 ms) ;
 - **l'endurance du store :** 1 024 écritures avant compaction sur store vide contre 1 013 publiées par ZeroStack.
 
 ## 4. Capacités et mémoire
@@ -129,8 +129,8 @@ Ce qui dépasse désormais ZeroStack :
 | Table anti-doublon des broadcasts | 32 | 30 (`MAX_BCAST`) | 40 |
 | Réessais MAC | 3 par tour, 3 tours (file de 32 trames) | 7 | non publié |
 | Store non volatil | **2 × 56 Kio** (disposition 2) | NV Z-Stack (géométrie non comparée ici) | non publié |
-| Flash occupée | 99 692 o (image `--hw-aes` 1 Mbaud de l'arbre de travail du 20 novembre, non flashée) | 178 669 o (20240710) | non publié |
-| SRAM | 78 536 o statiques sur 81 920 (3 384 libres), piles et MSP comprises, **sans tas** | 42 228 o statiques + tas dynamique de 33 371 o | 88 Ko de SRAM sur CC2652P, sans précision |
+| Flash occupée | 101 520 o (image `--hw-aes` 1 Mbaud de l'arbre de travail du 20 novembre, non flashée) | 178 669 o (20240710) | non publié |
+| SRAM | 73 264 o statiques sur 81 920 (8 656 libres), piles et MSP comprises, **sans tas** | 42 228 o statiques + tas dynamique de 33 371 o | 88 Ko de SRAM sur CC2652P, sans précision |
 
 ## 5. Débit soutenu et appareils endormis : SIMULATION
 
@@ -215,7 +215,7 @@ Scénarios : 20 transactions/s, dont 30 % vers les appareils endormis (50 % pour
 | 10 endormis, un enfant passe derrière un routeur sans réassociation entendue (herdsman : `assocRemove`) | 94,8 → 99,5 % | — | — |
 | 20 endormis, parent perdu à 8 s, réassociation | 97,3 → 98,5 % | 8,1 → 1,5 s | 154 → 3 |
 
-Pour l'enfant qui change de parent, la version d'avant répondait à `assocRemove` par une erreur RPC : herdsman abandonnait la commande. Ses trames s'accumulaient dans notre file indirecte jusqu'à expirer.
+Pour l'enfant qui change de parent, la version d'avant répondait à `assocRemove` par une erreur RPC : herdsman abandonnait la commande. Ses trames s'accumulaient dans la file indirecte du coordinateur jusqu'à expirer.
 
 Les latences de plusieurs secondes sont celles du *poll* (2 s) et de la fenêtre herdsman, pas du coordinateur.
 

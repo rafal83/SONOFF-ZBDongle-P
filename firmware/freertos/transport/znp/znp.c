@@ -1081,7 +1081,21 @@ static void handle_af(znp_t *z, uint8_t cmd, const uint8_t *in, uint8_t n) {
         uint8_t mode = in[0];
         uint16_t dst = get16(in + 1);
         uint8_t status;
-        if (get16(in + 10) != 0 && get16(in + 10) != z->coord->mac.pan_id) status = 0x02;   /* no inter-PAN */
+        uint16_t pan = get16(in + 10);
+        if (pan != 0 && pan != z->coord->mac.pan_id) {
+            /* Inter-PAN (Touchlink): only during an interPanCtl session, to a
+             * 64-bit address or MAC broadcast, profile of the source endpoint. */
+            const zb_endpoint_t *ep = endpoint(z, in[12]);
+            uint16_t dlen = get16(in + 18);
+            uint64_t dst64 = mode == 0x03 ? get64(in + 1) : 0;
+            if (!z->interpan_channel || !ep || dlen > 80u || (mode != 0x03 && !((mode == 0x02 || mode == 0x0F) && dst == 0xFFFF)))
+                status = 0x02;
+            else {
+                status = zb_coord_send_interpan(z->coord, dst64, pan, get16(in + 13), ep->profile, in + 20, (uint8_t)dlen) ==
+                         ZB_SEND_OK ? ST_SUCCESS : ST_FAILURE;
+                if (status == ST_SUCCESS) data_confirm(z, ST_SUCCESS, in[12], in[15]);   /* on hand-over */
+            }
+        }
         else if (mode == 0x02 || mode == 0x0F) status = af_send(z, dst, false, in[9], in[12], get16(in + 13), in[15], in[16], in + 20, get16(in + 18));
         else if (mode == 0x01) status = af_send(z, dst, true, in[9], in[12], get16(in + 13), in[15], in[16], in + 20, get16(in + 18));
         else if (mode == 0x03) {
@@ -1092,8 +1106,27 @@ static void handle_af(znp_t *z, uint8_t cmd, const uint8_t *in, uint8_t n) {
         srsp_status(z, S_AF, cmd, status);
         return;
     }
+    case 0x10: {   /* interPanCtl(cmd, data): 0 back to the network, 1 channel, 2 endpoint, 3 check */
+        if (n < 1) break;
+        uint8_t status = ST_FAILURE;
+        if (in[0] == 0) {
+            if (z->interpan_channel && z->p.gp_channel) (void)z->p.gp_channel(z->p.ctx, z->coord->mac.channel);
+            z->interpan_channel = 0;
+            status = ST_SUCCESS;
+        } else if (in[0] == 1 && n == 2 && in[1] >= 11 && in[1] <= 26 && z->p.gp_channel) {
+            if (z->p.gp_channel(z->p.ctx, in[1])) { z->interpan_channel = in[1]; status = ST_SUCCESS; }
+        } else if (in[0] == 2 && n == 2 && endpoint(z, in[1])) {
+            z->interpan_ep = in[1];
+            status = ST_SUCCESS;
+        } else if (in[0] == 3 && n == 4) {   /* InterPanChk(panId, endpoint) */
+            uint16_t pan = get16(in + 1);
+            status = z->interpan_channel && in[3] == z->interpan_ep && pan != z->coord->mac.pan_id ? ST_SUCCESS : ST_FAILURE;
+        }
+        srsp_status(z, S_AF, cmd, status);
+        return;
+    }
     default:
-        rpc_error(z, 2, T_SREQ | S_AF, cmd);   /* incl. interPanCtl (Touchlink) */
+        rpc_error(z, 2, T_SREQ | S_AF, cmd);
         return;
     }
     rpc_error(z, 4, T_SREQ | S_AF, cmd);
@@ -1160,6 +1193,34 @@ static const zb_endpoint_t *endpoint(znp_t *z, uint8_t ep);
 /* GPD frame heard by the coordinator: as a GP proxy, deliver the GP
  * (Commissioning) Notification to the sink (herdsman) on the GP endpoint.
  * Marked as received by broadcast, as proxies groupcast them. */
+/* Inter-PAN frame received during a Touchlink session: AF_INCOMING_MSG_EXT
+ * as Z-Stack (64-bit source, source endpoint 0xFE, source PAN). */
+static void up_interpan(void *ctx, bool src_ext, uint64_t src, uint16_t src_pan, bool broadcast, uint16_t cluster,
+                        uint16_t profile, const uint8_t *zcl, size_t len, uint8_t lqi) {
+    znp_t *z = ctx;
+    (void)profile;
+    if (!z->interpan_channel || !z->interpan_ep || len > 200u) return;
+    uint8_t out[230];
+    size_t k = 0;
+    put16(out + k, 0x0000); k += 2;                      /* group */
+    put16(out + k, cluster); k += 2;
+    out[k++] = src_ext ? 0x03 : 0x02;                    /* source address mode */
+    put64(out + k, src); k += 8;
+    out[k++] = 0xFE;                                     /* source endpoint (inter-PAN) */
+    put16(out + k, src_pan); k += 2;
+    out[k++] = z->interpan_ep;
+    out[k++] = broadcast ? 1 : 0;
+    out[k++] = lqi;
+    out[k++] = 0;                                        /* security use */
+    put32(out + k, z->coord->now_ms); k += 4;
+    out[k++] = 0;                                        /* transaction sequence */
+    put16(out + k, (uint16_t)len); k += 2;
+    copy(out + k, zcl, len);
+    k += len;
+    z->stats.af_rx++;
+    areq(z, S_AF, 0x82, out, k);
+}
+
 static void up_gpdf(void *ctx, const uint8_t *nwk, size_t len, uint8_t mac_seq, uint8_t lqi) {
     znp_t *z = ctx;
     if (!endpoint(z, GP_ENDPOINT)) return;
@@ -1179,7 +1240,7 @@ static void up_gpdf(void *ctx, const uint8_t *nwk, size_t len, uint8_t mac_seq, 
 /* TempMaster on another channel: the radio follows what the GP proxy asks
  * (gp_proxy_tick), back to the network channel when done or expired. */
 static void gp_channel_service(znp_t *z) {
-    if (!z->p.gp_channel) return;
+    if (!z->p.gp_channel || z->interpan_channel) return;   /* Touchlink owns the radio */
     z->gp.net_channel = z->coord->mac.channel;
     uint8_t want = gp_proxy_tick(&z->gp, z->coord->now_ms);
     if (want == z->coord->mac.channel) want = 0;
@@ -1242,7 +1303,7 @@ void znp_boot(znp_t *z, const znp_platform_t *platform, zb_coord_t *coord, const
     const zb_coord_upper_t upper = {
         .device_joined = up_joined, .aps_data = up_aps, .reserve_nwk_counter = 0, .random_key = up_random,
         .key_established = 0, .send_confirm = up_confirm, .device_left = up_left, .ctx = z,
-        .channel_changed = up_channel, .gpdf = up_gpdf,
+        .channel_changed = up_channel, .gpdf = up_gpdf, .interpan = up_interpan,
     };
     zb_coord_init(coord, radio, &upper, z->ieee, random_seed, 0);
     zb_coord_attach_store(coord, store);

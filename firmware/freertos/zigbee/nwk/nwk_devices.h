@@ -1,14 +1,16 @@
 /* SPDX-License-Identifier: MIT
  * Coordinator device table and stochastic address assignment (Zigbee PRO,
- * spec 3.6.1.7). Two Patricia indexes (IEEE -> slot, short -> slot) bound
- * every lookup to 64 branch steps; no scan of the table on the hot path.
+ * spec 3.6.1.7). Two arrays of slot numbers, sorted by IEEE and by short
+ * address, give every lookup in at most 8 comparisons (binary search over
+ * 200 entries, deterministic); they hold no copy of the keys (the table has
+ * them): 400 bytes instead of the 5.6 KB of two Patricia indexes with their
+ * own 64-bit key copies. Insertion / removal move at most 200 bytes.
  * Address generation retries a bounded number of random draws.
  */
 #ifndef ZB_NWK_DEVICES_H
 #define ZB_NWK_DEVICES_H
 #include <stdbool.h>
 #include <stdint.h>
-#include "core_index.h"
 
 #define NWK_MAX_DEVICES 200u
 #define NWK_ADDR_DRAWS 16u
@@ -43,10 +45,8 @@ typedef struct {
 
 typedef struct {
     nwk_device_t dev[NWK_MAX_DEVICES];
-    core_index_t by_ext, by_short;
-    core_index_branch_t ext_branches[NWK_MAX_DEVICES - 1], short_branches[NWK_MAX_DEVICES - 1];
-    uint64_t ext_keys[NWK_MAX_DEVICES], short_keys[NWK_MAX_DEVICES];
-    uint8_t ext_occ[(NWK_MAX_DEVICES + 7) / 8], short_occ[(NWK_MAX_DEVICES + 7) / 8];
+    /* slots of the `count` devices, sorted by dev[].ext and by dev[].short_addr */
+    uint8_t by_ext[NWK_MAX_DEVICES], by_short[NWK_MAX_DEVICES];
     uint16_t free_next[NWK_MAX_DEVICES], free_head, count;
     uint32_t rng;
     uint32_t address_conflicts_avoided, full_rejections;
