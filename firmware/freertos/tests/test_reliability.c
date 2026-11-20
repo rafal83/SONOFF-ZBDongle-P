@@ -193,6 +193,8 @@ static void znp_out(void *ctx, uint8_t c0, uint8_t c1, const uint8_t *p, uint8_t
     znp_c1 = c1;
     memcpy(znp_last, p, n);
 }
+static uint8_t tl_last_channel;
+static bool tl_channel(void *ctx, uint8_t channel) { (void)ctx; tl_last_channel = channel; return true; }
 static void read_answer(node_dev_t *d, uint8_t tsn) {
     const uint8_t aps[8 + 8] = {0x00, 0x01, 0x00, 0x00, 0x04, 0x01, 0x01, d->aps++,
                                 0x18, tsn, 0x01, 0x05, 0x00, 0x00, 0x20, 0x01};
@@ -593,6 +595,74 @@ int main(void) {
         CHECK(c2.stats.nwk_auth_failures == 1);
         air_head = air_tail;
         printf("reliability: incoming NWK counters restored after a reboot (old frame refused), reset on re-join\n");
+    }
+
+    /* 12. Touchlink through ZNP, as herdsman drives it: interPanCtl (channel,
+     *     endpoint 12), Scan Request broadcast on PAN 0xFFFF, Scan Response
+     *     back as AF_INCOMING_MSG_EXT; nothing passed up once restored. */
+    {
+        static znp_t zt;
+        static zb_coord_t zc;
+        static const znp_platform_t PLAT = {.send = znp_out, .product = ZNP_PRODUCT_ZSTACK3X0, .revision = 20261120u,
+                                            .gp_channel = tl_channel};
+        znp_boot(&zt, &PLAT, &zc, &RADIO, 0, 0x00124B000000C0DEull, 0x77u, 0);
+        zc.upper.reserve_nwk_counter = reserve;
+        zb_coord_form(&zc, 0x6A6A, 20, epid, KEY, 0);
+        zt.formed = true;
+        zt.dev_state = ZNP_DEV_ZB_COORD;
+        const zb_endpoint_t ep12 = {.endpoint = 12, .profile = 0xC05E, .device_id = 5};
+        CHECK(zb_coord_register_endpoint(&zc, &ep12));
+        air_head = air_tail;
+        uint8_t req[2] = {0x01, 15};
+        znp_handle(&zt, 0x24, 0x10, req, 2);                                  /* interPanCtl: channel 15 */
+        CHECK(znp_c0 == 0x64 && znp_c1 == 0x10 && znp_last[0] == 0 && tl_last_channel == 15);
+        req[0] = 0x02; req[1] = 12;
+        znp_handle(&zt, 0x24, 0x10, req, 2);                                  /* interPanCtl: endpoint 12 */
+        CHECK(znp_last[0] == 0);
+        const uint8_t scan[9] = {0x11, 0x01, 0x00, 0x78, 0x56, 0x34, 0x12, 0x02, 0x33};   /* ZCL Scan Request */
+        uint8_t ext[20 + 9] = {0x02, 0xFF, 0xFF, 0, 0, 0, 0, 0, 0, 0xFE, 0xFF, 0xFF, 12, 0x00, 0x10, 0x42, 0x00, 30, 9, 0};
+        memcpy(ext + 20, scan, sizeof scan);
+        znp_handle(&zt, 0x24, 0x02, ext, sizeof ext);                         /* dataRequestExt, PAN 0xFFFF */
+        CHECK(znp_c0 == 0x64 && znp_c1 == 0x02 && znp_last[0] == 0);
+        CHECK(air_tail == air_head + 1);
+        mac_frame_t f;
+        CHECK(mac_frame_parse(air[air_head % 256], air_len[air_head % 256], &f) == MAC_OK);
+        CHECK(!f.pan_id_compression && f.dst_pan == 0xFFFF && f.dst_short == 0xFFFF && f.src_mode == MAC_ADDR_EXT &&
+              f.src_ext == 0x00124B000000C0DEull && f.src_pan == 0x6A6A && !f.ack_request);
+        CHECK(f.payload_len == 7 + sizeof scan && f.payload[0] == 0x0B && f.payload[1] == 0x00 && f.payload[2] == 0x0B &&
+              f.payload[3] == 0x00 && f.payload[4] == 0x10 && f.payload[5] == 0x5E && f.payload[6] == 0xC0 &&
+              !memcmp(f.payload + 7, scan, sizeof scan));
+        zb_coord_tx_done(&zc, MAC_TX_OK, false);
+        air_head = air_tail;
+        /* the bulb answers (unicast inter-PAN to our IEEE, from its PAN) */
+        uint8_t rsp[7 + 8] = {0x0B, 0x00, 0x03, 0x00, 0x10, 0x5E, 0xC0, 0x19, 0x01, 0x01, 0x78, 0x56, 0x34, 0x12, 0x07};
+        mac_frame_t m = {0};
+        m.type = MAC_TYPE_DATA; m.ack_request = true; m.seq = 0x41;
+        m.dst_mode = MAC_ADDR_EXT; m.dst_pan = 0x6A6A; m.dst_ext = 0x00124B000000C0DEull;
+        m.src_mode = MAC_ADDR_EXT; m.src_pan = 0x1234; m.src_ext = 0x0017880100ABCDEFull;
+        uint8_t mpdu[MAC_MAX_MPDU];
+        size_t n = mac_frame_build(&m, rsp, sizeof rsp, mpdu, sizeof mpdu);
+        CHECK(n);
+        znp_c1 = 0;
+        zb_coord_rx(&zc, mpdu, (uint8_t)n, 180, -60);
+        CHECK(znp_c0 == 0x44 && znp_c1 == 0x82);                             /* AF_INCOMING_MSG_EXT */
+        CHECK(znp_last[2] == 0x00 && znp_last[3] == 0x10 && znp_last[4] == 0x03);   /* cluster, 64-bit source */
+        uint64_t src = 0;
+        for (int i = 7; i >= 0; i--) src = src << 8 | znp_last[5 + i];
+        CHECK(src == 0x0017880100ABCDEFull && znp_last[13] == 0xFE && znp_last[14] == 0x34 && znp_last[15] == 0x12 &&
+              znp_last[16] == 12 && znp_last[17] == 0 && znp_last[18] == 180);
+        CHECK(znp_last[25] == 8 && znp_last[26] == 0 && !memcmp(znp_last + 27, rsp + 7, 8));
+        req[0] = 0x00;
+        znp_handle(&zt, 0x24, 0x10, req, 1);                                  /* back to the network */
+        CHECK(znp_last[0] == 0 && tl_last_channel == 20);
+        znp_c1 = 0;
+        m.seq++;
+        n = mac_frame_build(&m, rsp, sizeof rsp, mpdu, sizeof mpdu);
+        zb_coord_rx(&zc, mpdu, (uint8_t)n, 180, -60);
+        CHECK(znp_c1 != 0x82);                                               /* no session: not passed up */
+        znp_handle(&zt, 0x24, 0x02, ext, sizeof ext);
+        CHECK(znp_c1 == 0x02 && znp_last[0] == 0x02 && air_tail == air_head);   /* refused, nothing sent */
+        printf("reliability: Touchlink scan request sent inter-PAN, scan response passed up, session closed\n");
     }
 
     /* 8. Native CCM* rejections: a flood of forged frames is re-verified in

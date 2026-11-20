@@ -68,6 +68,8 @@ typedef struct {
     nv_log_t *store;
     gp_proxy_t gp;                     /* Green Power proxy (basic) */
     uint8_t gp_off_channel;            /* TempMaster channel the radio is on, 0: network channel */
+    uint8_t interpan_channel;          /* Touchlink (interPanCtl): channel the radio is on, 0: none */
+    uint8_t interpan_ep;               /* endpoint inter-PAN frames are delivered to, 0: none */
     struct { uint32_t tx, tx_failed, channel_moves, channel_failed; } gp_stats;
     uint64_t ieee;
     uint8_t dev_state;

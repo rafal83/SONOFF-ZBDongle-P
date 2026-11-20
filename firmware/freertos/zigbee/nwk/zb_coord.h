@@ -183,6 +183,11 @@ typedef struct {
     void (*channel_changed)(void *ctx, uint8_t channel);
     /* Green Power frame heard on the air (NWK protocol version 3), raw. */
     void (*gpdf)(void *ctx, const uint8_t *nwk, size_t len, uint8_t mac_seq, uint8_t lqi);
+    /* Inter-PAN frame (Touchlink, ZLL): MAC source (extended when src_ext),
+     * its PAN, APS stub cluster/profile, ZCL payload. Never secured: it
+     * changes no network state, the host decides (only while it asked). */
+    void (*interpan)(void *ctx, bool src_ext, uint64_t src, uint16_t src_pan, bool broadcast, uint16_t cluster,
+                     uint16_t profile, const uint8_t *zcl, size_t len, uint8_t lqi);
 } zb_coord_upper_t;
 
 typedef struct {
@@ -223,6 +228,7 @@ typedef struct {
     uint32_t children_aged;           /* children silent beyond their End Device Timeout */
     uint32_t children_moved;          /* children heard through a router: no longer ours */
     uint32_t nwk_counters_stored, nwk_counters_restored;   /* incoming NWK counter floors (store) */
+    uint32_t interpan_rx, interpan_tx;
 } zb_coord_stats_t;
 
 /* Recent unicast data frame: re-sent on Network Status (route failure),
@@ -369,6 +375,11 @@ bool zb_coord_update_network_key(zb_coord_t *c, uint16_t dst, uint8_t seq, const
 bool zb_coord_switch_network_key(zb_coord_t *c, uint16_t dst, uint8_t seq);
 uint8_t zb_coord_send_aps_secured(zb_coord_t *c, uint16_t dst, uint8_t dst_ep, uint8_t src_ep, uint16_t cluster,
                                   uint16_t profile, const uint8_t *payload, uint8_t length, bool ack_request);
+/* Inter-PAN frame (Touchlink): stub NWK + APS headers, sent from our IEEE
+ * to `dst_ext` (dst_ext 0: MAC broadcast 0xFFFF) on PAN `dst_pan`. The
+ * radio must already be on the wanted channel (host: interPanCtl). */
+uint8_t zb_coord_send_interpan(zb_coord_t *c, uint64_t dst_ext, uint16_t dst_pan, uint16_t cluster, uint16_t profile,
+                               const uint8_t *zcl, uint8_t len);
 /* Start a route discovery (broadcast Route Request) towards `dst`. */
 bool zb_coord_discover_route(zb_coord_t *c, uint16_t dst);
 /* Register (or replace) a local endpoint. */

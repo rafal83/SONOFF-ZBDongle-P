@@ -96,17 +96,17 @@ int main(void) {
     }
     CHECK(nwk_devices_associate(&table, 0x1111, 0x80, true, 0, &a) == NWK_ASSOC_PAN_AT_CAPACITY);
     CHECK(nwk_devices_remove(&table, DEV_EXT + 5) && !nwk_devices_remove(&table, DEV_EXT + 5));
-    CHECK(nwk_devices_find_short(&table, addrs[5]) == CORE_INDEX_NONE);
+    CHECK(nwk_devices_find_short(&table, addrs[5]) == NWK_DEVICE_NONE);
     CHECK(nwk_devices_associate(&table, 0x1111, 0x80, true, 0, &a) == NWK_ASSOC_SUCCESS);
 
     /* Learn: an address change follows the device; conflicts are refused. */
     CHECK(nwk_devices_remove(&table, DEV_EXT + 6));
     uint16_t free_addr = 0x0042;
-    while (nwk_devices_find_short(&table, free_addr) != CORE_INDEX_NONE) free_addr++;
+    while (nwk_devices_find_short(&table, free_addr) != NWK_DEVICE_NONE) free_addr++;
     CHECK(nwk_devices_learn(&table, DEV_EXT + 7, free_addr, NWK_REL_NEIGHBOR));
     uint16_t s7 = nwk_devices_find_ext(&table, DEV_EXT + 7);
     CHECK(table.dev[s7].short_addr == free_addr && nwk_devices_find_short(&table, free_addr) == s7);
-    CHECK(nwk_devices_find_short(&table, addrs[7]) == CORE_INDEX_NONE);
+    CHECK(nwk_devices_find_short(&table, addrs[7]) == NWK_DEVICE_NONE);
     CHECK(table.dev[s7].authorized && table.dev[s7].relationship == NWK_REL_NEIGHBOR);
     CHECK(!nwk_devices_learn(&table, DEV_EXT + 8, free_addr, NWK_REL_NONE));  /* conflict */
     CHECK(!nwk_devices_learn(&table, DEV_EXT + 8, 0x0000, NWK_REL_NONE));
@@ -127,6 +127,36 @@ int main(void) {
             }
             CHECK(seen == table.count);
         }
+    }
+    /* Sorted slot indexes against a linear reference: 30 000 random
+     * associations, removals, address changes and restores. */
+    {
+        nwk_devices_init(&table, 0xABCDu);
+        for (unsigned step = 0; step < 30000; step++) {
+            uint64_t ext = 0x00124B0000000000ull | (frt_rand() % 260u);
+            unsigned op = frt_rand() % 4u;
+            if (op == 0) { uint16_t s; (void)nwk_devices_associate(&table, ext, 0x80, true, 0, &s); }
+            else if (op == 1) (void)nwk_devices_remove(&table, ext);
+            else if (op == 2) (void)nwk_devices_learn(&table, ext, (uint16_t)(1u + frt_rand() % 0xFFF0u), NWK_REL_NONE);
+            else {
+                uint16_t slot = (uint16_t)(frt_rand() % NWK_MAX_DEVICES);
+                nwk_device_t d = {.ext = ext, .short_addr = (uint16_t)(1u + frt_rand() % 0xFFF0u)};
+                if (nwk_devices_restore_slot(&table, slot, &d)) nwk_devices_rebuild_free(&table);
+            }
+            unsigned n = 0;
+            for (uint16_t s = 0; s < NWK_MAX_DEVICES; s++) {
+                if (!table.dev[s].ext) continue;
+                n++;
+                CHECK(nwk_devices_find_ext(&table, table.dev[s].ext) == s);
+                CHECK(nwk_devices_find_short(&table, table.dev[s].short_addr) == s);
+            }
+            CHECK(n == table.count);
+            uint64_t probe = 0x00124B0000000000ull | (frt_rand() % 300u);
+            uint16_t ref = NWK_DEVICE_NONE;
+            for (uint16_t s = 0; s < NWK_MAX_DEVICES; s++) if (table.dev[s].ext == probe) ref = s;
+            CHECK(nwk_devices_find_ext(&table, probe) == ref);
+        }
+        printf("nwk_join: sorted indexes consistent over 30000 random operations (%u devices at the end)\n", table.count);
     }
     PASS("nwk_join");
     return 0;

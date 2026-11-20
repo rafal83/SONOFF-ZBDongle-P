@@ -26,8 +26,8 @@ Valeurs au **20 novembre 2026**. Ce résumé est tenu à jour avec [le détail, 
 | | Firmware FreeRTOS | ZeroStack (publié) | Z-Stack « stock » (selon SMLIGHT) |
 |---|---|---|---|
 | Sécurité d'une trame (CCM\*), sur le dongle | ≈ 1 650 cycles en trafic réel, contrôles logiciels compris (1 950 au banc) | ≈ 3 900 cycles | 532 182 cycles |
-| Écho de broadcast (1 000 échos, 50 routeurs) | **≈ 37 ms** au total (1 766 cycles / écho) | 151 ms (7 076 cycles / écho) | 3 s (143 865 cycles / écho) |
-| Trame rejouée | **1 444 cycles** (30 µs) | 1 550 cycles | 143 802 cycles |
+| Écho de broadcast (1 000 échos, 50 routeurs) | **≈ 35 ms** au total (1 692 cycles / écho) | 151 ms (7 076 cycles / écho) | 3 s (143 865 cycles / écho) |
+| Trame rejouée | **1 449 cycles** (30 µs) | 1 550 cycles | 143 802 cycles |
 | Écritures avant compaction (store vide) | **1 024** (écritures 44 o) / **512** (100 o) | 1 013 (store vide) | 69 |
 | Écritures avant compaction (200 appareils vivants) | **756** (mises à jour 48 o) / **405** (100 o) | non publié | non supporté |
 | Coupures de courant testées, 0 perte | **27 980** | 22 959 | — |

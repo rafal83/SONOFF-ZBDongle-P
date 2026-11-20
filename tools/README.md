@@ -7,7 +7,7 @@
 | Build courant | `build_freertos.py all` |
 | Tests partagés | `test_core_engines.py`, `build.py host`, `tests/herdsman_framing.mjs` |
 | Tests ARM | `test_arm_freertos.py`, `stack_analysis.py` |
-| Compatibilité hôte | `setup_herdsman_lab.py`, `znp_sim_acceptance.cjs` |
+| Compatibilité hôte | `setup_herdsman_lab.py`, `znp_sim_acceptance.cjs`, `znp_sim_touchlink.cjs` (Touchlink de herdsman) |
 | Intégrité / distribution | `image.py`, `audit_distribution.py`, `package_freertos_ci.py` |
 | Web flasher | `package_web_flasher.py`, `tests/web_flasher.test.mjs` |
 | Sauvegarde et restauration | `capture_dongle.py`, `freertos_lab_session.py`, `freertos_store.py`, `znp_migration_rehearsal.cjs` |
