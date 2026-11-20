@@ -62,7 +62,7 @@
 #define ZB_BCAST_RETRIES 2u            /* nwkMaxBroadcastRetries */
 #define ZB_SLEEPY_BCAST_COPIES 8u
 #define ZB_APS_DUP_TABLE 32u
-#define ZB_TX_TRACK 16u              /* unicasts awaiting their MAC confirm */
+#define ZB_TX_TRACK MAC_POOL_SLOTS   /* unicasts awaiting their MAC confirm: one per MAC buffer */
 #define ZB_DISC_PENDING 8u           /* local frames held while their route is discovered */
 #define ZB_DISC_WAIT_MS 5000u        /* then confirmed NWK_NO_ROUTE (0xCD) */
 #define ZB_STATUS_NWK_NO_ROUTE 0xCDu

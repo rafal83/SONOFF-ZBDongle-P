@@ -465,6 +465,9 @@ int main(void) {
             uint8_t st = zb_coord_send_aps(&coord, node[i].short_addr, 1, 1, 6, 0x0104, ZCL, 3, false);
             if (st == ZB_SEND_OK) { accepted++; accepted_to[i] = true; }
             else { CHECK(st == ZB_SEND_MAC_REFUSED); refused++; }
+            /* zigbee-herdsman's concurrency with a Z-Stack 3.x adapter (16), plus the
+             * inbound traffic of this loop: never refused. */
+            if (sent_n < 16) CHECK(st == ZB_SEND_OK);
             if (++sent_n % 10 == 0) (void)report((i * 7) % NODES == CENTER ? 0 : (i * 7) % NODES);  /* inbound */
         }
         CHECK(refused > 0 && accepted >= MAC_DIRECT_QUEUE);
