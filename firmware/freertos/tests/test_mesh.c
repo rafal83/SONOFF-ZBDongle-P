@@ -914,6 +914,47 @@ int main(void) {
         drain();
     }
 
+    /* ---- Route discovery backoff: a destination that never answers is not
+     * searched again for ZB_RDISC_BACKOFF_MS (doubling), no Route Request
+     * flood; cleared as soon as the destination is heard. */
+    {
+        drain();
+        const uint16_t DEAD = 0x4444;
+        CHECK(zb_coord_import_device(&coord, NWK_DEVICE_NONE, 0xA4C13800000001AAull, DEAD, false, 0, 0xFF));
+        const uint8_t zcl[3] = {0x01, 0x12, 0x00};
+        uint32_t rreq0 = coord.stats.rreq_tx, exp0 = coord.stats.disc_expired, sup0 = coord.stats.rreq_suppressed;
+        CHECK(zb_coord_send_aps(&coord, DEAD, 1, 1, 6, 0x0104, zcl, 3, false) == ZB_SEND_OK);   /* held */
+        CHECK(coord.stats.rreq_tx == rreq0 + 1);
+        zb_coord_tick(&coord, coord.now_ms + ZB_DISC_WAIT_MS + 10u);
+        CHECK(coord.stats.disc_expired == exp0 + 1);
+        drain();
+        /* In backoff: refused at once, no Route Request (explicit ones neither). */
+        CHECK(zb_coord_send_aps(&coord, DEAD, 1, 1, 6, 0x0104, zcl, 3, false) == ZB_SEND_NO_ROUTE);
+        CHECK(zb_coord_discover_route(&coord, DEAD));
+        CHECK(coord.stats.rreq_tx == rreq0 + 1 && coord.stats.rreq_suppressed == sup0 + 2);
+        rx_t m;
+        CHECK(!rx_frame(&r, &m));
+        /* After the backoff: searched again; a second failure doubles it. */
+        zb_coord_tick(&coord, coord.now_ms + ZB_RDISC_BACKOFF_MS);
+        drain();
+        CHECK(zb_coord_send_aps(&coord, DEAD, 1, 1, 6, 0x0104, zcl, 3, false) == ZB_SEND_OK);
+        CHECK(coord.stats.rreq_tx == rreq0 + 2);
+        zb_coord_tick(&coord, coord.now_ms + ZB_DISC_WAIT_MS + 10u);
+        drain();
+        zb_coord_tick(&coord, coord.now_ms + ZB_RDISC_BACKOFF_MS + 10u);   /* inside the 60 s backoff */
+        drain();
+        CHECK(zb_coord_send_aps(&coord, DEAD, 1, 1, 6, 0x0104, zcl, 3, false) == ZB_SEND_NO_ROUTE);
+        CHECK(coord.stats.rreq_tx == rreq0 + 2);
+        /* The destination is heard (a frame from it, relayed by R): reachable again. */
+        const uint8_t aps[8 + 3] = {0x00, 0x01, 0x06, 0x00, 0x04, 0x01, 0x01, 0x5C, 0x18, 0x09, 0x0A};
+        nwk_header_t h = hdr(NWK_TYPE_DATA, DEAD, 0x0000, 0x7A);
+        hop_send(&r, &h, aps, sizeof aps, 0x0000, true);
+        drain();
+        CHECK(zb_coord_send_aps(&coord, DEAD, 1, 1, 6, 0x0104, zcl, 3, false) == ZB_SEND_OK);
+        CHECK(coord.stats.rreq_tx == rreq0 + 3);
+        drain();
+    }
+
     printf("mesh: %u checks passed\n", frt_checks);
     return 0;
 }

@@ -258,6 +258,7 @@ static uint8_t mac_send(zb_coord_t *c, uint8_t dst_mode, uint16_t dst_short, uin
 static void sleepy_copies(zb_coord_t *c, const uint8_t *plain, size_t hl, size_t len);
 static bool disc_hold(zb_coord_t *c, uint16_t dst, uint8_t radius, const uint8_t *payload, size_t len, bool secured);
 static bool disc_pending_for(const zb_coord_t *c, uint16_t dst);
+static bool disc_suppressed(const zb_coord_t *c, uint16_t dst);
 static void bcast_queue(zb_coord_t *c, const uint8_t *plain, size_t hl, size_t len, uint16_t src, uint8_t seq,
                         uint32_t due, uint8_t sends, bool sleepy, uint8_t already_sent);
 
@@ -272,6 +273,10 @@ static uint8_t nwk_tx(zb_coord_t *c, uint8_t type, uint16_t dst, uint8_t radius,
     hop_t hop = {.mac_dst = 0xFFFF};
     if (!broadcast && !ext_dst && !next_hop(c, dst, &hop)) {
         c->stats.no_route++;
+        if (type == NWK_TYPE_DATA && disc_suppressed(c, dst)) {
+            c->stats.rreq_suppressed++;      /* in backoff: fail at once, no flood */
+            return ZB_SEND_NO_ROUTE;
+        }
         if (type == NWK_TYPE_DATA) {
             /* One Route Request per destination: frames that find a
              * discovery already pending for it just wait for its reply
@@ -466,6 +471,7 @@ static void address_conflict(zb_coord_t *c, uint16_t addr, uint64_t claimant) {
 
 bool zb_coord_discover_route(zb_coord_t *c, uint16_t dst) {
     if (nwk_is_broadcast(dst) || dst == 0x0000) return false;
+    if (disc_suppressed(c, dst)) { c->stats.rreq_suppressed++; return true; }   /* accepted, not flooded */
     const uint8_t rreq[6] = {NWK_CMD_ROUTE_REQUEST, 0x00, ++c->routes.rreq_id, (uint8_t)dst, (uint8_t)(dst >> 8), 0};
     bool ok = send_nwk_command(c, NWK_BCAST_ROUTERS, ZB_NWK_RADIUS, rreq, sizeof rreq) == ZB_SEND_OK;
     if (ok) c->stats.rreq_tx++;
@@ -502,6 +508,42 @@ static bool disc_pending_for(const zb_coord_t *c, uint16_t dst) {
     return false;
 }
 
+/* ---- route discovery backoff (see ZB_RDISC_FAIL) ----------------------- */
+static bool disc_suppressed(const zb_coord_t *c, uint16_t dst) {
+    for (unsigned i = 0; i < ZB_RDISC_FAIL; i++)
+        if (c->rdisc_fail[i].used && c->rdisc_fail[i].dst == dst && (int32_t)(c->now_ms - c->rdisc_fail[i].until_ms) < 0)
+            return true;
+    return false;
+}
+
+/* The discovery for `dst` got no reply: back off (doubling after each new
+ * failure, once the previous backoff is over). */
+static void disc_failed(zb_coord_t *c, uint16_t dst) {
+    unsigned slot = ZB_RDISC_FAIL, oldest = 0;
+    for (unsigned i = 0; i < ZB_RDISC_FAIL; i++) {
+        if (c->rdisc_fail[i].used && c->rdisc_fail[i].dst == dst) { slot = i; break; }
+        if (!c->rdisc_fail[i].used) { if (slot == ZB_RDISC_FAIL) slot = i; continue; }
+        if ((int32_t)(c->rdisc_fail[i].until_ms - c->rdisc_fail[oldest].until_ms) < 0) oldest = i;
+    }
+    if (slot == ZB_RDISC_FAIL) slot = oldest;
+    if (c->rdisc_fail[slot].used && c->rdisc_fail[slot].dst == dst) {
+        if ((int32_t)(c->now_ms - c->rdisc_fail[slot].until_ms) < 0) return;   /* already backing off */
+        uint32_t b = c->rdisc_fail[slot].backoff_ms * 2u;
+        c->rdisc_fail[slot].backoff_ms = b > ZB_RDISC_BACKOFF_MAX_MS ? ZB_RDISC_BACKOFF_MAX_MS : b;
+    } else {
+        c->rdisc_fail[slot].used = true;
+        c->rdisc_fail[slot].dst = dst;
+        c->rdisc_fail[slot].backoff_ms = ZB_RDISC_BACKOFF_MS;
+    }
+    c->rdisc_fail[slot].until_ms = c->now_ms + c->rdisc_fail[slot].backoff_ms;
+}
+
+/* `addr` was heard (authenticated frame): it is reachable again. */
+static void disc_heard(zb_coord_t *c, uint16_t addr) {
+    for (unsigned i = 0; i < ZB_RDISC_FAIL; i++)
+        if (c->rdisc_fail[i].used && c->rdisc_fail[i].dst == addr) c->rdisc_fail[i].used = false;
+}
+
 static void disc_release(zb_coord_t *c, unsigned i) {
     wipe(c->disc[i].payload, sizeof c->disc[i].payload);
     c->disc[i].used = false;
@@ -533,6 +575,7 @@ static void disc_service(zb_coord_t *c) {
                                                                                     : ZB_STATUS_NWK_NO_ROUTE);
             }
         } else if ((int32_t)(c->now_ms - c->disc[i].due_ms) >= 0) {
+            disc_failed(c, c->disc[i].dst);
             disc_release(c, i);
             c->stats.disc_expired++;
             if (c->upper.send_confirm) c->upper.send_confirm(c->upper.ctx, handle, ZB_STATUS_NWK_NO_ROUTE);
@@ -1626,6 +1669,8 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
         c->stats.learned_members++;
     }
     c->devices.dev[dev].last_seen_ms = c->now_ms;
+    disc_heard(c, h.src);
+    if (f->src_mode == MAC_ADDR_SHORT) disc_heard(c, f->src_short);
     if (f->src_mode == MAC_ADDR_SHORT) {
         nwk_neighbor_heard(&c->routes, f->src_short, lqi);
         uint16_t hop = nwk_devices_find_short(&c->devices, f->src_short);
