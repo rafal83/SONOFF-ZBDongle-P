@@ -173,6 +173,7 @@ static int diag_mesh_stats(le_writer_t *w) {
         c.mac.queue_full, c.mac.pool_full, c.mac.tx_busy, c.mac.kicks_deferred,
         c.mac.tx_rounds, c.coord.disc_buffered, c.coord.disc_sent, c.coord.disc_expired, c.coord.rreq_coalesced,
         c.coord.aps_counter_reuse, c.coord.rreq_suppressed, c.coord.bcast_dup_unopened,
+        c.coord.net_status_retries,
     };
     le_u8(w, (uint8_t)(sizeof values / sizeof values[0]));
     for (unsigned i = 0; i < sizeof values / sizeof values[0]; i++) le_u32(w, values[i]);

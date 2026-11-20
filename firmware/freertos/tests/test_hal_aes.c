@@ -214,6 +214,7 @@ static void fresh_model(void) {
     key_loaded = false;          /* driver state (static in hal_aes.c) */
     kat_ready = false;
     ops_since_check = 0;
+    engine_key_selected = false;
     memset(&stats, 0, sizeof stats);
 }
 
@@ -254,9 +255,10 @@ static void driver_checks(void) {
                 CHECK(ok && !memcmp(out, ref, 16));
                 continue;
             }
-            /* Key write faults only exist when the key is (re)loaded. */
+            /* Key store access faults only exist when the key is (re)loaded into the engine. */
             bool cached = when == 1;
-            bool expect_fail = !(cached && (faults[k].fault == M_KEY_WR_ERR || faults[k].fault == M_KEY_NOT_WRITTEN));
+            bool expect_fail = !(cached && (faults[k].fault == M_KEY_WR_ERR || faults[k].fault == M_KEY_NOT_WRITTEN ||
+                                           faults[k].fault == M_KEY_RD_ERR || faults[k].fault == M_KEY_RD_STUCK));
             CHECK(ok == !expect_fail);
             if (ok) { CHECK(!memcmp(out, ref, 16)); continue; }
             CHECK(st.resets == 1);
