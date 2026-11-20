@@ -57,6 +57,7 @@ uint32_t crypto_model_addr(const void *p);   /* 32-bit handle for a host pointer
 
 static uint8_t cached_key[16];
 static bool key_loaded;
+static bool engine_key_selected;
 /* Word aligned DMA buffers in SRAM; the key buffer is wiped after use. */
 static uint32_t dma_in[4], dma_out[4], dma_key[4];
 /* Native CCM*: AAD, data in, data out (word aligned, wiped after use). */
@@ -79,6 +80,39 @@ static void unlock(void) { __atomic_store_n(&busy, 0u, __ATOMIC_RELEASE); }
 static void wipe(void *p, unsigned n) {
     volatile uint8_t *v = p;
     while (n--) *v++ = 0;
+}
+
+static inline void copy_to_words(uint32_t *dst, const uint8_t *src, unsigned len) {
+    unsigned w = len / 4u;
+    unsigned rem = len & 3u;
+    const uint8_t *s = src;
+    for (unsigned i = 0; i < w; i++) {
+        dst[i] = (uint32_t)s[0] | ((uint32_t)s[1] << 8) | ((uint32_t)s[2] << 16) | ((uint32_t)s[3] << 24);
+        s += 4;
+    }
+    if (rem) {
+        uint32_t last = 0;
+        for (unsigned i = 0; i < rem; i++) last |= (uint32_t)s[i] << (8 * i);
+        dst[w] = last;
+    }
+}
+
+static inline void copy_from_words(uint8_t *dst, const uint32_t *src, unsigned len) {
+    unsigned w = len / 4u;
+    unsigned rem = len & 3u;
+    uint8_t *d = dst;
+    for (unsigned i = 0; i < w; i++) {
+        uint32_t v = src[i];
+        d[0] = (uint8_t)v;
+        d[1] = (uint8_t)(v >> 8);
+        d[2] = (uint8_t)(v >> 16);
+        d[3] = (uint8_t)(v >> 24);
+        d += 4;
+    }
+    if (rem) {
+        uint32_t v = src[w];
+        for (unsigned i = 0; i < rem; i++) d[i] = (uint8_t)(v >> (8 * i));
+    }
 }
 
 /* Wait until (reg & mask) == want, bounded. */
@@ -118,6 +152,7 @@ static void recover(void) {
     WR(CRYPTO_O_ALGSEL, 0);
     key_loaded = false;
     kat_ready = false;
+    engine_key_selected = false;
     wipe(cached_key, sizeof cached_key);
     wipe(kat_ref, sizeof kat_ref);
     wipe(dma_key, sizeof dma_key);
@@ -161,10 +196,16 @@ static bool key_write(const uint8_t key[16]) {
 
 /* AESReadFromKeyStore (area 6 into the AES engine), bounded. */
 static bool key_select(void) {
-    if (!(RD(CRYPTO_O_KEYWRITTENAREA) & (1u << KEY_AREA))) { stats.key_errors++; return false; }
+    if (!(RD(CRYPTO_O_KEYWRITTENAREA) & (1u << KEY_AREA))) {
+        engine_key_selected = false;
+        stats.key_errors++;
+        return false;
+    }
+    if (engine_key_selected) return true;
     WR(CRYPTO_O_KEYREADAREA, KEY_AREA);
     if (!wait_reg(CRYPTO_O_KEYREADAREA, CRYPTO_KEYREADAREA_BUSY_M, 0)) { stats.timeouts++; return false; }
     if (RD(CRYPTO_O_IRQSTAT) & CRYPTO_IRQSTAT_KEY_ST_RD_ERR_M) { stats.key_errors++; return false; }
+    engine_key_selected = true;
     return true;
 }
 
@@ -175,6 +216,7 @@ static bool load_key(const uint8_t key[16]) {
     if (same) return true;
     key_loaded = false;
     kat_ready = false;
+    engine_key_selected = false;
     if (!key_write(key)) return false;
     for (unsigned i = 0; i < 16; i++) cached_key[i] = key[i];
     key_loaded = true;
@@ -225,19 +267,14 @@ static bool key_check(const uint8_t key[16]) {
         aes128_clear(&a);
         kat_ready = true;
     }
-    uint8_t chk[16];
-    if (!ecb_locked(zero_block, chk)) return false;
-    uint8_t diff = 0;
-    for (unsigned i = 0; i < 16; i++) diff |= (uint8_t)(chk[i] ^ kat_ref[i]);
-    wipe(chk, sizeof chk);
+    uint32_t chk[4];
+    if (!ecb_locked(zero_block, (uint8_t *)chk)) return false;
+    const uint32_t *ref = (const uint32_t *)(const void *)kat_ref;
+    uint32_t diff = (chk[0] ^ ref[0]) | (chk[1] ^ ref[1]) | (chk[2] ^ ref[2]) | (chk[3] ^ ref[3]);
+    volatile uint32_t *v = chk;
+    v[0] = 0; v[1] = 0; v[2] = 0; v[3] = 0;
     if (diff) { stats.key_check_failures++; return false; }
     return true;
-}
-
-static void put_words(uint32_t first_reg, const uint8_t b[16]) {
-    for (unsigned w = 0; w < 4; w++)
-        WR(first_reg + 4u * w, (uint32_t)b[4 * w] | (uint32_t)b[4 * w + 1] << 8 | (uint32_t)b[4 * w + 2] << 16 |
-                               (uint32_t)b[4 * w + 3] << 24);
 }
 
 static bool ccm_locked(const uint8_t key[16], bool encrypt, const uint8_t nonce[13], const uint8_t *aad,
@@ -253,10 +290,10 @@ static bool ccm_locked(const uint8_t key[16], bool encrypt, const uint8_t nonce[
     WR(CRYPTO_O_ALGSEL, CRYPTO_ALGSEL_AES_M);
     if (!key_select()) return false;
     /* AESWriteCCMInitializationVector: flags L - 1 = 1, nonce, counter 0. */
-    uint8_t iv[16] = {0};
-    iv[0] = 1u;
-    for (unsigned i = 0; i < 13; i++) iv[1 + i] = nonce[i];
-    put_words(CRYPTO_O_AESIV0, iv);
+    WR(CRYPTO_O_AESIV0, 1u | ((uint32_t)nonce[0] << 8) | ((uint32_t)nonce[1] << 16) | ((uint32_t)nonce[2] << 24));
+    WR(CRYPTO_O_AESIV1, (uint32_t)nonce[3] | ((uint32_t)nonce[4] << 8) | ((uint32_t)nonce[5] << 16) | ((uint32_t)nonce[6] << 24));
+    WR(CRYPTO_O_AESIV2, (uint32_t)nonce[7] | ((uint32_t)nonce[8] << 8) | ((uint32_t)nonce[9] << 16) | ((uint32_t)nonce[10] << 24));
+    WR(CRYPTO_O_AESIV3, (uint32_t)nonce[11] | ((uint32_t)nonce[12] << 8));
     /* AESConfigureCCMCtrl(13, 4, encrypt): L field 1 (L = 2), M field 1 (M = 4). */
     WR(CRYPTO_O_AESCTL, (1u << CRYPTO_AESCTL_CCM_L_S) | (1u << CRYPTO_AESCTL_CCM_M_S) | CRYPTO_AESCTL_CCM |
                             CRYPTO_AESCTL_CTR | CRYPTO_AESCTL_SAVE_CONTEXT | CRYPTO_AESCTL_CTR_WIDTH_128_BIT |
@@ -264,34 +301,34 @@ static bool ccm_locked(const uint8_t key[16], bool encrypt, const uint8_t nonce[
     WR(CRYPTO_O_AESDATALEN0, len);
     WR(CRYPTO_O_AESDATALEN1, 0);
     WR(CRYPTO_O_AESAUTHLEN, aad_len);
-    uint8_t *b = (uint8_t *)dma_aad;
-    for (unsigned i = 0; i < aad_len; i++) b[i] = aad[i];
+    copy_to_words(dma_aad, aad, aad_len);
     uint32_t got = 0;
     uint32_t t1 = CYCLES();
     if (!start_dma(dma_aad, aad_len, 0, 0)) { stats.timeouts++; return false; }
     /* The data is copied while the engine authenticates the AAD. */
-    b = (uint8_t *)dma_data;
-    for (unsigned i = 0; i < len; i++) b[i] = in[i];
+    copy_to_words(dma_data, in, len);
     if (!wait_flags(CRYPTO_IRQSTAT_DMA_IN_DONE_M, &got)) { stats.timeouts++; return false; }
     if (got & ERR_FLAGS) { stats.dma_errors++; return false; }
     uint32_t t2 = CYCLES();
     if (!start_dma(dma_data, len, dma_res, len)) { stats.timeouts++; return false; }
     if (!wait_flags(CRYPTO_IRQSTAT_RESULT_AVAIL_M, &got)) { stats.timeouts++; return false; }
     if (got & ERR_FLAGS) { stats.dma_errors++; return false; }
-    if (!wait_reg(CRYPTO_O_DMASTAT, CRYPTO_DMASTAT_CH1_ACT, 0)) { stats.timeouts++; return false; }
+    if ((RD(CRYPTO_O_DMASTAT) & CRYPTO_DMASTAT_CH1_ACT) &&
+        !wait_reg(CRYPTO_O_DMASTAT, CRYPTO_DMASTAT_CH1_ACT, 0)) { stats.timeouts++; return false; }
     uint32_t t3 = CYCLES();
     /* AESReadTag: the tag is valid once the context is saved. */
-    if (!wait_reg(CRYPTO_O_AESCTL, CRYPTO_AESCTL_SAVED_CONTEXT_RDY_M, CRYPTO_AESCTL_SAVED_CONTEXT_RDY_M)) {
+    if (((RD(CRYPTO_O_AESCTL) & CRYPTO_AESCTL_SAVED_CONTEXT_RDY_M) == 0) &&
+        !wait_reg(CRYPTO_O_AESCTL, CRYPTO_AESCTL_SAVED_CONTEXT_RDY_M, CRYPTO_AESCTL_SAVED_CONTEXT_RDY_M)) {
         stats.timeouts++;
         return false;
     }
-    uint32_t t[4];
-    for (unsigned w = 0; w < 4; w++) t[w] = RD(CRYPTO_O_AESTAGOUT0 + 4u * w);
+    uint32_t t0_tag = RD(CRYPTO_O_AESTAGOUT0);
     WR(CRYPTO_O_ALGSEL, 0);
-    for (unsigned i = 0; i < 4; i++) tag[i] = (uint8_t)(t[0] >> (8 * i));
-    const uint8_t *r = (const uint8_t *)dma_res;
-    for (unsigned i = 0; i < len; i++) out[i] = r[i];
-    wipe(t, sizeof t);
+    tag[0] = (uint8_t)t0_tag;
+    tag[1] = (uint8_t)(t0_tag >> 8);
+    tag[2] = (uint8_t)(t0_tag >> 16);
+    tag[3] = (uint8_t)(t0_tag >> 24);
+    copy_from_words(out, dma_res, len);
     stats.ccm_ops++;
     uint32_t t4 = CYCLES();
     stats.prof_setup += t1 - t0;
@@ -345,6 +382,7 @@ void hal_aes_invalidate(void) {
     if (!try_lock()) return;   /* the running operation reloads the key */
     key_loaded = false;
     kat_ready = false;
+    engine_key_selected = false;
     wipe(cached_key, sizeof cached_key);
     WR(CRYPTO_O_KEYWRITTENAREA, 1u << KEY_AREA);
     unlock();

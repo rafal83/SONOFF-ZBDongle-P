@@ -970,6 +970,38 @@ int main(void) {
         drain();
     }
 
+    /* ---- Network Status triggers route discovery and frame retry ------- */
+    {
+        drain();
+        const uint16_t TARGET = 0x146D;
+        /* Route known via router R */
+        nwk_table_route_set(&coord.routes, TARGET, r.short_addr);
+        uint32_t rreq_before = coord.stats.rreq_tx;
+        uint32_t retries_before = coord.stats.net_status_retries;
+        uint32_t disc_sent_before = coord.stats.disc_sent;
+        uint8_t disc_before = coord.disc_count;
+        const uint8_t zcl[3] = {0x00, 0x12, 0x00};
+        /* Send frame to TARGET: sent via R */
+        CHECK(zb_coord_send_aps(&coord, TARGET, 1, 1, 6, 0x0104, zcl, 3, false) == ZB_SEND_OK);
+        drain();
+        /* R reports Network Status 0x01 (Tree/link failure) for TARGET */
+        const uint8_t ns[4] = {0x03 /* NWK_CMD_NETWORK_STATUS */, 0x01, (uint8_t)TARGET, (uint8_t)(TARGET >> 8)};
+        nwk_header_t h = hdr(NWK_TYPE_COMMAND, r.short_addr, 0x0000, 0x88);
+        hop_send(&r, &h, ns, sizeof ns, 0x0000, true);
+        drain();
+        /* Coordinator must have triggered a Route Request and held the frame for retry */
+        CHECK(coord.stats.rreq_tx == rreq_before + 1);
+        CHECK(coord.stats.net_status_retries == retries_before + 1);
+        CHECK(coord.disc_count == disc_before + 1);
+        /* New route discovered (Route Reply from router) */
+        nwk_table_route_set(&coord.routes, TARGET, r.short_addr);
+        zb_coord_tick(&coord, coord.now_ms + 10u);
+        drain();
+        /* Held frame was retried and sent */
+        CHECK(coord.disc_count == disc_before);
+        CHECK(coord.stats.disc_sent == disc_sent_before + 1);
+    }
+
     printf("mesh: %u checks passed\n", frt_checks);
     return 0;
 }

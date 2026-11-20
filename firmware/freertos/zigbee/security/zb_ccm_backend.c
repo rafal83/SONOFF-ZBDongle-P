@@ -2,6 +2,7 @@
 #include "zb_ccm_backend.h"
 #include "aes128.h"
 #include "ccm_star.h"
+#include <string.h>
 
 core_security_ccm_t zb_ccm_backend_active = zb_ccm_backend_sw;
 
@@ -94,7 +95,11 @@ void zb_ccm_backend_set_native(zb_ccm_native_fn fn) {
 void zb_ccm_backend_hw_stats(zb_ccm_hw_stats_t *out) { *out = hw_stats; }
 
 static void wipe(void *p, size_t n) {
-    volatile uint8_t *v = p;
+    volatile uint8_t *v = (volatile uint8_t *)p;
+    while (((uintptr_t)v & 3u) && n) { *v++ = 0; n--; }
+    volatile uint32_t *v32 = (volatile uint32_t *)(void *)v;
+    while (n >= 4) { *v32++ = 0; n -= 4; }
+    v = (volatile uint8_t *)v32;
     while (n--) *v++ = 0;
 }
 
@@ -139,18 +144,11 @@ bool zb_ccm_backend_hw(void *context, bool encrypt, const uint8_t key[16], const
         hw_stats.busy++;
         return zb_ccm_backend_sw(context, encrypt, key, nonce, aad, aad_len, input, input_len, output, mic);
     }
-    bool same = verify_ready;
-    for (unsigned i = 0; i < 16 && same; i++) same = verify_key[i] == key[i];
-    if (!same) {
-        aes128_init(&verify_aes, key);
-        for (unsigned i = 0; i < 16; i++) verify_key[i] = key[i];
-        verify_ready = true;
-    }
     uint8_t copy[HW_MAX_INPUT];
     const uint8_t *src = input;
     bool copied = output && overlaps(input, output, input_len);
     if (copied) {
-        for (size_t i = 0; i < input_len; i++) copy[i] = input[i];
+        memcpy(copy, input, input_len);
         src = copy;
     }
     hw_op_t op = {key, false, false, false};
@@ -159,31 +157,37 @@ bool zb_ccm_backend_hw(void *context, bool encrypt, const uint8_t key[16], const
         uint8_t tag[4];
         bool done = hw_native(key, encrypt, nonce, aad, (unsigned)aad_len, src, (unsigned)input_len, output, tag);
         if (done) {
-            uint8_t any = 0, same_tag = last_tag_valid, same_nonce = 1;
-            for (unsigned i = 0; i < 4; i++) { any |= tag[i]; same_tag &= (uint8_t)(tag[i] == last_tag[i]); }
-            for (unsigned i = 0; i < 13; i++) same_nonce &= (uint8_t)(nonce[i] == last_nonce[i]);
-            if (!any || (same_tag && !same_nonce)) { hw_stats.tag_suspect++; done = false; }
+            uint32_t tag32;
+            memcpy(&tag32, tag, 4);
+            bool same_tag = last_tag_valid && (memcmp(tag, last_tag, 4) == 0);
+            bool same_nonce = memcmp(nonce, last_nonce, 13) == 0;
+            if (tag32 == 0 || (same_tag && !same_nonce)) { hw_stats.tag_suspect++; done = false; }
         }
         if (!done) {
             op.failed = true;
             if (output) wipe(output, input_len);
         } else {
-            for (unsigned i = 0; i < 4; i++) last_tag[i] = tag[i];
-            for (unsigned i = 0; i < 13; i++) last_nonce[i] = nonce[i];
+            memcpy(last_tag, tag, 4);
+            memcpy(last_nonce, nonce, 13);
             last_tag_valid = true;
             hw_stats.native_ops++;
             if (encrypt) {
-                for (unsigned i = 0; i < 4; i++) mic[i] = tag[i];
+                memcpy(mic, tag, 4);
                 ok = true;
             } else {
-                uint8_t diff = 0;
-                for (unsigned i = 0; i < 4; i++) diff |= (uint8_t)(tag[i] ^ mic[i]);
-                ok = diff == 0;
+                ok = memcmp(tag, mic, 4) == 0;
                 if (!ok && output) wipe(output, input_len);   /* as ccm_star_open_with */
             }
         }
         wipe(tag, sizeof tag);
     } else if (hw_block) {
+        bool same = verify_ready;
+        for (unsigned i = 0; i < 16 && same; i++) same = verify_key[i] == key[i];
+        if (!same) {
+            aes128_init(&verify_aes, key);
+            for (unsigned i = 0; i < 16; i++) verify_key[i] = key[i];
+            verify_ready = true;
+        }
         const ccm_block_t bc = {hw_encrypt, &op};
         ok = encrypt ? ccm_star_seal_with(&bc, nonce, aad, aad_len, src, input_len, output, mic, 4, true)
                      : ccm_star_open_with(&bc, nonce, aad, aad_len, src, input_len, output, mic, 4, true);
@@ -212,19 +216,22 @@ bool zb_ccm_backend_hw(void *context, bool encrypt, const uint8_t key[16], const
             }
             hw_stats.hw_audits++;
             uint8_t ref[HW_MAX_INPUT], ref_mic[4];
-            for (unsigned i = 0; i < 4; i++) ref_mic[i] = mic[i];
+            memcpy(ref_mic, mic, 4);
             bool ref_ok = zb_ccm_backend_sw(context, encrypt, key, nonce, aad, aad_len, src, input_len, ref, ref_mic);
             uint8_t diff = (uint8_t)(ref_ok != ok);
             if (ref_ok)
-                for (size_t i = 0; i < input_len; i++) diff |= (uint8_t)(ref[i] ^ output[i]);
+                diff |= (uint8_t)(memcmp(ref, output, input_len) != 0);
             if (ref_ok && encrypt)
-                for (unsigned i = 0; i < 4; i++) diff |= (uint8_t)(ref_mic[i] ^ mic[i]);
+                diff |= (uint8_t)(memcmp(ref_mic, mic, 4) != 0);
             if (diff) {   /* the software result wins; the accelerator is abandoned */
                 hw_stats.hw_audit_failures++;
                 hw_stats.hw_disabled = true;
                 ok = ref_ok;
-                for (size_t i = 0; i < input_len; i++) output[i] = ok ? ref[i] : 0;
-                if (encrypt) for (unsigned i = 0; i < 4; i++) mic[i] = ref_mic[i];
+                if (output) {
+                    if (ok) memcpy(output, ref, input_len);
+                    else wipe(output, input_len);
+                }
+                if (encrypt) memcpy(mic, ref_mic, 4);
             }
             wipe(ref, sizeof ref);
         }
