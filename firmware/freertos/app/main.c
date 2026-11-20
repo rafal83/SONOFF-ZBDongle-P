@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT
  * FreeRTOS target entry point: hardware bring-up, static task creation,
- * scheduler start. No Zigbee stack yet (see docs/freertos-migration/).
+ * scheduler start. See docs/firmware/ for the native Zigbee stack.
  */
 #include "app.h"
 #include "hal_sys.h"

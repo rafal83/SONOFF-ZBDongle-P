@@ -6,9 +6,9 @@ Les objectifs d'optimisation s'inspirent de l'idée présentée par SMLIGHT Zero
 
 ## État et utilisation
 
-La branche `freeRTOS` est la cible maintenue. Consulter [son état détaillé](docs/freertos-migration/status.md), [les validations](docs/freertos-migration/validation.md) et [les limites de compatibilité](docs/freertos-migration/znp-compat.md) avant une migration. Un build et des tests sur simulateur ne qualifient pas une image sur le matériel.
+La branche `freeRTOS` est la cible maintenue. Consulter [son état détaillé](docs/firmware/status.md), [les validations](docs/firmware/validation.md) et [les limites de compatibilité](docs/firmware/znp-compat.md) avant l'installation. Un build et des tests sur simulateur ne qualifient pas une image sur le matériel.
 
-Le [flasher USB](https://rafal83.github.io/SONOFF-ZBDongle-P/) est disponible sur GitHub Pages, en sources et en artefact CI. Voir [son utilisation](docs/freertos-migration/README.md#flasher-depuis-le-navigateur).
+Le [flasher USB](https://rafal83.github.io/SONOFF-ZBDongle-P/) est disponible sur GitHub Pages, en sources et en artefact CI. Voir [son utilisation](docs/firmware/README.md#flasher-depuis-le-navigateur).
 
 ## Construire et tester
 
@@ -45,4 +45,4 @@ Les contributions originales sont sous [MIT](LICENSE). Les dépendances conserve
 - `private/` : sauvegardes et données personnelles, hors Git et hors distribution.
 - `upstream/`, `vendor-sdk/`, `.tooling/`, `build/` : dépendances et sorties locales ignorées.
 
-Les [procédures de migration et de retour](docs/freertos-migration/README.md) sont distinctes du build. Aucun nettoyage ni test logiciel ne déclenche un flash ou une action sur le réseau Zigbee.
+Consulter les procédures d'[installation et mise à jour](docs/firmware/installation.md) et de [restauration depuis une sauvegarde](docs/firmware/restauration.md). Aucun build ni test logiciel ne déclenche un flash ou une action sur le réseau Zigbee.

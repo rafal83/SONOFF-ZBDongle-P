@@ -14,9 +14,12 @@ from package_web_flasher import package, APP_END
 class WebFlasherPackageTests(unittest.TestCase):
     def archive(self, folder, overlap=False, wrong_manifest=False, different_ccfg=False):
         memory = {address: 255 for address in range(image.CCFG, image.FLASH_END)}
-        for address, value in [(0, 0x20010000), (4, 0x101), (0x57fd8, 0xc5fe0fc5), (0x57fe4, 0xffc5ffff), (0x57fec, 0)]:
+        for address, value in [(0, 0x20010000), (4, 0x141), (0x57fd8, 0xc5fe0fc5), (0x57fe4, 0xffc5ffff), (0x57fec, 0)]:
             memory.update({address + i: b for i, b in enumerate(value.to_bytes(4, 'little'))})
-        memory[0x100] = 0x70
+        memory[0x140] = 0x70
+        memory.update(dict(enumerate(b'ZBDP-FRT', 0x100)))
+        for address, value in [(0x108, 1), (0x10c, 1), (0x114, 20261119)]:
+            memory.update({address + i: b for i, b in enumerate(value.to_bytes(4, 'little'))})
         if overlap:
             memory[APP_END] = 1
         archive = folder / 'ci.zip'
@@ -24,6 +27,7 @@ class WebFlasherPackageTests(unittest.TestCase):
             for name in ('PROJECT-LICENSE.txt', 'FreeRTOS-LICENSE.md', 'TI-LICENSE.txt', 'THIRD_PARTY_NOTICES.txt'):
                 z.writestr('sonoff-freertos/licenses/' + name, 'License fixture: ' + name)
             for baud in (115200, 1000000):
+                memory.update({0x110 + i: b for i, b in enumerate(baud.to_bytes(4, 'little'))})
                 if different_ccfg and baud == 1000000:
                     memory[image.CCFG] ^= 1
                 path = folder / 'image.hex'
@@ -48,7 +52,8 @@ class WebFlasherPackageTests(unittest.TestCase):
                 binary = (output / firmware['path']).read_bytes()
                 self.assertEqual(len(binary), APP_END)
                 self.assertEqual(hashlib.sha256(binary).hexdigest(), firmware['sha256'])
-                self.assertEqual(binary[0x100], 0x70)
+                self.assertEqual(binary[0x140], 0x70)
+                self.assertEqual(binary[0x100:0x108], b'ZBDP-FRT')
                 self.assertEqual(binary[-1], 255)
             self.assertTrue((output / 'index.html').is_file())
             self.assertIn('THIRD_PARTY_NOTICES.txt', (output / 'FIRMWARE-LICENSES.txt').read_text())

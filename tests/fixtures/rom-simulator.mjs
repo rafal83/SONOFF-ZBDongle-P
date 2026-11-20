@@ -14,8 +14,10 @@ export function fixtureFirmware() {
   const bytes = new Uint8Array(APP_END).fill(255);
   const view = new DataView(bytes.buffer);
   view.setUint32(0, 0x20010000, true);
-  view.setUint32(4, 0x101, true);
-  for (let i = 0x100; i < PAGE_SIZE + 400; i++) bytes[i] = (i * 17) & 255;
+  view.setUint32(4, 0x141, true);
+  bytes.set(new TextEncoder().encode('ZBDP-FRT'), 0x100);
+  for (const [offset, value] of [[0x108, 1], [0x10c, 1], [0x110, 1000000], [0x114, 20261119]]) view.setUint32(offset, value, true);
+  for (let i = 0x140; i < PAGE_SIZE + 400; i++) bytes[i] = (i * 17) & 255;
   return bytes;
 }
 function crc(bytes) {

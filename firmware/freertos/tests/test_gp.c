@@ -44,7 +44,8 @@ static size_t gpdf(uint8_t *f, uint32_t src, uint8_t level, uint32_t counter, ui
     if (level >= 2) { put32(f + n, counter); n += 4; }
     size_t hl = n;
     f[n++] = cmd;
-    memcpy(f + n, pl, pl_len); n += pl_len;
+    if (pl_len) memcpy(f + n, pl, pl_len);
+    n += pl_len;
     if (level >= 2) {
         uint8_t nonce[13], mic[4];
         nonce_of(src, counter, nonce);

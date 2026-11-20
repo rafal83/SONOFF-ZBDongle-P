@@ -193,7 +193,7 @@ async function run() {
             });
             /* ZNP extUpdateNwkKey + extSwitchNwkKey as herdsman defines them:
              * the active key read back is the new one (Z2M's network_key must
-             * then be updated by the user, see docs/freertos-migration/znp-compat.md). */
+             * then be updated by the user, see docs/firmware/znp-compat.md). */
             await step('network key rotation (extUpdateNwkKey / extSwitchNwkKey)', async () => {
                 const {Subsystem} = r('zigbee-herdsman/dist/adapter/z-stack/unpi/constants.js');
                 const before = await adapter.znp.request(Subsystem.SYS, 'osalNvRead', {id: 0x003a, offset: 0});

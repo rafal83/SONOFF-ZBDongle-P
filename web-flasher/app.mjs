@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
-import { TiRom, APP_END, FLASH_SIZE, CCFG, installApplication, sha256, validateApplication } from './rom.mjs';
+import { TiRom, APP_END, FLASH_SIZE, CCFG, installApplication, restoreApplication, encodeBackup, decodeBackup, sha256, validateApplication } from './rom.mjs';
 
 const $ = id => document.getElementById(id);
 const ui = Object.fromEntries(['baud', 'consent', 'connect', 'install', 'disconnect', 'status', 'progress',
   'percent', 'log', 'compatibility', 'device-info', 'backup-link', 'result-help', 'release-name',
-  'release-link', 'firmware-hash', 'hex-link'].map(id => [id, $(id)]));
-const state = { busy: false, catalog: null, image: null, binary: null, rom: null, backup: null, backupUrl: null, failedWrite: false };
+  'release-link', 'firmware-hash', 'hex-link', 'operation', 'install-settings', 'restore-settings',
+  'restore-file', 'restore-info', 'restore-hash', 'restore-controls', 'restore-consent', 'restore'].map(id => [id, $(id)]));
+const state = { busy: false, catalog: null, image: null, binary: null, rom: null, backup: null, backupUrl: null, failedWrite: false, restoreImage: null };
 const supported = 'serial' in navigator && window.isSecureContext && Boolean(crypto.subtle);
 function log(message) { ui.log.textContent += `${new Date().toLocaleTimeString('fr-FR')}  ${message}\n`; }
 function status(message, percent) {
@@ -13,8 +14,18 @@ function status(message, percent) {
   if (percent !== undefined) { ui.progress.value = percent; ui.percent.textContent = `${Math.round(percent)} %`; }
 }
 function update() {
-  ui.connect.disabled = !supported || state.busy || !state.binary || !ui.consent.checked || Boolean(state.rom);
-  ui.install.disabled = state.busy || !state.rom || !state.backup || !ui.consent.checked || state.failedWrite;
+  const restoring = ui.operation.value === 'restore';
+  const ready = supported && !state.busy && state.rom && state.backup && ui.consent.checked && !state.failedWrite;
+  ui.connect.disabled = !supported || state.busy || (!restoring && !state.binary) || !ui.consent.checked || Boolean(state.rom);
+  ui.install.disabled = !ready || restoring || !state.binary;
+  ui.restore.disabled = !ready || !restoring || !state.restoreImage || !ui['restore-consent'].checked || state.restoreImage.ieee !== state.rom?.device?.ieee;
+  ui['install-settings'].hidden = restoring;
+  ui['restore-settings'].hidden = !restoring;
+  ui['restore-controls'].hidden = !restoring;
+  ui.install.hidden = restoring;
+  ui.operation.disabled = state.busy;
+  ui['restore-file'].disabled = state.busy;
+  ui['restore-consent'].disabled = state.busy;
   ui.baud.disabled = state.busy || Boolean(state.rom) || !state.catalog;
   ui.consent.disabled = state.busy;
   ui.disconnect.hidden = !state.rom || state.busy;
@@ -58,11 +69,11 @@ async function loadFirmware() {
   } catch (error) { status(errorMessage(error)); log(errorMessage(error)); }
   finally { state.busy = false; update(); }
 }
-function saveBackup(bytes, ieee) {
+async function saveBackup(bytes, ieee) {
   if (state.backupUrl) URL.revokeObjectURL(state.backupUrl);
-  state.backupUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+  state.backupUrl = URL.createObjectURL(new Blob([await encodeBackup(bytes, ieee)], { type: 'application/json' }));
   ui['backup-link'].href = state.backupUrl;
-  ui['backup-link'].download = `zbdongle-p-${ieee}-${new Date().toISOString().replaceAll(':', '-')}.bin`;
+  ui['backup-link'].download = `zbdongle-p-${ieee}-${new Date().toISOString().replaceAll(':', '-')}.json`;
   ui['backup-link'].hidden = false;
   ui['backup-link'].click();
 }
@@ -78,6 +89,28 @@ async function disconnect({ reboot = true } = {}) {
   update();
 }
 ui.consent.addEventListener('change', update);
+ui['restore-consent'].addEventListener('change', update);
+ui.operation.addEventListener('change', () => { ui['restore-consent'].checked = false; update(); });
+ui['restore-file'].addEventListener('change', async () => {
+  state.restoreImage = null;
+  ui['restore-consent'].checked = false;
+  ui['restore-hash'].textContent = 'Non vérifié';
+  ui['result-help'].textContent = '';
+  const file = ui['restore-file'].files[0];
+  if (!file) { ui['restore-info'].textContent = 'Aucune sauvegarde sélectionnée.'; update(); return; }
+  state.busy = true; update();
+  try {
+    if (file.size > 1024 * 1024) throw new Error('Fichier de sauvegarde trop volumineux.');
+    const saved = await decodeBackup(new Uint8Array(await file.arrayBuffer()), file.name);
+    state.restoreImage = saved;
+    ui['restore-info'].textContent = `IEEE ${saved.ieee} · ${saved.baud} bauds · révision ${saved.revision}. ${saved.legacy ? 'Ancien BIN : aucune somme de contrôle indépendante ; utilisez votre fichier original.' : 'Intégrité SHA-256 vérifiée.'}`;
+    ui['restore-hash'].textContent = saved.hash;
+    if (state.rom && saved.ieee !== state.rom.device.ieee) throw new Error('Cette sauvegarde appartient à un autre dongle.');
+    ui['result-help'].textContent = state.rom ? 'Sauvegarde compatible avec ce dongle. Confirmez la restauration pour continuer.' : 'Connectez le dongle et sauvegardez son état actuel avant de restaurer le firmware.';
+    log('Sauvegarde de restauration chargée localement. Aucune écriture effectuée.');
+  } catch (error) { state.restoreImage = null; ui['restore-info'].textContent = errorMessage(error); log(errorMessage(error)); }
+  finally { state.busy = false; update(); }
+});
 ui.baud.addEventListener('change', loadFirmware);
 ui.connect.addEventListener('click', async () => {
   if (ui.connect.disabled) return;
@@ -98,11 +131,11 @@ ui.connect.addEventListener('click', async () => {
     log(`${device.model} identifié, mémoire de 352 Kio.`);
     status('Sauvegarde de la mémoire du dongle…', 0);
     const backup = await rom.backup(p => status('Sauvegarde de la mémoire du dongle…', p * 100));
-    if (state.catalog.ccfg.some((b, i) => b !== backup[CCFG + i])) throw new Error('Configuration du dongle incompatible avec ce firmware. Aucun flash effectué.');
+    if (ui.operation.value === 'install' && state.catalog.ccfg.some((b, i) => b !== backup[CCFG + i])) throw new Error('Configuration du dongle incompatible avec ce firmware. Aucun flash effectué.');
     state.backup = backup;
-    saveBackup(backup, device.ieee);
-    status('Sauvegarde vérifiée. Prêt à installer.', 0);
-    ui['result-help'].textContent = 'Conservez le fichier BIN téléchargé : il contient une copie complète du dongle, y compris ses données privées.';
+    await saveBackup(backup, device.ieee);
+    status('Sauvegarde vérifiée. Prêt à installer ou restaurer.', 0);
+    ui['result-help'].textContent = state.restoreImage && state.restoreImage.ieee !== device.ieee ? 'La sauvegarde sélectionnée appartient à un autre dongle. Choisissez celle de ce dongle.' : 'Conservez le fichier JSON téléchargé : il contient une copie complète du dongle, son identité et une somme de contrôle, y compris ses données privées.';
     log('Sauvegarde complète vérifiée avec le CRC du dongle et proposée au téléchargement.');
   } catch (error) {
     const message = errorMessage(error);
@@ -111,34 +144,43 @@ ui.connect.addEventListener('click', async () => {
     if (rom && !state.rom) { try { await rom.close(); } catch {} }
   } finally { state.busy = false; update(); }
 });
-ui.install.addEventListener('click', async () => {
-  if (ui.install.disabled) return;
+async function program(restoring) {
+  if ((restoring ? ui.restore : ui.install).disabled) return;
   state.busy = true;
   update();
-  ui['result-help'].textContent = 'Gardez le dongle branché et cette page ouverte pendant l’installation.';
+  ui['result-help'].textContent = 'Gardez le dongle branché et cette page ouverte pendant l’écriture.';
   let wrote = false;
   try {
-    await installApplication(state.rom, state.binary, state.image.sha256, state.backup, state.catalog.ccfg, (phase, fraction) => {
+    const progress = (phase, fraction) => {
       if (phase === 'erase') wrote = true;
       const stages = { erase: ['Effacement de la zone application…', 0, 20], program: ['Écriture du firmware…', 20, 50], verify: ['Relecture et vérification du dongle…', 70, 29], verified: ['Flash et données conservées vérifiés.', 100, 0] };
       const [label, base, span] = stages[phase];
       status(label, base + fraction * span);
-    });
+    };
+    let info;
+    if (restoring) {
+      info = await restoreApplication(state.rom, state.restoreImage, state.backup, progress);
+    } else {
+      await installApplication(state.rom, state.binary, state.image.sha256, state.backup, state.catalog.ccfg, progress);
+      info = state.image;
+    }
     log('Application relue intégralement ; stockage Zigbee, NV et CCFG inchangés. CRC final vérifié.');
     await disconnect();
-    status('Installation terminée. Vous pouvez débrancher le dongle.', 100);
-    ui['result-help'].textContent = `Vous pouvez reconnecter le dongle à Zigbee2MQTT avec adapter: zstack et baudrate: ${state.image.baud}. Pour une migration depuis Z-Stack, suivez la procédure dédiée.`;
+    status(`${restoring ? 'Restauration' : 'Installation'} terminée. Vous pouvez débrancher le dongle.`, 100);
+    ui['result-help'].textContent = `Vous pouvez reconnecter le dongle à Zigbee2MQTT avec adapter: zstack et baudrate: ${info.baud}. Les données et compteurs Zigbee actuels sont conservés.`;
     log('Commande de redémarrage acquittée. Le fonctionnement radio n’est pas vérifié par cette page.');
   } catch (error) {
     const message = errorMessage(error);
     state.failedWrite = wrote;
-    status(wrote ? `Installation interrompue : ${message}` : message);
-    ui['result-help'].textContent = wrote ? 'La vérification n’est pas terminée. Reconnectez le dongle à cette page pour relancer l’installation ; conservez la sauvegarde initiale.' : 'Aucune écriture effectuée. Déconnectez puis reconnectez le dongle pour réessayer.';
+    status(wrote ? `Écriture interrompue : ${message}` : message);
+    ui['result-help'].textContent = wrote ? 'La vérification n’est pas terminée. Reconnectez le dongle à cette page pour relancer l’opération ; conservez la sauvegarde initiale.' : 'Aucune écriture effectuée. Déconnectez puis reconnectez le dongle pour réessayer.';
     log(message);
     // Never ask an incompletely programmed image to boot.
     try { await disconnect({ reboot: false }); } catch (closeError) { log(errorMessage(closeError)); }
   } finally { state.busy = false; update(); }
-});
+}
+ui.install.addEventListener('click', () => program(false));
+ui.restore.addEventListener('click', () => program(true));
 ui.disconnect.addEventListener('click', async () => {
   state.busy = true; update();
   try { await disconnect({ reboot: !state.failedWrite }); status('Dongle déconnecté.', 0); }

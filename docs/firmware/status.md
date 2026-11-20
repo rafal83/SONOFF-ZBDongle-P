@@ -40,7 +40,7 @@ Diagnostic du « retard de la Douche » (journal Z2M en debug, 19 novembre) :
 - **Cause principale, hors firmware** : Z2M avait reconfiguré le Miroir le 19 novembre à 06:59 avec un intervalle minimal de *reporting* de 60 s (on/off et niveau). Ses changements faits au bouton remontaient donc jusqu'à une minute plus tard ; des changements rapprochés étaient fusionnés. Après reconfiguration du *reporting* par l'utilisateur, la synchronisation fonctionne.
 - *Switch piscine* et *Dressing Livia* ne répondent pas, avec `NWK_NO_ROUTE` après la découverte : ils ne sont plus entendus depuis le 19 septembre et le 2 novembre, soit bien avant la migration.
 
-Ne jamais réécrire la capture Z-Stack d'avant migration ([rollback.md](rollback.md)).
+Ne jamais réécrire une ancienne capture complète après exploitation du réseau : voir [sauvegardes et restauration](restauration.md).
 
 ## Matrice
 

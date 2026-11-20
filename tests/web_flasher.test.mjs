@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { APP_END, CCFG, FLASH_SIZE, PAGE_SIZE, TiRom, crc32, sha256, installApplication, validateApplication } from '../web-flasher/rom.mjs';
+import { APP_END, CCFG, FLASH_SIZE, PAGE_SIZE, TiRom, crc32, sha256, installApplication, validateApplication, applicationInfo, encodeBackup, decodeBackup, restoreApplication } from '../web-flasher/rom.mjs';
 import { RomSimulator, fixtureCcfg, fixtureFirmware } from './fixtures/rom-simulator.mjs';
 
 async function connect(options = {}) {
@@ -19,6 +19,84 @@ async function prepared(options = {}) {
   return result;
 }
 const mutations = port => port.commands.filter(c => [0x21, 0x24, 0x26, 0x2c].includes(c.cmd));
+
+const ieee = '00124b0011223344';
+async function savedImage(original) {
+  const bytes = original.slice();
+  bytes.set(fixtureFirmware());
+  // Old network state must NEVER overwrite the current data and counter floor.
+  bytes[APP_END] ^= 1;
+  const json = await encodeBackup(bytes, ieee);
+  return { bytes, json, saved: await decodeBackup(new TextEncoder().encode(json), 'backup.json') };
+}
+
+test('portable JSON backup verifies its complete flash digest, identity and firmware metadata', async () => {
+  const bytes = new Uint8Array(FLASH_SIZE).fill(255); bytes.set(fixtureFirmware());
+  const { saved, json } = await savedImage(bytes);
+  assert.equal(saved.ieee, ieee);
+  assert.equal(saved.baud, 1000000);
+  assert.equal(saved.revision, 20261119);
+  assert.deepEqual(applicationInfo(saved.bytes.subarray(0, APP_END)), { baud: 1000000, revision: 20261119 });
+  const data = JSON.parse(json); data.sha256 = '0'.repeat(64);
+  await assert.rejects(decodeBackup(new TextEncoder().encode(JSON.stringify(data)), 'backup.json'), /SHA-256/);
+  await assert.rejects(decodeBackup(new Uint8Array(1024 * 1024 + 1), 'backup.json'), /volumineux/);
+  await assert.rejects(decodeBackup(new TextEncoder().encode('null'), 'backup.json'), /Format/);
+  await assert.rejects(decodeBackup(new TextEncoder().encode('{'), 'backup.json'), /JSON/);
+  await assert.rejects(decodeBackup(new TextEncoder().encode('{"metadata":{"format":"zigpy/open-coordinator-backup"}}'), 'coordinator_backup.json'), /Format/);
+});
+
+test('legacy full BIN needs its original IEEE filename; unsupported firmware and storage layouts are refused', async () => {
+  const bytes = new Uint8Array(FLASH_SIZE).fill(255); bytes.set(fixtureFirmware());
+  const name = `zbdongle-p-${ieee}-2026-11-19.bin`;
+  assert.equal((await decodeBackup(bytes, name)).legacy, true);
+  await assert.rejects(decodeBackup(bytes, 'renamed.bin'), /nom/);
+  await assert.rejects(decodeBackup(bytes.subarray(0, APP_END), name), /352/);
+  for (const offset of [0x100, 0x108, 0x10c, 0x110]) {
+    const incompatible = bytes.slice(); incompatible[offset] ^= 1;
+    await assert.rejects(decodeBackup(incompatible, name), /stockage compatible/);
+  }
+});
+
+test('restore writes saved firmware, keeps current network bytes and CCFG, and programs vectors last', async () => {
+  const { rom, port, backup } = await prepared();
+  try {
+    const { saved, bytes } = await savedImage(backup);
+    await restoreApplication(rom, saved, backup);
+    assert.deepEqual(port.memory.subarray(0, APP_END), bytes.subarray(0, APP_END));
+    assert.deepEqual(port.memory.subarray(APP_END), backup.subarray(APP_END));
+    assert.notEqual(port.memory[APP_END], saved.bytes[APP_END]);
+    assert.deepEqual(port.commands.filter(c => c.cmd === 0x21).at(-1).args.slice(0, 4), [0, 0, 0, 0]);
+    assert.equal(port.commands.some(c => c.cmd === 0x2c), false);
+    assert.equal(port.resets, 0);
+  } finally { await rom.close(); }
+});
+
+for (const failure of ['identity', 'digest', 'ccfg', 'changed', 'storage']) {
+  test(`restore refuses ${failure} before writing`, async () => {
+    const { rom, port, backup } = await prepared();
+    try {
+      const { saved } = await savedImage(backup);
+      if (failure === 'identity') saved.ieee = '0000000000000000';
+      if (failure === 'digest') saved.bytes[0x200] ^= 1;
+      if (failure === 'ccfg') { saved.bytes[CCFG] ^= 1; saved.hash = await sha256(saved.bytes); }
+      if (failure === 'changed') port.memory[APP_END] ^= 1;
+      if (failure === 'storage') { saved.bytes[0x10c] = 2; saved.hash = await sha256(saved.bytes); }
+      await assert.rejects(restoreApplication(rom, saved, backup));
+      assert.equal(mutations(port).length, 0);
+    } finally { await rom.close(); }
+  });
+}
+
+for (const options of [{ corruptReadback: true }, { disconnectAtSend: 3 }]) {
+  test(`restore failure leaves the device without a reset: ${JSON.stringify(options)}`, async () => {
+    const { rom, port, backup } = await prepared(options);
+    try {
+      const { saved } = await savedImage(backup);
+      await assert.rejects(restoreApplication(rom, saved, backup));
+      assert.equal(port.resets, 0);
+    } finally { await rom.close(); }
+  });
+}
 
 test('standard CRC32 vector, SHA256, and invalid application vectors', async () => {
   assert.equal(crc32(new TextEncoder().encode('123456789')), 0xcbf43926);

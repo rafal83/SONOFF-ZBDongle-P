@@ -78,7 +78,7 @@ def main():
         assert end >= 0, f'TI notice missing: {relative}'
         notices.append(relative + '\n' + text[:end + 2])
     members['licenses/THIRD_PARTY_NOTICES.txt'] = ('\n\n'.join(notices) + '\n').encode('utf-8')
-    for source in sorted((ROOT / 'docs/freertos-migration').glob('*.md')):
+    for source in sorted((ROOT / 'docs/firmware').glob('*.md')):
         members['docs/' + source.name] = source.read_bytes()
     members['README.txt'] = (
         'SONOFF ZBDongle-P CC2652P - experimental FreeRTOS build\n'

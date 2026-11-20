@@ -1,4 +1,6 @@
-# Phase B — architecture FreeRTOS native
+# Architecture FreeRTOS native
+
+L'application porte à l'adresse `0x100` un identifiant `ZBDP-FRT`, la version de cet en-tête, la version du format de stockage, le débit UART et la révision du build (entiers 32 bits little endian). Le build et le packaging vérifient ces valeurs ; le flasher s'en sert pour refuser une restauration incompatible. Toute évolution incompatible du stockage doit augmenter sa version et adapter le flasher.
 
 ## Arborescence
 

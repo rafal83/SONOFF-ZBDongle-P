@@ -1,4 +1,4 @@
-# Phases D et E — pile Zigbee native
+# Pile Zigbee native
 
 Le coordinateur natif (`zigbee/nwk/zb_coord.c`, `nwk_route.c`) assure l'arrivée des appareils, le Trust Center (clé réseau, clés de lien uniques à la Z-Stack 3.x, *Update Device*, tunnel APS), le routage maillé en concentrateur et les devoirs de routeur, ainsi que la persistance (`storage/nv_log.c`). Il est piloté par l'hôte via ZNP ([znp-compat.md](znp-compat.md)). Un appareil réel a rejoint, établi sa clé unique, survécu à un reset MCU et été piloté, d'abord par les diagnostics, puis par herdsman. Le maillage multi-sauts est validé en simulation (`test_mesh`).
 

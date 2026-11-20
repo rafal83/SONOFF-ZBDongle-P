@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT
- * Task layout of the FreeRTOS target (see docs/freertos-migration/architecture.md).
+ * Task layout of the FreeRTOS target (see docs/firmware/architecture.md).
  *
  *   prio 5  radio    owns the RF core driver, CPE events, TX chains
  *   prio 4  timers   FreeRTOS daemon (software timers)

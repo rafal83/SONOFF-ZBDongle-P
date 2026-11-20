@@ -12,7 +12,7 @@
  *
  * The model follows the TI register description (hw_crypto.h) and TI's
  * driver sequences; it is NOT the silicon. Behaviour on the MCU remains to
- * be measured (docs/freertos-migration/hardware-campaign.md).
+ * be measured (docs/firmware/hardware-campaign.md).
  */
 #define HAL_AES_HOST_MODEL 1
 #include "../hal/hal_aes.c"

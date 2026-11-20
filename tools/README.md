@@ -10,9 +10,9 @@
 | Compatibilité hôte | `setup_herdsman_lab.py`, `znp_sim_acceptance.cjs` |
 | Intégrité / distribution | `image.py`, `audit_distribution.py`, `package_freertos_ci.py` |
 | Web flasher | `package_web_flasher.py`, `tests/web_flasher.test.mjs` |
-| Sauvegarde / migration | `capture_dongle.py`, `freertos_lab_session.py`, `freertos_store.py`, `znp_migration_rehearsal.cjs` |
+| Sauvegarde et restauration | `capture_dongle.py`, `freertos_lab_session.py`, `freertos_store.py`, `znp_migration_rehearsal.cjs` |
 | Fuzzing | `fuzz_freertos.py`, `fuzz/Dockerfile` |
 
-Les données du dongle et clés restent sous `private/`, hors Git et hors paquets. Les outils de migration demandent une séance, une identité explicite et l'arrêt de Zigbee2MQTT. Un build n'effectue aucune action matérielle.
+Les données du dongle et clés restent sous `private/`, hors Git et hors paquets. Les outils matériels demandent une séance, une identité explicite et l'arrêt de Zigbee2MQTT. Le [flasher](../docs/firmware/restauration.md) restaure une application compatible en conservant les données réseau actuelles. Un build n'effectue aucune action matérielle.
 
 Voir [les licences](../docs/dependencies.md) et [les attributions](../NOTICE.md).

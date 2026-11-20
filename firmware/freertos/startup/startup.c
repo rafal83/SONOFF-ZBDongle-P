@@ -29,6 +29,14 @@ void TRNG_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
 
 typedef void (*vector_t)(void);
 
+/* Stable identity for restoring an application without rolling network data back.
+ * Increment storage_layout before any incompatible nv_log format change. */
+__attribute__((section(".imageInfo"), used))
+const struct {
+    char magic[8];
+    uint32_t version, storage_layout, uart_baud, revision;
+} image_info = { "ZBDP-FRT", 1u, 1u, BOARD_UART_BAUD, FRT_BUILD_REVISION };
+
 /* 16 system exceptions + 38 device interrupts (hw_ints.h: 16..53). */
 __attribute__((section(".resetVecs"), used))
 const vector_t vector_table[54] = {

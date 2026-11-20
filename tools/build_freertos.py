@@ -281,6 +281,10 @@ def firmware(exe, baud, hw_aes=False):
     sys.path.insert(0, str(ROOT / "tools"))
     import image
     memory = image.read_hex(hexfile)
+    identity = bytes(memory.get(a, 255) for a in range(0x100, 0x118))
+    if (identity[:8] != b'ZBDP-FRT' or
+            tuple(int.from_bytes(identity[a:a + 4], 'little') for a in (8, 12, 16, 20)) != (1, 1, baud, revision)):
+        raise SystemExit('Missing or invalid FreeRTOS application identity / storage layout')
     ccfg_match = None
     if PRODUCTION_HEX.exists():
         prod = image.read_hex(PRODUCTION_HEX)
@@ -304,16 +308,17 @@ def firmware(exe, baud, hw_aes=False):
             "host_unit_tests": "see build/freertos/host/host-tests.json",
             "arm_instruction_tests": "portable modules only, see build/freertos/arm-test/arm-tests.json",
             "executed_on_mcu": "this exact image: not recorded here; previous images of the branch: see "
-                               "docs/freertos-migration/validation.md",
+                               "docs/firmware/validation.md",
             "zigbee_stack": "native coordinator: join, Trust Center, unique TCLK, mesh routing (concentrator), "
-                            "persistence; limitations in docs/freertos-migration/znp-compat.md",
+                            "persistence; limitations in docs/firmware/znp-compat.md",
             "zigbee2mqtt_compatible": "laboratory: zigbee-herdsman 11.2.1 acceptance (simulator and dongle) and "
                                       "one real device paired and controlled; not a Z-Stack replacement for "
                                       "every feature",
-            "production_use": "only through `tools/freertos_lab_session.py migrate` with the owner's explicit "
-                              "consent (--confirm-production-migration)",
+            "production_use": "experimental; review hardware validation and compatibility before use; see "
+                              "docs/firmware/installation.md and docs/firmware/restauration.md",
         },
         "uart_baud": baud,
+        "image_identity": {"address": 0x100, "version": 1, "storage_layout": 1},
         "build_revision": revision,
         "compiler": "Zig cc 0.13.0 (clang/LLD)",
         "freertos_kernel": {"tag": lock["tag"], "commit": lock["commit"]},

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT
  * CC2652P1F memory map for the FreeRTOS target (LLD / GNU ld syntax).
- * FLASH_APP stops at 0x50000: the production NV (0x50000-0x55FFF) and the
+ * FLASH_APP stops at 0x48000: the store, NV (0x50000-0x55FFF) and the
  * spare page are never part of this image. CCFG is the last 88 bytes.
  */
 ENTRY(Reset_Handler)
@@ -15,6 +15,8 @@ __msp_stack_size = 0x800;
 SECTIONS {
     .text : ALIGN(4) {
         KEEP(*(.resetVecs))
+        . = 0x100;
+        KEEP(*(.imageInfo))
         *(.text*)
         *(.rodata*)
         . = ALIGN(4);
@@ -51,4 +53,5 @@ _flash_used = LOADADDR(.data) + SIZEOF(.data);
 _sram_used = _estack - ORIGIN(SRAM);
 ASSERT(_flash_used <= 0x48000, "Image would overlap the nv_log store / production NV region")
 ASSERT(SIZEOF(.ccfg) == 88, "Missing or wrong CC26x2 CCFG")
+ASSERT(image_info == 0x100, "Wrong application identity address")
 ASSERT(_estack <= ORIGIN(SRAM) + LENGTH(SRAM), "SRAM overflow")

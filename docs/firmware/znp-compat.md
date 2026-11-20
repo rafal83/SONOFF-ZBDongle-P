@@ -45,9 +45,9 @@ La révision ≥ 20210430 active la gestion de la LED côté herdsman ; `ledCont
 | Simulateur hôte (`firmware/freertos/sim/znp_sim.c`, la pile portable du firmware en TCP) + **vrai** `ZStackAdapter` herdsman 11.2.1 ([`tools/znp_sim_acceptance.cjs`](../../tools/znp_sim_acceptance.cjs)) | **17 étapes réussies** : premier démarrage `reset` (formation), *permit join*, version, IEEE, paramètres réseau, descripteurs (extrémités 1 et 242), sauvegarde avec graine TCLK, reset, `resumed`, boucle AF, `restoreBackup` avec deux appareils (clé dérivée de la graine, clé explicite) **rendus à l'identique**, `resumed` |
 | Dongle (COM8, 115200 bauds) avec le même script `--serial` | **17 étapes réussies**, redémarrages MCU réels |
 | Dongle + `Controller` herdsman complet ([`tools/znp_pair_test.cjs`](../../tools/znp_pair_test.cjs)) | Ampoule TS0505A appairée, **interview complète**, 4 bascules acquittées, lecture `onOff` |
-| Répétition de migration de la **sauvegarde Z2M de production** ([`tools/znp_migration_rehearsal.cjs`](../../tools/znp_migration_rehearsal.cjs)) | `restored` puis `resumed` ; IEEE, PAN, PAN étendu, canal, clé et séquence, graine TCLK identiques ; compteur NWK ≥ sauvegarde + 2 500 ; **130 appareils transmis identiques, 129 clés de lien et compteurs** ; voir [migration.md](migration.md) |
+| Restauration de la **sauvegarde Z2M de production** en simulateur ([`tools/znp_migration_rehearsal.cjs`](../../tools/znp_migration_rehearsal.cjs)) | `restored` puis `resumed` ; IEEE, PAN, PAN étendu, canal, clé et séquence, graine TCLK identiques ; compteur NWK ≥ sauvegarde + 2 500 ; **130 appareils transmis identiques, 129 clés de lien et compteurs** ; voir [restauration.md](restauration.md) |
 
-## Conditions avant la migration du réseau réel
+## Vérifications de reprise d'un réseau
 
 | Condition | État |
 |---|---|
@@ -58,4 +58,4 @@ La révision ≥ 20210430 active la gestion de la LED côté herdsman ; `ledCont
 | Essai complet en laboratoire puis retour arrière vers Z-Stack | Fait sur le dongle unique : 7 séances avec restauration octet pour octet (voir [hardware-session-20261118.md](hardware-session-20261118.md)) |
 | PA 20 dBm (`transmit_power: 20` en production) | **Validé sur le matériel** (séance 10, après correction du lien d'overrides TX20) |
 | Image 1 000 000 bauds avec herdsman | **Validée sur le matériel** (séance 10) |
-| Accord explicite du propriétaire du réseau | **Requis** : `migrate` refuse sans `--confirm-production-migration` |
+| Stockage et compteurs actuels pendant une restauration de firmware | Conservés par le [Web Flasher](restauration.md) ; une sauvegarde réseau native doit être traitée séparément |
