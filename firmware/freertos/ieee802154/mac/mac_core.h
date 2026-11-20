@@ -29,12 +29,18 @@
 #include "core_index.h"
 #include "mac_frame.h"
 
-#define MAC_POOL_SLOTS 24u
+/* Direct transmit queue sized for the host's concurrency: zigbee-herdsman
+ * sends up to 16 requests at once to a Z-Stack 3.x adapter, on top of the
+ * stack's own traffic (Link Status, route discovery, relays, APS ACKs).
+ * With 8, bursts overflowed and the frames were lost (production bench,
+ * 20 November: 32 simultaneous reads, about half lost); Z-Stack queues up
+ * to 48 NWK buffers. */
+#define MAC_POOL_SLOTS 48u
 /* Indirect transactions may wait 7.68 s each: they never take more than
  * this many frame buffers, so direct traffic (link status, routed frames,
  * many-to-one requests) always finds MAC_POOL_SLOTS - MAC_INDIRECT_SLOTS. */
 #define MAC_INDIRECT_SLOTS 16u
-#define MAC_DIRECT_QUEUE 8u
+#define MAC_DIRECT_QUEUE 32u
 #define MAC_URGENT_QUEUE 4u
 #define MAC_MAX_FRAME_RETRIES 3u
 #define MAC_PERSISTENCE_MS 7680u     /* 0x01F4 unit periods x 15.36 ms */
