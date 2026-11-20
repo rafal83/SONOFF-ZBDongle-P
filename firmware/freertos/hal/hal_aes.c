@@ -64,6 +64,12 @@ static uint32_t dma_aad[HAL_AES_CCM_MAX / 4], dma_data[HAL_AES_CCM_MAX / 4], dma
 /* Key check: software E(key, 0^128) of the loaded key, computed once per load. */
 static uint8_t kat_ref[16];
 static bool kat_ready;
+/* The key check runs at every key load, after any error (kat_ready reset by
+ * recover), and then once every HAL_AES_KEY_CHECK_EVERY operations with the
+ * same key: a key silently lost in between is caught by the backend's
+ * re-verification of every rejected frame and by its random audits. */
+#define HAL_AES_KEY_CHECK_EVERY 16u
+static uint32_t ops_since_check;
 static hal_aes_stats_t stats;
 static volatile uint32_t busy;
 
@@ -236,7 +242,11 @@ static void put_words(uint32_t first_reg, const uint8_t b[16]) {
 
 static bool ccm_locked(const uint8_t key[16], bool encrypt, const uint8_t nonce[13], const uint8_t *aad,
                        unsigned aad_len, const uint8_t *in, unsigned len, uint8_t *out, uint8_t tag[4]) {
-    if (!load_key(key) || !key_check(key)) return false;
+    if (!load_key(key)) return false;
+    if (!kat_ready || ++ops_since_check >= HAL_AES_KEY_CHECK_EVERY) {
+        if (!key_check(key)) return false;
+        ops_since_check = 0;
+    }
     WR(CRYPTO_O_IRQCLR, CRYPTO_IRQCLR_RESULT_AVAIL | CRYPTO_IRQCLR_DMA_IN_DONE | CRYPTO_IRQSTAT_DMA_BUS_ERR_M);
     WR(CRYPTO_O_IRQEN, CRYPTO_IRQEN_DMA_IN_DONE_M | CRYPTO_IRQEN_RESULT_AVAIL_M);
     WR(CRYPTO_O_ALGSEL, CRYPTO_ALGSEL_AES_M);
@@ -281,10 +291,11 @@ static bool ccm_locked(const uint8_t key[16], bool encrypt, const uint8_t nonce[
     return true;
 }
 
-static void wipe_ccm_buffers(void) {
-    wipe(dma_aad, sizeof dma_aad);
-    wipe(dma_data, sizeof dma_data);
-    wipe(dma_res, sizeof dma_res);
+/* Only what the operation used (bounded by the buffers): the rest is zero. */
+static void wipe_ccm_buffers(unsigned aad_len, unsigned len) {
+    wipe(dma_aad, aad_len < sizeof dma_aad ? aad_len : sizeof dma_aad);
+    wipe(dma_data, len < sizeof dma_data ? len : sizeof dma_data);
+    wipe(dma_res, len < sizeof dma_res ? len : sizeof dma_res);
 }
 
 bool hal_aes_ccm(const uint8_t key[16], bool encrypt, const uint8_t nonce[13], const uint8_t *aad, unsigned aad_len,
@@ -297,7 +308,7 @@ bool hal_aes_ccm(const uint8_t key[16], bool encrypt, const uint8_t nonce[13], c
         wipe(dma_in, sizeof dma_in);
         wipe(dma_out, sizeof dma_out);
     }
-    wipe_ccm_buffers();
+    wipe_ccm_buffers(aad_len, len);
     unlock();
     return ok;
 }

@@ -911,6 +911,21 @@ int main(void) {
         CHECK(aps_up == up0);
         CHECK(coord.stats.broadcast_duplicates == dup0 + 2);
         CHECK(coord.stats.nwk_auth_failures == auth0);
+        /* Copies are recognised before decryption: even a forged one (same
+         * NWK source and sequence, garbage MIC) is just dropped. */
+        CHECK(coord.stats.bcast_dup_unopened >= 2);
+        uint32_t unopened = coord.stats.bcast_dup_unopened;
+        {
+            nwk_header_t h = m.nwk;
+            h.security = false;
+            h.radius--;
+            uint8_t forged[MAC_MAX_PAYLOAD];
+            memcpy(forged, m.payload, m.len);
+            forged[0] ^= 0xFF;                    /* other content: its MIC cannot match */
+            hop_send(&r2, &h, forged, m.len, 0xFFFF, false);   /* unsecured copy */
+            hop_send(&r, &h, m.payload, m.len, 0xFFFF, true);
+        }
+        CHECK(aps_up == up0 && coord.stats.nwk_auth_failures == auth0 && coord.stats.bcast_dup_unopened >= unopened + 1);
         drain();
     }
 

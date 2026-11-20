@@ -1649,6 +1649,19 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
         c->stats.nwk_malformed++;
         return;
     }
+    /* Copy of a broadcast already received (or sent by us): the BTT only
+     * holds AUTHENTICATED broadcasts, so this frame is either a relayed copy
+     * or a forgery, dropped either way; no CCM* needed (the relayed copies
+     * of every broadcast arrive from each neighbour: most of the receive
+     * work under load). The passive acknowledgement is credited without
+     * authentication: a forged copy could at worst spare one retransmission
+     * of a broadcast, which a jammer in radio range can prevent anyway. */
+    if (nwk_is_broadcast(h.dst) && nwk_btt_seen(&c->routes, h.src, h.seq, c->now_ms)) {
+        c->stats.broadcast_duplicates++;
+        c->stats.bcast_dup_unopened++;
+        if (f->src_mode == MAC_ADDR_SHORT) bcast_heard(c, h.src, h.seq, f->src_short);
+        return;
+    }
     uint16_t dev = nwk_devices_find_ext(&c->devices, aux.source);
     size_t payload_len = 0;
     if (!core_security_open_authenticated_peer(&c->security, frame, f->payload_len, h.header_len, &payload_len)) {

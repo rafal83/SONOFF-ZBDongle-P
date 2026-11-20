@@ -201,6 +201,14 @@ bool nwk_neighbor_tx_result(nwk_routes_t *t, uint16_t addr, bool ok) {
     return true;
 }
 
+bool nwk_btt_seen(const nwk_routes_t *t, uint16_t src, uint8_t seq, uint32_t now_ms) {
+    for (unsigned i = 0; i < NWK_BTT_SIZE; i++) {
+        if (!t->btt[i].used || now_ms - t->btt[i].ms > NWK_BTT_MS) continue;
+        if (t->btt[i].src == src && t->btt[i].seq == seq) return true;
+    }
+    return false;
+}
+
 bool nwk_btt_accept(nwk_routes_t *t, uint16_t src, uint8_t seq, uint32_t now_ms) {
     for (unsigned i = 0; i < NWK_BTT_SIZE; i++) {
         if (!t->btt[i].used || now_ms - t->btt[i].ms > NWK_BTT_MS) continue;

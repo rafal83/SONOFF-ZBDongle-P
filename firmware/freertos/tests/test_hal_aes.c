@@ -26,7 +26,7 @@ enum {
     M_OK, M_DMA_BUS_ERR, M_NEVER_DONE, M_KEY_WR_ERR, M_KEY_RD_ERR, M_KEY_RD_STUCK,
     M_DMA_STUCK, M_IRQ_STUCK, M_KEY_NOT_WRITTEN, M_OUT_DMA_LATE,
     /* native CCM* */
-    M_STALE_KEY, M_TAG_STALE, M_CTX_NEVER, M_AAD_NEVER, M_FLIP_OUT
+    M_STALE_KEY, M_TAG_STALE, M_CTX_NEVER, M_AAD_NEVER, M_FLIP_OUT, M_KEY_SWAP
 };
 static struct {
     uint32_t reg[0x800 / 4];
@@ -104,6 +104,11 @@ static void ccm_op(void) {
         aes128_clear(&a);
     }
     if (fault_now(M_FLIP_OUT) || m.flip_always) res[0] ^= 0x01u;   /* silent: nothing reported */
+    if (fault_now(M_KEY_SWAP)) {   /* engine key silently replaced, for the next operations */
+        for (unsigned i = 0; i < 16; i++) m.engine_key[i] ^= 0xA5u;
+        for (unsigned i = 0; i < 8; i++)
+            for (unsigned k = 0; k < 16; k++) m.keystore[i][k] ^= 0xA5u;
+    }
     for (uint32_t i = 0; i < len && i < sizeof res; i++) out[i] = res[i];
     if (!fault_now(M_TAG_STALE))
         REG(CRYPTO_O_AESTAGOUT0) = (uint32_t)tag[0] | (uint32_t)tag[1] << 8 | (uint32_t)tag[2] << 16 | (uint32_t)tag[3] << 24;
@@ -208,6 +213,7 @@ static void fresh_model(void) {
     memset(&m, 0, sizeof m);
     key_loaded = false;          /* driver state (static in hal_aes.c) */
     kat_ready = false;
+    ops_since_check = 0;
     memset(&stats, 0, sizeof stats);
 }
 
@@ -430,6 +436,31 @@ static void native_checks(void) {
            "(%u stale tags, %u key checks failed), %u forged MICs rejected, %u audits\n",
            (unsigned)cs.native_ops, injected, (unsigned)cs.sw_redo, (unsigned)cs.tag_suspect,
            (unsigned)st.key_check_failures, forged, (unsigned)cs.hw_audits);
+
+    /* 3b. Engine key silently replaced while the driver's key cache still
+     *     says "loaded": caught by the periodic key check within
+     *     HAL_AES_KEY_CHECK_EVERY operations, the key reloaded, results right. */
+    fresh_model();
+    {
+        uint8_t key[16] = {0x31}, nonce[13] = {0}, aad[8] = {1}, pt[24] = {2}, out[24], ref[24], tag[4], mic[4];
+        CHECK(hal_aes_ccm(key, true, nonce, aad, sizeof aad, pt, sizeof pt, out, tag));
+        m.fault = M_KEY_SWAP;
+        CHECK(hal_aes_ccm(key, true, nonce, aad, sizeof aad, pt, sizeof pt, out, tag));   /* swap happens here */
+        m.fault = M_OK;
+        unsigned n = 0;
+        hal_aes_get_stats(&st);
+        while (st.key_check_failures == 0 && n < HAL_AES_KEY_CHECK_EVERY + 1u) {
+            nonce[0] = (uint8_t)++n;
+            (void)hal_aes_ccm(key, true, nonce, aad, sizeof aad, pt, sizeof pt, out, tag);
+            hal_aes_get_stats(&st);
+        }
+        CHECK(st.key_check_failures == 1 && n <= HAL_AES_KEY_CHECK_EVERY);
+        nonce[0] = 0x77;
+        CHECK(zb_ccm_backend_sw(0, true, key, nonce, aad, sizeof aad, pt, sizeof pt, ref, mic));
+        CHECK(hal_aes_ccm(key, true, nonce, aad, sizeof aad, pt, sizeof pt, out, tag));   /* reloaded */
+        CHECK(!memcmp(out, ref, sizeof ref) && !memcmp(tag, mic, 4));
+        printf("hal_aes: engine key silently replaced: detected after %u operations\n", n);
+    }
 
     /* 4. Silent corruption of every output (nothing reported by the engine):
      *    the random audit catches it and abandons the accelerator. */

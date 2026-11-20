@@ -318,15 +318,17 @@ int main(void) {
     unsigned joined_before = joined_events;
     zb_coord_rx(&coord, mpdu, (uint8_t)n, 180, -60);
     CHECK(joined_events == joined_before + 1);           /* fresh counter: accepted (re-announce) */
-    uint32_t auth_fail = coord.stats.nwk_auth_failures;
+    uint32_t auth_fail = coord.stats.nwk_auth_failures, unopened = coord.stats.bcast_dup_unopened;
     /* Exact replay. A broadcast carries no MAC ACK request, so the MAC does
-     * not de-duplicate it: the NWK frame-counter check must reject it. */
+     * not de-duplicate it: its (source, sequence) is in the broadcast
+     * transaction table, it is dropped before any decryption. */
+    zb_coord_rx(&coord, mpdu, (uint8_t)n, 180, -60);
+    CHECK(coord.stats.bcast_dup_unopened == unopened + 1 && joined_events == joined_before + 1);
+    CHECK(coord.stats.nwk_auth_failures == auth_fail);
+    n = dev_announce(&router, router.ext, mpdu);
+    mpdu[n - 1] ^= 0x01;                                  /* MIC altered (new sequence): authenticated, refused */
     zb_coord_rx(&coord, mpdu, (uint8_t)n, 180, -60);
     CHECK(coord.stats.nwk_auth_failures == auth_fail + 1 && joined_events == joined_before + 1);
-    n = dev_announce(&router, router.ext, mpdu);
-    mpdu[n - 1] ^= 0x01;                                  /* MIC altered */
-    zb_coord_rx(&coord, mpdu, (uint8_t)n, 180, -60);
-    CHECK(coord.stats.nwk_auth_failures == auth_fail + 2 && joined_events == joined_before + 1);
 
     /* A node unknown to the Trust Center but holding the network key (e.g. a
      * device herdsman's restore could not carry) is a network member: its
