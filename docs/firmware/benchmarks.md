@@ -19,7 +19,8 @@ Banc en lecture seule `tools/znp_prod_bench.cjs`, dongle de production sur COM8,
 
 | Image | Conditions | Lecture isolée, médiane / p95 | Rafales réussies | Part des routeurs joignables |
 |---|---|---|---|---|
-| **Notre 1e7b645** (store 2 × 56 Kio, CCM\* natif allégé) | 29 routeurs, routeurs morts retirés, 20 dBm, réessais herdsman, délai 10 s | 65 ms / 221 ms | 221 / 232 | **95,3 %** |
+| **Notre 2f787a6** (reroutage Network Status, CCM\* optimisé) | 29 routeurs, 20 dBm, réessais herdsman, délai 10 s | 68 ms / 168 ms | 223 / 232 | **96,1 %** (3 rafales sur 8 à 29 / 29) |
+| Notre 1e7b645 (store 2 × 56 Kio, CCM\* natif allégé) | idem | 65 ms / 221 ms | 221 / 232 | 95,3 % (2 rafales sur 8 à 29 / 29) |
 | Notre 72bc038 (CCM\* natif) | idem | 78 ms / 226 ms | 207 / 232 | 89,2 % |
 | Notre 57f17bc | 32 routeurs dont 4 morts, 20 dBm, réessais, 10 s | 66 ms / 218 ms | 209 / 256 | 93,3 % (209 / 224) |
 | Notre 975a2b0 (file MAC de 32) | 32 routeurs dont 4 morts, 5 dBm, sans réessai, 4 s | 74 ms / 125 ms | 103 / 160 | 73,6 % |
@@ -35,7 +36,7 @@ Lecture :
   - des tours de retransmission MAC ;
   - la coalescence des Route Request ;
   - la puissance d'émission à 20 dBm, la valeur que Zigbee2MQTT impose.
-- **Les échecs restants ne sont pas internes au coordinateur.** Pour 72bc038 comme pour 1e7b645, tous sont des « pas de réponse après une confirmation réussie ». Les compteurs du coordinateur ne montrent aucune perte interne : file MAC jamais pleine, rien d'abandonné. Avec 1e7b645, 4 des 11 échecs viennent du seul routeur 0x146d.
+- **Les échecs restants ne sont pas internes au coordinateur.** Pour 72bc038 comme pour 1e7b645 et 2f787a6, tous sont des « pas de réponse après une confirmation réussie ». Les compteurs du coordinateur ne montrent aucune perte interne : file MAC jamais pleine, rien d'abandonné. Avec 2f787a6, le routeur 0x146d (volet Profalux qui échouait 4 fois sur 8 sous 1e7b645) réussit 7 fois sur 8 grâce au reroutage réactif et à la réémission automatique sur Network Status (`net_status_retries = 7`) ; le routeur 0x7491 concentre désormais 4 des 9 échecs restants.
 - **La lecture isolée varie avec l'état du réseau,** de 43 à 78 ms selon la session. L'écart avec Koenkk (51 ms) est du même ordre que cette variation. Une comparaison serrée exige des sessions entrelacées.
 - **La durée d'une rafale n'est pas comparable :** le délai d'attente est de 10 s chez nous et de 4 s pour Koenkk.
 
@@ -50,8 +51,9 @@ Cycles DWT pour une trame de 22 octets d'en-tête authentifié et 40 octets de c
 | AES logiciel | 74 769 | 1,56 ms |
 | Moteur AES par blocs (DMA) et contrôle logiciel | 21 609 | 0,45 ms |
 | CCM\* natif, 72bc038 : la mesure incluait un contrôle logiciel | 8 984 | 0,19 ms |
-| **CCM\* natif, 1e7b645** (en production) : banc de 16 trames, hors contrôle logiciel | **3 171** | **66 µs** |
-| **CCM\* natif, 1e7b645 en trafic réel**, contrôles logiciels amortis | **≈ 3 700** | ≈ 77 µs |
+| CCM\* natif, 1e7b645 : banc de 16 trames, hors contrôle logiciel | 3 171 | 66 µs |
+| **CCM\* natif, 2f787a6** (en production) : banc de 16 trames, hors contrôle logiciel | **1 950** | **40,6 µs** |
+| **CCM\* natif, 2f787a6 en trafic réel**, contrôles logiciels amortis | **≈ 1 650** | ≈ 34 µs |
 | ZeroStack (publié par SMLIGHT) | 3 824 à 3 968 | ≈ 80 µs |
 | Z-Stack « stock » selon SMLIGHT (« NV vieillie ») | 532 182 | 11,1 ms |
 
@@ -59,16 +61,16 @@ Cycles DWT pour une trame de 22 octets d'en-tête authentifié et 40 octets de c
 - la copie des données pendant le traitement de l'en-tête ;
 - l'effacement des tampons par mots.
 
-**Trafic réel**, après un banc de production de 1 846 opérations natives :
+**Trafic réel**, après un banc de production de 2 077 opérations natives sous 2f787a6 :
 
 | Mesure | Valeur |
 |---|---|
-| Temps moyen passé dans le moteur | 1 734 cycles |
-| — préparation (clé, contrôle de clé, registres) | 854 cycles |
-| — en-tête authentifié (AAD) | 219 cycles |
-| — données | 231 cycles |
-| — fin (contexte, MIC, recopie) | 431 cycles |
-| Contrôles logiciels | 13, soit 1 sur 141 : environ 530 cycles amortis par trame |
+| Temps moyen passé dans le moteur | 1 119 cycles (contre 1 734 sous 1e7b645) |
+| — préparation (clé en cache, registres IV directs) | 546 cycles (-36 %) |
+| — en-tête authentifié (AAD, mots 32-bit) | 164 cycles |
+| — données | 235 cycles |
+| — fin (SAVED_CONTEXT_RDY direct, lecture tag 32-bit, recopie mots) | 174 cycles (-60 %) |
+| Contrôles logiciels | 15 sur 2 077, soit 1 sur 138 : environ 540 cycles amortis par trame |
 | Écarts détectés | 0 |
 | Erreurs DMA ou de clé | 0 |
 | Trames repassées en logiciel | 0 |
