@@ -733,6 +733,19 @@ static void handle_util(znp_t *z, uint8_t cmd, const uint8_t *in, uint8_t n) {
         srsp(z, S_UTIL, cmd, out, 5);
         return;
     }
+    /* assocRemove / assocAdd (Koenkk's Z-Stack, revision >= 20200805 /
+     * 20201026, which our revision announces): herdsman removes a child whose
+     * indirect frames expire, retries through a route discovery, and adds it
+     * back if that fails too. An RPC error here made the whole command fail. */
+    case 0x63:   /* assocRemove(ieee) */
+        if (n != 8) break;
+        srsp_status(z, S_UTIL, cmd, zb_coord_child_remove(z->coord, get64(in)) ? ST_SUCCESS : ST_FAILURE);
+        return;
+    case 0x64:   /* assocAdd(ieee, nwkaddr, noderelation) */
+        if (n != 11) break;
+        srsp_status(z, S_UTIL, cmd, zb_coord_child_add(z->coord, get64(in), get16(in + 8), in[10]) ? ST_SUCCESS
+                                                                                                  : ST_FAILURE);
+        return;
     default:
         rpc_error(z, 2, T_SREQ | S_UTIL, cmd);   /* incl. ledControl: no LED driver */
         return;

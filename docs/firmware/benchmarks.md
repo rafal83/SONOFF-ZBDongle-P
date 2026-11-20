@@ -212,7 +212,10 @@ Scénarios : 20 transactions/s, dont 30 % vers les appareils endormis (50 % pour
 | 20 endormis, réveils simultanés | 100 → 100 % | 3,8 → 2,5 s | 190 → 4 |
 | 40 endormis, réveils simultanés | 100 → 99,7 % | 5,9 → 4,8 s | 244 → 1 |
 | 20 endormis derrière un routeur congestionné (file de 2, 4 trames indirectes) | 66,6 → 77,3 % | — | 52 → 1 |
+| 10 endormis, un enfant passe derrière un routeur sans réassociation entendue (herdsman : `assocRemove`) | 94,8 → 99,5 % | — | — |
 | 20 endormis, parent perdu à 8 s, réassociation | 97,3 → 98,5 % | 8,1 → 1,5 s | 154 → 3 |
+
+Pour l'enfant qui change de parent, la version d'avant répondait à `assocRemove` par une erreur RPC : herdsman abandonnait la commande. Ses trames s'accumulaient dans notre file indirecte jusqu'à expirer.
 
 Les latences de plusieurs secondes sont celles du *poll* (2 s) et de la fenêtre herdsman, pas du coordinateur.
 

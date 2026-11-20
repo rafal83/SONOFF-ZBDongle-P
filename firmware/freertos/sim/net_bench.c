@@ -75,7 +75,7 @@ static struct {
     double rate, duration_s, warmup_s, loss_pct, sed_share, reports;
     unsigned hops[3], seds_coord, seds_router, concurrency, rx_entries, znp_out_q, router_indirect;
     unsigned poll_ms, sed_sync, resp_min_ms, resp_max_ms, sed_resp_ms, fast_polls, fast_poll_ms, sed_wait_ms;
-    unsigned baud, timeout_ms, sed_parent, kill_router, kill_at_s, congest_router, congest_queue, spatial_reuse;
+    unsigned baud, timeout_ms, sed_parent, sed_move_node, sed_move_to, sed_move_at_s, kill_router, kill_at_s, congest_router, congest_queue, spatial_reuse;
     unsigned seed, hw_aes, tick_every_wake, guessed, quiet, mesh, stall_at_ms, stall_ms, stall_count;
     /* instructions per step (tools/bench_transaction_cpu.py), CCM* excluded */
     unsigned i_af, i_confirm, i_rx, i_dup, i_poll, i_tick;
@@ -93,6 +93,11 @@ static struct {
 };
 #define CPI 1.4641
 #define CPU_MHZ 48.0
+#ifdef ZB_ED_TIMEOUT_DEFAULT
+#define AGING_STAT(c, f) ((c).stats.f)
+#else
+#define AGING_STAT(c, f) 0u
+#endif
 /* Counters that only exist in the current firmware (0 when built against an older one). */
 #ifdef ZB_ANSWERED
 #define ZCL_DROPPED(c) ((c).stats.zcl_answers_dropped)
@@ -115,7 +120,7 @@ static bool chance(double pct) { return pct > 0 && (rnd() % 1000000u) < (unsigne
 enum {
     EV_CPU_DONE, EV_CPU_TIMER, EV_CCA, EV_TX_END, EV_ACK_END, EV_ACK_WAIT, EV_NODE_PROC, EV_SED_POLL,
     EV_SED_WAIT_END, EV_HOST_GEN, EV_HOST_TIMER, EV_UART_IN_DONE, EV_UART_OUT_DONE, EV_KILL, EV_NODE_KICK,
-    EV_LINK_STATUS, EV_STALL, EV_REPORT,
+    EV_LINK_STATUS, EV_STALL, EV_REPORT, EV_MOVE,
 };
 typedef struct { us_t t; uint64_t seq; uint8_t type; int a, b; uint32_t gen; } event_t;
 static event_t *heap;
@@ -237,7 +242,7 @@ static struct {
     unsigned direct_max, urgent_max, pool_max, indirect_max, track_max, disc_max, recent_max, confirms_max;
     unsigned host_backlog_max, host_inflight_max;
     unsigned router_drops, router_queue_full, router_retries, router_nwk_retries, child_q_full, child_expired;
-    unsigned sed_polls, sed_fp_miss, sed_data, sed_rejoins, sed_fp_set, sed_rejoin_retries;
+    unsigned sed_polls, sed_fp_miss, sed_data, sed_rejoins, sed_fp_set, sed_rejoin_retries, sed_moves, assoc_removes, assoc_rpc_errors;
     unsigned dup_responses, stray_confirms, wrong_confirms, handle_collisions, response_timeouts, btt_seq_reuse;
     unsigned confirm_by_status[256];
 } st;
@@ -468,7 +473,8 @@ typedef struct {
     uint8_t outcome;      /* 0 pending, 1 ok, 2 failed confirm, 3 timeout */
     uint8_t last_status;
     uint32_t timer_gen;
-    bool measured, early_confirm;
+    bool measured, early_confirm, assoc_removed;
+    uint8_t util_op;   /* 1: assocRemove to send before the next attempt */
     uint8_t handle;
 } txn_t;
 static txn_t txn[MAX_TX];
@@ -1140,6 +1146,17 @@ static void host_pump(void) {
 static void host_send_sreq(unsigned t) {
     txn_t *x = &txn[t];
     node_t *d = &node[x->target];
+    if (x->util_op == 1) {   /* herdsman: UTIL assocRemove(ieee), then the attempt */
+        npi_t u = {0x27, 0x63, 8, {0}};
+        for (unsigned i = 0; i < 8; i++) u.p[i] = (uint8_t)(d->ext >> (8 * i));
+        x->state = 7;
+        st.assoc_removes++;
+        us_t start = now > uart_in_free ? now : uart_in_free;
+        uart_in_free = start + uart_time(u.len);
+        znp_in_q[(zin_h + zin_n) % 64u] = u;
+        push_ev(uart_in_free, EV_UART_IN_DONE, (int)t, 0, 0);
+        return;
+    }
     x->transid = ++host_transid;
     x->tsn = ++host_tsn;
     if (!x->first_send) x->first_send = now;
@@ -1192,6 +1209,22 @@ static void host_timer(unsigned t, uint32_t gen) {
     }
 }
 static void host_on_frame(const npi_t *f) {
+    if (sreq_busy >= 0 && txn[sreq_busy].state == 7 && ((f->cmd0 == 0x67 && f->cmd1 == 0x63) ||
+                                                        (f->cmd0 == 0x60 && f->cmd1 == 0x00))) {
+        txn_t *x = &txn[sreq_busy];
+        if (f->cmd0 == 0x60) {   /* RPC error: herdsman's request throws, the command fails */
+            st.assoc_rpc_errors++;
+            x->last_status = 0xFE;
+            unsigned t = (unsigned)sreq_busy;
+            sreq_busy = -1;
+            host_finish(t, 2);
+            host_pump();
+            return;
+        }
+        x->util_op = 0;
+        host_send_sreq((unsigned)sreq_busy);   /* the attempt itself, still our SREQ turn */
+        return;
+    }
     if (f->cmd0 == 0x64 && f->cmd1 == 0x01) {                    /* SRSP of AF_DATA_REQUEST */
         if (sreq_busy >= 0) {
             txn_t *x = &txn[sreq_busy];
@@ -1244,6 +1277,16 @@ static void host_on_frame(const npi_t *f) {
             bool recoverable = status == 0xCD || status == 0xE9 || status == 0xE1 || status == 0xF0 || status == 0x11 ||
                                status == 0x1A;
             if (!recoverable || x->attempts >= 5) { host_finish(t, 2); return; }
+            if (status == 0xF0 && x->attempts == 2 && !x->assoc_removed) {
+                /* herdsman: second MAC_TRANSACTION_EXPIRED -> assocGetWithAddress,
+                 * assocRemove, new attempt at once (through a route discovery) */
+                x->assoc_removed = true;
+                x->util_op = 1;
+                x->state = 4;
+                x->timer_gen++;
+                host_queue_sreq(t);
+                return;
+            }
             x->state = 4;
             push_ev(now + S(2), EV_HOST_TIMER, (int)t, 0, ++x->timer_gen);
             return;
@@ -1360,7 +1403,7 @@ static int parse_args(int argc, char **argv) {
         OPT_U("--poll-ms", poll_ms) OPT_U("--sed-sync", sed_sync) OPT_U("--resp-min", resp_min_ms)
         OPT_U("--resp-max", resp_max_ms) OPT_U("--fast-polls", fast_polls) OPT_U("--sed-wait", sed_wait_ms)
         OPT_U("--baud", baud) OPT_U("--timeout", timeout_ms) OPT_U("--kill-router", kill_router)
-        OPT_U("--kill-at", kill_at_s) OPT_U("--sed-parent", sed_parent) OPT_U("--congest-router", congest_router) OPT_U("--congest-queue", congest_queue)
+        OPT_U("--kill-at", kill_at_s) OPT_U("--sed-parent", sed_parent) OPT_U("--sed-move-node", sed_move_node) OPT_U("--sed-move-to", sed_move_to) OPT_U("--sed-move-at", sed_move_at_s) OPT_U("--congest-router", congest_router) OPT_U("--congest-queue", congest_queue)
         OPT_U("--spatial-reuse", spatial_reuse) OPT_U("--seed", seed) OPT_U("--hw-aes", hw_aes)
         OPT_U("--tick-every-wake", tick_every_wake) OPT_U("--guessed", guessed) OPT_U("--quiet", quiet) OPT_U("--mesh", mesh) OPT_U("--stall-at", stall_at_ms) OPT_U("--stall-ms", stall_ms) OPT_U("--stall-count", stall_count)
         OPT_U("--i-af", i_af) OPT_U("--i-confirm", i_confirm) OPT_U("--i-rx", i_rx) OPT_U("--i-dup", i_dup)
@@ -1443,6 +1486,8 @@ int main(int argc, char **argv) {
     if (cfg.reports > 0) push_ev(S(cfg.warmup_s) - S(1), EV_REPORT, 0, 0, 0);
     for (unsigned k = 0; k < cfg.stall_count; k++)   /* one stall per measured second from --stall-at */
         push_ev(MS(cfg.stall_at_ms) + S(k), EV_STALL, 0, 0, 0);
+    if (cfg.sed_move_node && (int)cfg.sed_move_node < nodes && cfg.sed_move_to && (int)cfg.sed_move_to < nodes)
+        push_ev(S(cfg.sed_move_at_s), EV_MOVE, (int)cfg.sed_move_node, (int)cfg.sed_move_to, 0);
     if (cfg.kill_router && (int)cfg.kill_router < nodes) push_ev(S(cfg.kill_at_s), EV_KILL, (int)cfg.kill_router, 0, 0);
     us_t t_stop = t_measure_end + S(40);
     us_t cpu_win = 0, cpu_win_busy0 = 0;
@@ -1498,6 +1543,14 @@ int main(int argc, char **argv) {
             node[e.a].kick_armed = false;
             node_try_send(e.a);
             break;
+        case EV_MOVE: {   /* a sleepy child moves to router e.b, silently (no rejoin we hear) */
+            node_t *d = &node[e.a];
+            d->parent = e.b;
+            d->depth = node[e.b].depth + 1;
+            d->domain = node[e.b].depth == 1 ? e.b : node[e.b].domain;
+            st.sed_moves++;
+            break;
+        }
         case EV_KILL:
             node[e.a].alive = false;
             node[e.a].qn = 0;
@@ -1587,9 +1640,11 @@ int main(int argc, char **argv) {
                 report_lat ? pct(report_lat, report_ok, .99) : 0);
         fprintf(fp, " \"sed\": {\"transactions\": %u, \"ok\": %u, \"polls\": %u, \"fp_set\": %u, \"fp_miss\": %u, "
                     "\"data\": %u, \"rejoins\": %u, \"rejoin_retries\": %u, \"router_child_queue_full\": %u, \"router_child_expired\": %u, "
-                    "\"coord_indirect_expired\": %u, \"coord_poll_queue_full\": %u},\n",
+                    "\"coord_indirect_expired\": %u, \"coord_poll_queue_full\": %u, \"moves\": %u, \"assoc_removes\": %u, "
+                    "\"assoc_rpc_errors\": %u, \"children_moved\": %u, \"children_aged\": %u},\n",
                 n_sed, ok_sed, st.sed_polls, st.sed_fp_set, st.sed_fp_miss, st.sed_data, st.sed_rejoins, st.sed_rejoin_retries, st.child_q_full,
-                st.child_expired, coord.mac.stats.indirect_expired, coord.mac.stats.queue_full);
+                st.child_expired, coord.mac.stats.indirect_expired, coord.mac.stats.queue_full, st.sed_moves, st.assoc_removes,
+                st.assoc_rpc_errors, AGING_STAT(coord, children_moved), AGING_STAT(coord, children_aged));
         fprintf(fp, " \"retransmissions\": {\"mac_retries\": %u, \"mac_rounds\": %u, \"zcl_retx\": %u, "
                     "\"router_mac_retries\": %u, \"router_nwk_retries\": %u, \"host_retries\": %u},\n",
                 coord.mac.stats.tx_retries, coord.mac.stats.tx_rounds, coord.stats.net_status_retries, st.router_retries,

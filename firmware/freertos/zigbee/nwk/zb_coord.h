@@ -80,6 +80,9 @@
  * re-send, 119 with 4 re-sends/s, 122 unbounded). */
 #define ZB_RETX_TOKEN_MS 1000u
 #define ZB_RETX_BURST 8u
+/* End Device Timeout index of children that never sent a request (Zigbee
+ * nwkEndDeviceTimeoutDefault, also Z-Stack's): 8 = 256 minutes. */
+#define ZB_ED_TIMEOUT_DEFAULT 8u
 #define ZB_TX_TRACK MAC_POOL_SLOTS   /* unicasts awaiting their MAC confirm: one per MAC buffer */
 #define ZB_DISC_PENDING 16u          /* local frames held while their route is discovered */
 /* A destination whose route discovery got no reply is not searched again
@@ -215,6 +218,8 @@ typedef struct {
     uint32_t zcl_route_rebuilds;      /* unanswered read, nothing answered lately: route rebuilt */
     uint32_t bcast_seq_skipped;       /* NWK sequence numbers skipped: still in a broadcast table */
     uint32_t zcl_retx_deferred;       /* ZCL re-send postponed: re-send budget used up */
+    uint32_t children_aged;           /* children silent beyond their End Device Timeout */
+    uint32_t children_moved;          /* children heard through a router: no longer ours */
 } zb_coord_stats_t;
 
 /* Recent unicast data frame: re-sent on Network Status (route failure),
@@ -382,6 +387,13 @@ bool zb_coord_raise_nwk_frame_counter(zb_coord_t *c, uint32_t value);
 bool zb_coord_import_device(zb_coord_t *c, uint16_t slot_hint, uint64_t ext, uint16_t short_addr,
                             bool direct_child, const uint8_t *link_key, uint8_t tclk_shift);
 bool zb_coord_remove_device(zb_coord_t *c, uint64_t ext);
+/* Associated-device list, as Z-Stack ZNP assocRemove / assocAdd (herdsman's
+ * recovery for a sleepy child that does not fetch its frames): remove = no
+ * longer our child (the device stays in the Trust Center table); add =
+ * child again for Z-Stack relations 1..4 (CHILD_RFD .. CHILD_FFD_RX_IDLE),
+ * not a child for the others. false: unknown device or address taken. */
+bool zb_coord_child_remove(zb_coord_t *c, uint64_t ext);
+bool zb_coord_child_add(zb_coord_t *c, uint64_t ext, uint16_t short_addr, uint8_t relation);
 /* Persist a device entry modified in place by the caller. */
 void zb_coord_device_changed(zb_coord_t *c, uint16_t slot);
 void zb_coord_raise_aps_frame_counter(zb_coord_t *c, uint32_t value);
