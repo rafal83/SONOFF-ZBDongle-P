@@ -202,6 +202,9 @@ static int diag_perf(le_writer_t *w) {
         hs.timeouts, hs.dma_errors, hs.key_errors, hs.resets, hs.reset_timeouts,
         /* 32..36: native CCM* */
         p.ccm_hw_block_frame_cycles, cs.native_ops, cs.tag_suspect, hs.ccm_ops, hs.key_check_failures,
+        /* 37..43: Green Power TempMaster transmissions */
+        app_gp.tx_started, app_gp.tx_ok, app_gp.tx_failed, app_gp.tx_missed, app_gp.coord_tx_deferred,
+        app_gp.channel_moves, app_gp.channel_failed,
     };
     le_u8(w, (uint8_t)(sizeof values / sizeof values[0]));
     for (unsigned i = 0; i < sizeof values / sizeof values[0]; i++) le_u32(w, values[i]);

@@ -61,7 +61,7 @@ static uint8_t tx_buffer[RF_MAX_MPDU_NO_FCS];
 static volatile uint32_t pending_events;
 static void (*notify)(void);
 static rf_stats_t stats;
-static bool powered, rx_running, tx_active, tx_wait_ack;
+static bool powered, rx_running, tx_active, tx_wait_ack, tx_timed;
 static rf_rx_config_t rx_config;
 static uint16_t csma_seed = 0x1234;
 static rf_src_match_t src_match;
@@ -384,8 +384,40 @@ int rf_tx_start(const uint8_t *mpdu, uint8_t length, bool wait_ack, uint8_t max_
     cmd_rx_ack.endTime = ACK_TIMEOUT_RAT;
 
     tx_wait_ack = wait_ack;
+    tx_timed = false;
     stats.tx_attempts++;
     int rc = doorbell((uint32_t)(uintptr_t)&cmd_csma, 0);
+    if (rc) { stats.tx_error++; return rc; }
+    tx_active = true;
+    return RF_OK;
+}
+
+/* Timed transmission (Green Power TempMaster): CMD_IEEE_TX alone, started
+ * at the absolute radio time `rat_start`, no CSMA, no ACK. A time less than
+ * RF_TX_AT_MIN_LEAD ticks away (or more than RF_TX_AT_MAX_LEAD, i.e. passed)
+ * is refused first; pastTrig = 0 makes the RF core end the command with an
+ * error rather than transmit late (a late reply misses the GPD window). */
+int rf_tx_at(const uint8_t *mpdu, uint8_t length, uint32_t rat_start) {
+    if (!powered || !rx_running) return fail(RF_ERR_RX_NOT_RUNNING, 0x410);
+    if (tx_active) return fail(RF_ERR_TX_BUSY, 0x411);
+    if (length < 3 || length > RF_MAX_MPDU_NO_FCS) return fail(RF_ERR_PARAM, 0x412);
+    int32_t lead = (int32_t)(rat_start - rf_rat_now());
+    if (lead < (int32_t)RF_TX_AT_MIN_LEAD || lead > (int32_t)RF_TX_AT_MAX_LEAD) return fail(RF_ERR_PARAM, 0x413);
+    for (uint8_t i = 0; i < length; i++) tx_buffer[i] = mpdu[i];
+    cmd_tx = (rfc_CMD_IEEE_TX_t){0};
+    cmd_tx.commandNo = CMD_IEEE_TX;
+    cmd_tx.startTrigger.triggerType = TRIG_ABSTIME;
+    cmd_tx.startTrigger.pastTrig = 0;
+    cmd_tx.startTime = rat_start;
+    cmd_tx.condition.rule = COND_NEVER;
+    cmd_tx.pNextOp = 0;
+    cmd_tx.payloadLen = length;
+    cmd_tx.pPayload = tx_buffer;
+    tx_wait_ack = false;
+    tx_timed = true;
+    stats.tx_attempts++;
+    stats.tx_timed++;
+    int rc = doorbell((uint32_t)(uintptr_t)&cmd_tx, 0);
     if (rc) { stats.tx_error++; return rc; }
     tx_active = true;
     return RF_OK;
@@ -395,7 +427,7 @@ bool rf_tx_poll(rf_tx_result_t *result, bool *frame_pending) {
     if (!tx_active) return false;
     volatile uint16_t *last = tx_wait_ack ? &cmd_rx_ack.status : &cmd_tx.status;
     /* The chain stops early on CSMA failure or TX failure. */
-    bool csma_failed = FINISHED(cmd_csma.status) && cmd_csma.status != IEEE_DONE_OK;
+    bool csma_failed = !tx_timed && FINISHED(cmd_csma.status) && cmd_csma.status != IEEE_DONE_OK;
     bool tx_failed = FINISHED(cmd_tx.status) && cmd_tx.status != IEEE_DONE_OK;
     if (!csma_failed && !tx_failed && !FINISHED(*last)) return false;
     tx_active = false;

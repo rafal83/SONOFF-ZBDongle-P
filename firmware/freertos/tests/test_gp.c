@@ -171,6 +171,104 @@ int main(void) {
     gp_proxy_init(&gp, &store);
     CHECK(gp_proxy_rx(&gp, f, fl, 10, now, z, sizeof z) == 0);          /* removal persisted */
 
+    /* 6. TempMaster for a bidirectional GPD (A.3.9.1). */
+    {
+        gp_proxy_init(&gp, &store);
+        gp.own_short = 0x0000;
+        gp.cur_channel = gp.net_channel = 15;
+        const uint32_t BIDIR = 0x01AABBCC;
+        /* GP Response as herdsman sends it for an RxOnCapable GPD: options 0,
+         * TempMaster 0x0000 (we forwarded the notification), TempMasterTx =
+         * channel - 11, Commissioning Reply (0xF0) with options 0. */
+        const uint8_t rsp_f0[] = {0x19, 0x21, 0x06, 0x00, 0x00, 0x00, 0x04, 0xCC, 0xBB, 0xAA, 0x01, 0xF0, 0x01, 0x00};
+        dump("response_f0", rsp_f0, sizeof rsp_f0);
+        gp_proxy_host_frame(&gp, rsp_f0, sizeof rsp_f0, now);                /* not commissioning: ignored */
+        CHECK(!gp.txq.used && gp.stats.responses_ignored == 1);
+        gp_proxy_host_frame(&gp, mode, sizeof mode, now);                    /* enter commissioning */
+        uint8_t other[sizeof rsp_f0];
+        memcpy(other, rsp_f0, sizeof other);
+        other[4] = 0x34; other[5] = 0x12;                                    /* TempMaster = another proxy */
+        gp_proxy_host_frame(&gp, other, sizeof other, now);
+        CHECK(!gp.txq.used && gp.stats.responses_ignored == 2);
+        gp_proxy_host_frame(&gp, rsp_f0, sizeof rsp_f0, now);
+        CHECK(gp.txq.used && gp.txq.channel == 15 && gp.stats.responses == 1);
+        CHECK(gp_proxy_tick(&gp, now) == 15);                                /* = network channel: no move */
+        /* A frame without RxAfterTx: the GPD is not listening, nothing sent. */
+        const uint8_t comm_rx[] = {0x02, 0x02};                              /* options: RxOnCapability */
+        fl = gpdf(f, BIDIR, 0, 0, 0xE0, comm_rx, sizeof comm_rx, 0, false);
+        CHECK(gp_proxy_rx(&gp, f, fl, 40, now, z, sizeof z) != 0 && !gp.tx_ready && gp.txq.used);
+        /* Its next commissioning frame with RxAfterTx: reply built. */
+        fl = gpdf(f, BIDIR, 0, 0, 0xE0, comm_rx, sizeof comm_rx, 0, true);
+        zl = gp_proxy_rx(&gp, f, fl, 41, now + 10, z, sizeof z);
+        CHECK(zl && z[2] == 0x04 && ((z[3] >> 3) & 1u));                    /* notification still forwarded */
+        static const uint8_t want_f0[] = {0x01, 0x08, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x8C, 0x80,
+                                          0xCC, 0xBB, 0xAA, 0x01, 0xF0, 0x00};
+        CHECK(gp.tx_ready && gp.tx_len == sizeof want_f0 && !memcmp(gp.tx_mpdu, want_f0, sizeof want_f0));
+        dump("reply_f0", gp.tx_mpdu, gp.tx_len);
+        CHECK(!gp.txq.used && gp.stats.replies == 1);
+        gp.tx_ready = false;
+        fl = gpdf(f, BIDIR, 0, 0, 0xE0, comm_rx, sizeof comm_rx, 0, true);
+        CHECK(gp_proxy_rx(&gp, f, fl, 42, now + 20, z, sizeof z) != 0 && !gp.tx_ready);   /* sent once */
+        CHECK(gp_proxy_tick(&gp, now + 10 + GP_RETURN_MS) == 0);
+
+        /* Expiry of a queued reply (gpTxQueueEntryLifetime). */
+        gp_proxy_host_frame(&gp, rsp_f0, sizeof rsp_f0, now);
+        CHECK(gp.txq.used && gp_proxy_tick(&gp, now + GP_TXQ_LIFETIME_MS - 1) == 15);
+        CHECK(gp_proxy_tick(&gp, now + GP_TXQ_LIFETIME_MS) == 0 && !gp.txq.used && gp.stats.txq_expired == 1);
+        fl = gpdf(f, BIDIR, 0, 0, 0xE0, comm_rx, sizeof comm_rx, 0, true);
+        CHECK(gp_proxy_rx(&gp, f, fl, 43, now + GP_TXQ_LIFETIME_MS, z, sizeof z) != 0 && !gp.tx_ready);
+
+        /* Channel Request (maintenance frame, no SrcID): next attempt on
+         * channel 16 (5), then 15 (4). Forwarded with SrcID 0 and RxAfterTx. */
+        const uint8_t chreq[] = {0x0D, 0xE3, 0x45};
+        dump("channel_request_gpdf", chreq, sizeof chreq);
+        zl = gp_proxy_rx(&gp, chreq, sizeof chreq, 44, now, z, sizeof z);
+        CHECK(zl && z[2] == 0x04 && z[5] == 0 && z[6] == 0 && z[7] == 0 && z[8] == 0 && z[13] == 0xE3 &&
+              z[14] == 1 && z[15] == 0x45 && ((z[3] >> 3) & 1u));
+        dump("commissioning_channel_request", z, zl);
+        /* herdsman: Channel Configuration (0xF3) to send on the requested
+         * channel (TempMasterTx = nextChannel), operational channel 15 (4), basic. */
+        const uint8_t rsp_f3[] = {0x19, 0x22, 0x06, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0xF3, 0x01, 0x14};
+        dump("response_f3", rsp_f3, sizeof rsp_f3);
+        gp_proxy_host_frame(&gp, rsp_f3, sizeof rsp_f3, now);
+        CHECK(gp.txq.used && gp.txq.maintenance && gp_proxy_tick(&gp, now) == 16);   /* radio must move */
+        /* Still on 15 (the platform did not move yet): not where it listens. */
+        CHECK(gp_proxy_rx(&gp, chreq, sizeof chreq, 45, now, z, sizeof z) != 0 && !gp.tx_ready);
+        gp.cur_channel = 16;                                                  /* radio moved */
+        fl = gpdf(f, TAP, 0, 0, 0x22, none, 0, 0, false);                     /* other frames: ignored there */
+        CHECK(gp_proxy_rx(&gp, f, fl, 46, now + 50, z, sizeof z) == 0 && gp.stats.off_channel_dropped == 1);
+        zl = gp_proxy_rx(&gp, chreq, sizeof chreq, 47, now + 100, z, sizeof z);
+        CHECK(zl == 0);                                                       /* answered: not forwarded again */
+        static const uint8_t want_f3[] = {0x01, 0x08, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x0D, 0xF3, 0x14};
+        CHECK(gp.tx_ready && gp.tx_len == sizeof want_f3 && !memcmp(gp.tx_mpdu, want_f3, sizeof want_f3));
+        dump("reply_f3", gp.tx_mpdu, gp.tx_len);
+        gp.tx_ready = false;
+        CHECK(gp_proxy_tick(&gp, now + 100 + GP_RETURN_MS - 1) == 16);        /* time to send it */
+        CHECK(gp_proxy_tick(&gp, now + 100 + GP_RETURN_MS) == 0);             /* back to the network */
+        gp.cur_channel = 15;
+
+        /* Refused responses: SrcID 0 for a Commissioning Reply, a SrcID for a
+         * Channel Configuration, truncated payload. */
+        uint8_t bad1[sizeof rsp_f0];
+        memcpy(bad1, rsp_f0, sizeof bad1);
+        memset(bad1 + 7, 0, 4);
+        uint8_t bad2[sizeof rsp_f3];
+        memcpy(bad2, rsp_f3, sizeof bad2);
+        bad2[7] = 1;
+        uint32_t ign = gp.stats.responses_ignored;
+        gp_proxy_host_frame(&gp, bad1, sizeof bad1, now);
+        gp_proxy_host_frame(&gp, bad2, sizeof bad2, now);
+        gp_proxy_host_frame(&gp, rsp_f0, sizeof rsp_f0 - 1, now);
+        CHECK(!gp.txq.used && gp.stats.responses_ignored == ign + 3);
+        /* Maintenance frames outside commissioning, or other than a Channel Request. */
+        const uint8_t leave[] = {0x19, 0x23, 0x02, 0x00};                   /* exit commissioning */
+        gp_proxy_host_frame(&gp, leave, sizeof leave, now);
+        CHECK(gp_proxy_rx(&gp, chreq, sizeof chreq, 48, now, z, sizeof z) == 0);
+        const uint8_t maint_other[] = {0x0D, 0xE0, 0x00};
+        gpdf_t g;
+        CHECK(gpdf_parse(maint_other, sizeof maint_other, &g) != 0);
+    }
+
     if (out) fclose(out);
     PASS("gp");
     return 0;

@@ -42,8 +42,26 @@ assert.equal(s.payload.commandID, 0x69);
 assert.equal((s.payload.options >> 6) & 3, 2, 'not FullEncr: herdsman must not decrypt it again');
 assert.deepEqual([...s.payload.commandFrame.raw ?? []].length >= 0, true);
 
+// TempMaster: the GP Responses used by test_frt_gp are byte for byte what
+// herdsman's own encoder produces (greenPower.js, RxOnCapable commissioning
+// and Channel Request), and herdsman reads our Channel Request notification.
+const encode = (seq, payload) => Zcl.Frame.create(Zcl.FrameType.SPECIFIC, Zcl.Direction.SERVER_TO_CLIENT, true,
+    undefined, seq, 'response', 'greenPower', payload, {}).toBuffer();
+assert.deepEqual(encode(0x21, {options: 0, tempMaster: 0x0000, tempMasterTx: 15 - 11, srcID: 0x01AABBCC, gpdCmd: 0xf0,
+    gpdPayload: {commandID: 0xf0, options: 0}}), frames.response_f0, 'GP Response / Commissioning Reply');
+assert.deepEqual(encode(0x22, {options: 0, tempMaster: 0x0000, tempMasterTx: 5, srcID: 0, gpdCmd: 0xf3,
+    gpdPayload: {commandID: 0xf3, operationalChannel: 15 - 11, basic: true}}), frames.response_f3,
+    'GP Response / Channel Configuration');
+const cr = parse(frames.commissioning_channel_request);
+assert.equal(cr.command.name, 'commissioningNotification');
+assert.equal(cr.payload.srcID, 0);
+assert.equal(cr.payload.commandID, 0xe3);
+assert.equal(cr.payload.commandFrame.nextChannel, 5);
+assert.equal((cr.payload.options >> 3) & 1, 1, 'RxAfterTx');
+
 console.log(JSON.stringify({passed: true, parsed: Object.keys(frames).length,
     commissioning: {srcID: c.payload.srcID, cmd: c.payload.commandID, deviceID: c.payload.commandFrame.deviceID},
     notification: {srcID: n.payload.srcID, cmd: n.payload.commandID},
     secured: {srcID: s.payload.srcID, counter: s.payload.frameCounter, cmd: s.payload.commandID,
-              commandFrame: s.payload.commandFrame}}));
+              commandFrame: s.payload.commandFrame},
+    channelRequest: {nextChannel: cr.payload.commandFrame.nextChannel}, responsesMatchHerdsmanEncoder: true}));
