@@ -99,4 +99,6 @@ bool nwk_neighbor_tx_result(nwk_routes_t *t, uint16_t addr, bool ok);
 
 /* Broadcast transaction table: true when (src, seq) is new (and records it). */
 bool nwk_btt_accept(nwk_routes_t *t, uint16_t src, uint8_t seq, uint32_t now_ms);
+/* Read-only: (src, seq) is already recorded (not expired). */
+bool nwk_btt_seen(const nwk_routes_t *t, uint16_t src, uint8_t seq, uint32_t now_ms);
 #endif

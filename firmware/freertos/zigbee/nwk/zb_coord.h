@@ -182,6 +182,7 @@ typedef struct {
     uint32_t rreq_coalesced;     /* no new Route Request: one for that destination is pending */
     uint32_t aps_counter_reuse;  /* same source and APS counter, other content: NOT a duplicate */
     uint32_t rreq_suppressed;    /* Route Request not sent: destination in discovery backoff */
+    uint32_t bcast_dup_unopened; /* broadcast copies recognised before decryption */
     uint32_t frag_rx_ok, frag_rx_dropped, frag_tx_ok, frag_tx_failed, frag_tx_retries;
     uint32_t channel_changes, key_updates, key_switches, gpdf_rx;
 } zb_coord_stats_t;
