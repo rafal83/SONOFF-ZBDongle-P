@@ -268,7 +268,8 @@ typedef struct {
         uint8_t len, hl, sends_left, sent;
         uint16_t src;
         uint8_t seq;
-        uint32_t due_ms, heard;       /* heard: neighbour slots that relayed it */
+        uint32_t due_ms;
+        uint64_t heard;               /* heard: neighbour slots that relayed it (NWK_NEIGHBORS <= 64) */
         bool used, sleepy_copies;
     } bcast[ZB_BCAST_PENDING];
     struct { uint16_t originator, sender; uint8_t id, cost; uint32_t ms; bool used; } rdisc[ZB_ROUTE_DISCOVERIES];

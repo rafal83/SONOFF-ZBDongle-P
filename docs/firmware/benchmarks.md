@@ -123,14 +123,14 @@ Ce qui dépasse désormais ZeroStack :
 | | Firmware FreeRTOS | Z-Stack (Koenkk, `firmware.patch`) | ZeroStack (publié) |
 |---|---|---|---|
 | Appareils sécurisés (Trust Center) | 200 | 200 (`ZDSECMGR_TC_DEVICE_MAX`) | 200 sur CC2652P |
-| Voisins | 32 | 50 | non publié |
-| Routes AODV | 32 | 150 | non publié |
+| Voisins | 48 (32 avant le 20 novembre au soir) | 50 | non publié |
+| Routes AODV | 48 (32 avant) | 150 | non publié |
 | Routes sources | 200 | 250 | « 200+ » |
 | Table anti-doublon des broadcasts | 32 | 30 (`MAX_BCAST`) | 40 |
 | Réessais MAC | 3 par tour, 3 tours (file de 32 trames) | 7 | non publié |
 | Store non volatil | **2 × 56 Kio** (disposition 2) | NV Z-Stack (géométrie non comparée ici) | non publié |
-| Flash occupée | 97 552 o (image `--hw-aes` 1 Mbaud de l'arbre de travail du 20 novembre, non flashée) | 178 669 o (20240710) | non publié |
-| SRAM | 80 704 o statiques sur 81 920, piles et MSP comprises, **sans tas** | 42 228 o statiques + tas dynamique de 33 371 o | 88 Ko de SRAM sur CC2652P, sans précision |
+| Flash occupée | 98 444 o (image `--hw-aes` 1 Mbaud de l'arbre de travail du 20 novembre, non flashée) | 178 669 o (20240710) | non publié |
+| SRAM | 81 088 o statiques sur 81 920, piles et MSP comprises, **sans tas** | 42 228 o statiques + tas dynamique de 33 371 o | 88 Ko de SRAM sur CC2652P, sans précision |
 
 ## 5. Débit soutenu et appareils endormis : SIMULATION
 
