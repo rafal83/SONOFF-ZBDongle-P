@@ -30,6 +30,13 @@ def extract(buffer):
     return frames
 
 def identify_port(port, serial_number):
+    if port.lower().startswith("rfc2217://"):
+        # Dongle on a remote host (ser2net, RFC 2217: DTR/RTS and baud rate are
+        # forwarded, so the ROM bootloader can be entered). The USB identity
+        # cannot be read from here: the callers verify the IEEE address instead
+        # (from the ROM before any write, by MT afterwards).
+        return {"port": port, "usb_serial": serial_number, "remote": True,
+                "identity": "verified by IEEE (ROM / MT), not by USB"}
     from serial.tools import list_ports
     matches = [p for p in list_ports.comports() if p.device.upper() == port.upper()]
     if len(matches) != 1: raise ValueError("Explicit serial port is not uniquely present")
@@ -41,7 +48,8 @@ def identify_port(port, serial_number):
 class MT:
     def __init__(self, port, baud):
         import serial
-        self.serial = serial.serial_for_url(port, do_not_open=True, baudrate=baud, timeout=0.05, write_timeout=1)
+        extra = {} if port.lower().startswith("rfc2217://") else {"write_timeout": 1}   # unsupported by RFC 2217
+        self.serial = serial.serial_for_url(port, do_not_open=True, baudrate=baud, timeout=0.05, **extra)
         self.serial.dtr = False
         self.serial.rts = False
         self.serial.open()
