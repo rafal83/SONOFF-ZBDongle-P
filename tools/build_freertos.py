@@ -98,6 +98,7 @@ TI_SOURCES = [DEVICE / "driverlib" / f"{n}.c" for n in [
     DEVICE / "rf_patches" / "rf_patch_cpe_ieee_802_15_4.c"]
 HOST_TESTS = {
     "test_frt_mt": ["firmware/freertos/tests/test_mt.c"],
+    "test_frt_uart_noise": ["firmware/freertos/tests/test_uart_noise.c"],
     "test_frt_radio_logic": ["firmware/freertos/tests/test_radio_logic.c"],
     "test_frt_quorum": ["firmware/freertos/tests/test_quorum.c"],
     "test_frt_spsc": ["firmware/freertos/tests/test_spsc_ring.c"],

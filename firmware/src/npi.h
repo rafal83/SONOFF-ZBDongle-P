@@ -9,6 +9,10 @@
 #define NPI_MAX_FRAME (NPI_MAX_PAYLOAD + 5u)
 #define NPI_TIMEOUT_MS 100u
 #define NPI_FRAME_TIMEOUT_MS 250u
+/* A host frame arrives in one burst (255 bytes: 2.6 ms at 1 Mbaud, 22 ms at
+ * 115200). A candidate still incomplete after this long, while a complete
+ * VALID frame (FCS) has just ended behind it, was a fake header in noise. */
+#define NPI_STALL_MS 30u
 #define NPI_TX_SLOTS 8u
 #define NPI_TX_CONTROL_RESERVE 2u
 #define NPI_TX_CONTROL_BURST 4u
@@ -23,6 +27,7 @@ typedef struct {
     uint16_t head, count;
     uint32_t started_ms, last_ms, accepted, bad_fcs, oversized, timeouts;
     uint32_t invalid_type, resync_discarded, rx_errors;
+    uint32_t stall_resyncs;   /* fake headers skipped for a valid frame behind them */
     npi_receive_fn receive;
     void *context;
 } npi_parser;

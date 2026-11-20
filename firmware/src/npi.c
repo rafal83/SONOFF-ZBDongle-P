@@ -12,12 +12,35 @@ _Static_assert(NPI_TX_CONTROL_BURST > 0, "Normal traffic must make progress");
 static uint8_t at(const npi_parser *p, uint16_t offset) {
     return p->wire[(p->head + offset) % NPI_MAX_FRAME];
 }
+/* Noise discarded: the bytes left are as old as the buffer already was, so
+ * the frame age (started_ms) is KEPT. Resetting it there gave every fake
+ * header found further in an old noise burst a fresh NPI_FRAME_TIMEOUT_MS,
+ * one after the other: a burst of noise rich in SOF bytes blocked the link
+ * for seconds while the host's frames piled up behind it (bench
+ * test_uart_noise, "64 noise bytes glued to a ping"). After a VALID frame,
+ * the bytes that follow are newer than it: the age restarts. */
 static void discard(npi_parser *p, uint16_t size, uint32_t now, bool noise) {
     p->head = (uint16_t)((p->head + size) % NPI_MAX_FRAME);
     p->count = (uint16_t)(p->count - size);
-    p->started_ms = now;
     if (noise) p->resync_discarded += size;
+    else p->started_ms = now;
 }
+/* A complete, valid frame ends exactly at the end of the buffer, starting
+ * after the head: the stalled head candidate was noise. Bounded by the
+ * window: one length test per SOF byte, one FCS on a match. */
+static bool valid_tail(const npi_parser *p) {
+    for (uint16_t j = 1; j + 5u <= p->count; j++) {
+        if (at(p, j) != 0xfe) continue;
+        uint8_t len = at(p, (uint16_t)(j + 1u));
+        if (len > NPI_MAX_PAYLOAD || (uint16_t)(j + len + 5u) != p->count || (at(p, (uint16_t)(j + 2u)) & 0x80u)) continue;
+        uint8_t checksum = 0;
+        for (uint16_t i = 1; i < len + 4u; i++) checksum ^= at(p, (uint16_t)(j + i));
+        if (checksum != at(p, (uint16_t)(j + len + 4u))) continue;
+        return true;
+    }
+    return false;
+}
+
 static void parse(npi_parser *p, uint32_t now, bool expired) {
     /* Each pass consumes bytes or returns. Work is bounded by the fixed window.
      * A complete valid outer frame owns its payload, including embedded SOF.
@@ -36,6 +59,13 @@ static void parse(npi_parser *p, uint32_t now, bool expired) {
         }
         uint16_t size = p->count >= 2 ? (uint16_t)(at(p, 1) + 5u) : 5u;
         if (p->count < size) {
+            if (!expired && (uint32_t)(now - p->started_ms) >= NPI_STALL_MS && valid_tail(p)) {
+                /* Rescan as on expiry: fake headers dropped byte by byte, every
+                 * complete valid frame in the buffer (older ones too) kept. */
+                p->stall_resyncs++;
+                expired = true;
+                continue;
+            }
             if (!expired) return;
             p->timeouts++;
             discard(p, 1, now, true);
@@ -55,6 +85,7 @@ static void parse(npi_parser *p, uint32_t now, bool expired) {
         for (uint16_t i = 0; i < p->frame.length; i++) p->frame.payload[i] = at(p, (uint16_t)(i + 4u));
         discard(p, size, now, false);
         p->accepted++;
+        expired = false;   /* what follows a valid frame is newer than it */
         if (p->receive) p->receive(p->context, &p->frame);
     }
 }
