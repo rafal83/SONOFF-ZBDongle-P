@@ -20,7 +20,8 @@ Suites (each run is repeated with --seeds seeds, the median is reported):
            (CPU blocked 76 ms) with 4 and 8 RF receive buffers;
   sleepy   10, 20, 40 sleepy end devices (children of the coordinator and of
            routers), spread or simultaneous wake-ups, a congested router,
-           a parent lost during the run.
+           a parent lost during the run, a child moving to
+           a router without a rejoin we hear (herdsman's assocRemove recovery).
 """
 import argparse
 import json
@@ -204,6 +205,8 @@ def main():
         for name, opts in [
             ("sed20-congested-router", dict(seds_coord=0, seds_router=20, sed_parent=16, sed_share=0.5, rate=20,
                                             congest_router=16, congest_queue=2, router_indirect=4)),
+            ("sed10-moved-silently", dict(seds_coord=10, sed_share=0.5, rate=10, duration=40, sed_move_node=29,
+                                          sed_move_to=3, sed_move_at=8, reports=3)),
             ("sed20-parent-lost", dict(seds_coord=0, seds_router=20, sed_parent=16, sed_share=0.5, rate=10,
                                        kill_router=16, kill_at=8, duration=40, router_indirect=16)),
         ]:

@@ -20,6 +20,7 @@
 #include "frt_test.h"
 #include "zb_ccm_backend.h"
 #include "zb_coord.h"
+#include "znp.h"
 
 #define PAN 0x7E57
 static const uint8_t KEY[16] = {0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x07, 0x18, 0x29, 0x3A, 0x4B, 0x5C, 0x6D, 0x7E, 0x8F, 0x90};
@@ -110,6 +111,39 @@ static void from_dev(node_dev_t *d, const uint8_t *aps, size_t len) {
     uint8_t mpdu[MAC_MAX_MPDU];
     size_t n = mac_frame_build(&f, nwk, total, mpdu, sizeof mpdu);
     zb_coord_rx(&coord, mpdu, (uint8_t)n, 200, -50);
+}
+/* NWK frame to us secured by `sealer`, MAC source `mac_src`, NWK source `src`. */
+static void nwk_from(node_dev_t *sealer, uint16_t mac_src, uint16_t src, uint8_t type, const uint8_t *p, size_t len) {
+    nwk_header_t h = {0};
+    h.type = type; h.src = src; h.dst = 0x0000; h.radius = 30; h.seq = sealer->nwk_seq++;
+    uint8_t nwk[CORE_SECURITY_MAX_FRAME];
+    size_t hl = nwk_build(&h, nwk, sizeof nwk);
+    memcpy(nwk + hl, p, len);
+    uint8_t local[8];
+    for (unsigned i = 0; i < 8; i++) local[i] = (uint8_t)(sealer->ext >> (8 * i));
+    size_t total;
+    CHECK(core_security_seal(&sealer->sec, 0, local, nwk, hl, len, sizeof nwk, &total));
+    mac_frame_t f = {0};
+    f.type = MAC_TYPE_DATA; f.ack_request = true; f.pan_id_compression = true; f.seq = sealer->mac_seq++;
+    f.dst_mode = MAC_ADDR_SHORT; f.dst_pan = PAN; f.dst_short = 0x0000;
+    f.src_mode = MAC_ADDR_SHORT; f.src_short = mac_src;
+    uint8_t mpdu[MAC_MAX_MPDU];
+    size_t n = mac_frame_build(&f, nwk, total, mpdu, sizeof mpdu);
+    zb_coord_rx(&coord, mpdu, (uint8_t)n, 200, -50);
+}
+static void cmd_from(node_dev_t *d, const uint8_t *p, size_t len) {
+    nwk_from(d, d->short_addr, d->short_addr, NWK_TYPE_COMMAND, p, len);
+}
+static void relayed_from(node_dev_t *relay, uint16_t src, const uint8_t *aps, size_t len) {
+    nwk_from(relay, relay->short_addr, src, NWK_TYPE_DATA, aps, len);
+}
+/* ZNP output of the test's own ZNP instance: last frame kept. */
+static uint8_t znp_last[256], znp_c0, znp_c1;
+static void znp_out(void *ctx, uint8_t c0, uint8_t c1, const uint8_t *p, uint8_t n) {
+    (void)ctx;
+    znp_c0 = c0;
+    znp_c1 = c1;
+    memcpy(znp_last, p, n);
 }
 static void read_answer(node_dev_t *d, uint8_t tsn) {
     const uint8_t aps[8 + 8] = {0x00, 0x01, 0x00, 0x00, 0x04, 0x01, 0x01, d->aps++,
@@ -359,6 +393,70 @@ int main(void) {
         while (take(&s)) if (s.nwk.dst == 0xFFFC && s.ok) { CHECK(s.nwk.seq != used); found = true; }
         CHECK(found && coord.stats.bcast_seq_skipped == sk0 + 1);
         printf("reliability: broadcast sequence number still in the BTT skipped\n");
+    }
+
+    /* 9. Children that leave: (a) aged after the End Device Timeout they
+     *    requested, kept while they poll; (b) one heard through a router is
+     *    no longer ours; (c) ZNP assocRemove / assocAdd (herdsman recovery). */
+    {
+        node_dev_t *quiet = &sleeper[14], *alive = &sleeper[15];
+        const uint8_t req[3] = {0x0B, 0x00 /* 10 s */, 0x00};
+        cmd_from(quiet, req, sizeof req);
+        cmd_from(alive, req, sizeof req);
+        poll(quiet);
+        poll(alive);
+        drain(0);
+        CHECK(coord.stats.timeout_requests >= 2);
+        for (unsigned t = 0; t < 8; t++) { advance(5000); poll(alive); drain(0); }   /* 40 s */
+        const nwk_device_t *q = &coord.devices.dev[nwk_devices_find_short(&coord.devices, quiet->short_addr)];
+        const nwk_device_t *a = &coord.devices.dev[nwk_devices_find_short(&coord.devices, alive->short_addr)];
+        CHECK(q->relationship == NWK_REL_NONE && a->relationship == NWK_REL_CHILD && coord.stats.children_aged == 1);
+        const uint8_t bad[3] = {0x0B, 15, 0x00};   /* out of range: refused, nothing stored */
+        cmd_from(alive, bad, sizeof bad);
+        poll(alive);
+        seen_t s;
+        bool refused = false;
+        while (take(&s))
+            if (s.ok && s.nwk.type == NWK_TYPE_COMMAND && s.plain[s.nwk.header_len + 14] == 0x0C)
+                refused = s.plain[s.nwk.header_len + 15] == 0x01;
+        CHECK(refused);
+
+        node_dev_t *moved = &sleeper[13];
+        const uint8_t aps[8 + 3] = {0x00, 0x01, 0x06, 0x00, 0x04, 0x01, 0x01, moved->aps++, 0x18, 0x01, 0x0A};
+        relayed_from(&router[0], moved->short_addr, aps, sizeof aps);
+        const nwk_device_t *m = &coord.devices.dev[nwk_devices_find_short(&coord.devices, moved->short_addr)];
+        CHECK(m->relationship == NWK_REL_NONE && coord.stats.children_moved == 1);
+        drain(0);
+
+        /* ZNP, on a coordinator of its own (its frames are never taken). */
+        static znp_t znp;
+        static zb_coord_t zc;
+        static const znp_platform_t PLAT = {.send = znp_out, .product = ZNP_PRODUCT_ZSTACK3X0, .revision = 20261120u};
+        znp_boot(&znp, &PLAT, &zc, &RADIO, 0, 0x00124B0000009999ull, 0x99u, 0);
+        zc.upper.reserve_nwk_counter = reserve;
+        zb_coord_form(&zc, 0x9999, 20, epid, KEY, 0);
+        znp.formed = true;
+        znp.dev_state = ZNP_DEV_ZB_COORD;
+        const uint64_t ext = 0x00158D0000BB0001ull;
+        CHECK(zb_coord_import_device(&zc, NWK_DEVICE_NONE, ext, 0x4321, true, 0, 0xFF));
+        uint8_t p[11];
+        for (unsigned i = 0; i < 8; i++) p[i] = (uint8_t)(ext >> (8 * i));
+        znp_handle(&znp, 0x27, 0x4A, (const uint8_t[10]){p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], 0x21, 0x43}, 10);
+        CHECK(znp_c0 == 0x67 && znp_c1 == 0x4A && znp_last[4] == 0x02);   /* CHILD_RFD_RX_IDLE (guessed rx-on) */
+        znp_handle(&znp, 0x27, 0x63, p, 8);                               /* assocRemove */
+        CHECK(znp_c0 == 0x67 && znp_c1 == 0x63 && znp_last[0] == 0x00);
+        CHECK(zc.devices.dev[nwk_devices_find_ext(&zc.devices, ext)].relationship == NWK_REL_NONE);
+        p[8] = 0x21; p[9] = 0x43; p[10] = 0x01;                            /* assocAdd(ieee, 0x4321, CHILD_RFD) */
+        znp_handle(&znp, 0x27, 0x64, p, 11);
+        CHECK(znp_c0 == 0x67 && znp_c1 == 0x64 && znp_last[0] == 0x00);
+        const nwk_device_t *r = &zc.devices.dev[nwk_devices_find_ext(&zc.devices, ext)];
+        CHECK(r->relationship == NWK_REL_CHILD && !r->capability_guessed && !(r->capability & NWK_CAP_RX_ON_IDLE));
+        p[0] ^= 0xFF;                                                      /* unknown device */
+        znp_handle(&znp, 0x27, 0x63, p, 8);
+        CHECK(znp_c1 == 0x63 && znp_last[0] == 0x01);
+        air_head = air_tail;
+        printf("reliability: child aged after its End Device Timeout, child heard via a router dropped, "
+               "assocRemove/assocAdd served\n");
     }
 
     /* 8. Native CCM* rejections: a flood of forged frames is re-verified in

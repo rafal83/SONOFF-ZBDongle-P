@@ -38,6 +38,7 @@ typedef struct {
     uint32_t last_seen_ms;
     uint8_t lqi;                /* last link quality heard from it (one hop) */
     bool capability_guessed;    /* imported from a backup: capability not known yet */
+    uint8_t ed_timeout;         /* child: End Device Timeout index requested + 1, 0 = none (default) */
 } nwk_device_t;
 
 typedef struct {

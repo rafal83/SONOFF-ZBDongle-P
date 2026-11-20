@@ -1110,6 +1110,7 @@ static void on_poll(void *ctx, uint16_t short_addr, uint64_t ext, bool served) {
     if (slot == NWK_DEVICE_NONE && ext) slot = nwk_devices_find_ext(&c->devices, ext);
     if (slot == NWK_DEVICE_NONE) return;
     nwk_device_t *d = &c->devices.dev[slot];
+    d->last_seen_ms = c->now_ms | 1u;   /* a poll is the child's keep-alive (End Device Timeout) */
     /* Polling with its SHORT address, an end device has us as its parent:
      * it is our child even if we had it behind a router (e.g. the first copy
      * we heard of its Device Announce was relayed, or it moved back to us
@@ -1788,7 +1789,13 @@ static void handle_nwk_command(zb_coord_t *c, const mac_frame_t *f, const nwk_he
         uint16_t slot = nwk_devices_find_short(&c->devices, h->src);
         if (slot == NWK_DEVICE_NONE || c->devices.dev[slot].relationship != NWK_REL_CHILD) return;
         c->stats.timeout_requests++;
-        const uint8_t rsp[3] = {NWK_CMD_ED_TIMEOUT_RESPONSE, 0x00 /* success */, 0x01 /* MAC poll keep-alive */};
+        /* Requested timeout index 0..14 (10 s, then 2^n minutes): the child
+         * is forgotten as such when silent longer (child_aging). Not stored
+         * in Flash: after a reboot the default (256 min) applies, longer. */
+        bool valid = len >= 2 && p[1] <= 14u;
+        if (valid) c->devices.dev[slot].ed_timeout = (uint8_t)(p[1] + 1u);
+        const uint8_t rsp[3] = {NWK_CMD_ED_TIMEOUT_RESPONSE, valid ? 0x00 : 0x01 /* incorrect value */,
+                                0x01 /* MAC poll keep-alive */};
         (void)send_nwk_command(c, h->src, 1, rsp, sizeof rsp);
         return;
     }
@@ -1906,6 +1913,18 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
     c->devices.dev[dev].last_seen_ms = c->now_ms;
     disc_heard(c, h.src);
     if (f->src_mode == MAC_ADDR_SHORT) disc_heard(c, f->src_short);
+    if (h.dst == 0x0000 && f->src_mode == MAC_ADDR_SHORT && f->src_short != h.src) {
+        /* A unicast to us from one of our children, but relayed: it now has
+         * another parent (moved without a rejoin we heard). Broadcasts do
+         * not count: routers relay copies of our children's broadcasts. */
+        uint16_t o = nwk_devices_find_short(&c->devices, h.src);
+        if (o != NWK_DEVICE_NONE && c->devices.dev[o].relationship == NWK_REL_CHILD) {
+            c->devices.dev[o].relationship = NWK_REL_NONE;
+            c->devices.dev[o].ed_timeout = 0;
+            c->stats.children_moved++;
+            save_device(c, o);
+        }
+    }
     if (f->src_mode == MAC_ADDR_SHORT) {
         nwk_neighbor_heard(&c->routes, f->src_short, lqi);
         uint16_t hop = nwk_devices_find_short(&c->devices, f->src_short);
@@ -2461,6 +2480,61 @@ bool zb_coord_set_link_key(zb_coord_t *c, uint64_t ext, const uint8_t key[16]) {
     return true;
 }
 
+/* Child aging (Zigbee R21 End Device Timeout): a child silent (no poll, no
+ * frame) for longer than the timeout it requested, or ZB_ED_TIMEOUT_DEFAULT
+ * when it never asked, is no longer treated as our child: it moved to
+ * another parent or died. Its frames then follow a route (its new parent
+ * answers our Route Request for it) instead of expiring in our indirect
+ * queue. The device stays in the Trust Center table (keys, counters).
+ * Children never heard since boot get one full timeout from the first scan. */
+static void child_aging(zb_coord_t *c) {
+    for (uint16_t s = 0; s < NWK_MAX_DEVICES; s++) {
+        nwk_device_t *d = &c->devices.dev[s];
+        if (!d->ext || d->relationship != NWK_REL_CHILD) continue;
+        if (!d->last_seen_ms) { d->last_seen_ms = c->now_ms | 1u; continue; }
+        uint8_t idx = d->ed_timeout ? (uint8_t)(d->ed_timeout - 1u) : ZB_ED_TIMEOUT_DEFAULT;
+        uint32_t limit = idx == 0 ? 10000u : 60000u << idx;
+        if (c->now_ms - d->last_seen_ms <= limit) continue;
+        d->relationship = NWK_REL_NONE;
+        d->ed_timeout = 0;
+        c->stats.children_aged++;
+        save_device(c, s);
+    }
+}
+
+bool zb_coord_child_remove(zb_coord_t *c, uint64_t ext) {
+    uint16_t s = nwk_devices_find_ext(&c->devices, ext);
+    if (s == NWK_DEVICE_NONE) return false;
+    nwk_device_t *d = &c->devices.dev[s];
+    if (d->relationship == NWK_REL_CHILD) {
+        d->relationship = NWK_REL_NONE;
+        d->ed_timeout = 0;
+        save_device(c, s);
+    }
+    return true;
+}
+
+bool zb_coord_child_add(zb_coord_t *c, uint64_t ext, uint16_t short_addr, uint8_t relation) {
+    uint16_t s = nwk_devices_find_ext(&c->devices, ext);
+    if (s == NWK_DEVICE_NONE || short_addr >= 0xFFF8u || short_addr == 0x0000) return false;
+    nwk_device_t *d = &c->devices.dev[s];
+    bool child = relation >= 1u && relation <= 4u;   /* Z-Stack CHILD_RFD .. CHILD_FFD_RX_IDLE */
+    if (d->short_addr != short_addr) {
+        uint16_t owner = nwk_devices_find_short(&c->devices, short_addr);
+        if (owner != NWK_DEVICE_NONE && owner != s) return false;
+        if (!nwk_devices_learn(&c->devices, ext, short_addr, d->relationship)) return false;
+    }
+    d->relationship = child ? NWK_REL_CHILD : NWK_REL_NONE;
+    if (child && d->capability_guessed) {
+        d->capability = (uint8_t)((relation >= 3u ? NWK_CAP_FFD : 0u) |
+                                  ((relation == 2u || relation == 4u) ? NWK_CAP_RX_ON_IDLE : 0u) | NWK_CAP_ALLOC_ADDR);
+        d->capability_guessed = false;
+    }
+    d->last_seen_ms = c->now_ms | 1u;
+    save_device(c, s);
+    return true;
+}
+
 void zb_coord_tick(zb_coord_t *c, uint32_t now_ms) {
     c->now_ms = now_ms;
     c->routes.now_ms = now_ms;
@@ -2489,6 +2563,7 @@ void zb_coord_tick(zb_coord_t *c, uint32_t now_ms) {
         c->next_link_status_ms = now_ms + LINK_STATUS_PERIOD_MS;
         nwk_neighbors_age(&c->routes);
         c->stats.routes_expired += nwk_routes_age(&c->routes, now_ms);
+        child_aging(c);
         send_link_status(c);
     }
     if ((int32_t)(now_ms - c->next_mtorr_ms) >= 0) {
