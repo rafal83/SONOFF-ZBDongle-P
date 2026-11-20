@@ -12,7 +12,7 @@ from package_web_flasher import package, APP_END
 
 
 class WebFlasherPackageTests(unittest.TestCase):
-    def archive(self, folder, overlap=False, wrong_manifest=False, different_ccfg=False):
+    def archive(self, folder, overlap=False, wrong_manifest=False, different_ccfg=False, software_only=False):
         memory = {address: 255 for address in range(image.CCFG, image.FLASH_END)}
         for address, value in [(0, 0x20010000), (4, 0x141), (0x57fd8, 0xc5fe0fc5), (0x57fe4, 0xffc5ffff), (0x57fec, 0)]:
             memory.update({address + i: b for i, b in enumerate(value.to_bytes(4, 'little'))})
@@ -34,6 +34,7 @@ class WebFlasherPackageTests(unittest.TestCase):
                 image.write_hex(memory, path)
                 raw = path.read_bytes()
                 manifest = dict(uart_baud=baud, build_revision=20261119,
+                                hardware_aes=not software_only,
                                 hex_sha256='0' * 64 if wrong_manifest else hashlib.sha256(raw).hexdigest(),
                                 validation=dict(compiled_and_linked=True, static_image_checks=True))
                 prefix = f'sonoff-freertos/diag-{baud}/'
@@ -49,6 +50,7 @@ class WebFlasherPackageTests(unittest.TestCase):
             data = package(self.archive(folder), output, 'a' * 40)
             self.assertEqual(len(data['images']), 2)
             for firmware in data['images']:
+                self.assertTrue(firmware['hardware_aes'])
                 binary = (output / firmware['path']).read_bytes()
                 self.assertEqual(len(binary), APP_END)
                 self.assertEqual(hashlib.sha256(binary).hexdigest(), firmware['sha256'])
@@ -69,7 +71,7 @@ class WebFlasherPackageTests(unittest.TestCase):
             self.assertFalse((folder / 'site').exists())
 
     def test_rejects_preserved_storage_overlap_or_mismatched_manifest(self):
-        for option in ('overlap', 'wrong_manifest', 'different_ccfg'):
+        for option in ('overlap', 'wrong_manifest', 'different_ccfg', 'software_only'):
             with self.subTest(option=option), tempfile.TemporaryDirectory() as temporary:
                 folder = Path(temporary)
                 with self.assertRaises(ValueError):

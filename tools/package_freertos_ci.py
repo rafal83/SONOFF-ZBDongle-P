@@ -18,9 +18,11 @@ def main():
     ti_sources = set()
     manifests = []
     for baud in [115200, 1000000]:
-        folder = BUILD / f'diag-{baud}'
+        folder = BUILD / f'diag-{baud}-hwaes'
         manifest = json.loads((folder / 'manifest.json').read_text(encoding='utf-8'))
         assert manifest['uart_baud'] == baud
+        if manifest.get('hardware_aes') is not True:
+            raise ValueError('Only hardware-accelerated firmware may be published')
         assert manifest['validation']['compiled_and_linked']
         assert manifest['validation']['static_image_checks']
         manifests.append(manifest)
@@ -82,7 +84,7 @@ def main():
         members['docs/' + source.name] = source.read_bytes()
     members['README.txt'] = (
         'SONOFF ZBDongle-P CC2652P - experimental FreeRTOS build\n'
-        'Separate images: diag-115200/ and diag-1000000/.\n'
+        'Hardware AES/CCM* enabled for both UART profiles: diag-115200/ and diag-1000000/.\n'
         'Compilation and host/ARM tests do not qualify the build on hardware.\n'
         'Read each manifest for its actual validation and compatibility limits.\n'
         'Preserve the included TI, FreeRTOS and project licenses.\n'

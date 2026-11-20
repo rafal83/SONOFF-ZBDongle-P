@@ -31,6 +31,8 @@ def package(archive, output, commit):
         for baud in (115200, 1000000):
             prefix = f'sonoff-freertos/diag-{baud}/'
             manifest = json.loads(z.read(prefix + 'manifest.json'))
+            if manifest.get('hardware_aes') is not True:
+                raise ValueError('Only hardware-accelerated firmware may be published')
             raw = z.read(prefix + 'sonoff-freertos-diag.hex')
             if hashlib.sha256(raw).hexdigest() != manifest['hex_sha256'] or manifest['uart_baud'] != baud:
                 raise ValueError('Firmware manifest mismatch')
@@ -73,6 +75,7 @@ def package(archive, output, commit):
         catalog['images'].append(dict(baud=baud, path=name + '.bin', hex=name + '.hex',
                                       sha256=hashlib.sha256(binary).hexdigest(),
                                       hex_sha256=manifest['hex_sha256'], revision=manifest['build_revision']))
+        catalog['images'][-1]['hardware_aes'] = manifest['hardware_aes']
     (output / 'firmware.json').write_text(json.dumps(catalog, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(dict(site=str(output), commit=commit, images=len(images))))
     return catalog
