@@ -44,7 +44,8 @@ def open_rom(port, usb_serial, ieee):
     identify_port(port, usb_serial)
     bsl = load_bsl()
     command = bsl.CommandInterface()
-    command.sp = serial.serial_for_url(port, do_not_open=True, baudrate=500000, timeout=2, write_timeout=2)
+    extra = {} if port.lower().startswith("rfc2217://") else {"write_timeout": 2}   # unsupported by RFC 2217
+    command.sp = serial.serial_for_url(port, do_not_open=True, baudrate=500000, timeout=2, **extra)
     command.sp.dtr = False; command.sp.rts = False; command.sp.open()
     try:
         command.invoke_bootloader(sonoff_usb=True)
