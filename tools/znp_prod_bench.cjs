@@ -16,6 +16,10 @@
  *   node tools/znp_prod_bench.cjs --port COM8 --baudrate 1000000 \
  *        --database <copy>/database.db --backup <copy>/coordinator_backup.json \
  *        --expect-ieee 0x... --out private/perf-YYYYMMDD-label [--reads 10] [--bursts 5]  *        [--herdsman-retries 1]   (retry recoverable dataConfirm statuses like herdsman)
+ *        [--timeout 10000]        (ms to wait for the ZCL response; Z2M default: 10 s)
+ *        [--burst-size 16]        (routers per burst, rotating; default: all)
+ *        [--spacing 3]            (ms between the requests of a burst; default 0)
+ *        [--tx-power 20]          (SYS stackTune like herdsman for Z2M transmit_power; production: 20)
  */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -41,7 +45,7 @@ const {AdapterBackup} = lab('zigbee-herdsman/dist/adapter/z-stack/adapter/adapte
 const {BackupUtils} = lab('zigbee-herdsman/dist/utils/index.js');
 const {Subsystem, Type} = lab('zigbee-herdsman/dist/adapter/z-stack/unpi/constants.js');
 
-const READS = Number(args.reads ?? 10), BURSTS = Number(args.bursts ?? 5), TIMEOUT = 4000;
+const READS = Number(args.reads ?? 10), BURSTS = Number(args.bursts ?? 5), TIMEOUT = Number(args.timeout ?? 4000);
 const RETRIES = 'herdsman-retries' in args;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const quantile = (v, q) => { const s = [...v].sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.floor(q * (s.length - 1) + 0.5))] : null; };
@@ -68,6 +72,7 @@ async function main() {
     znp.request = async (subsystem, name, payload, ...rest) => {
         const ok = (subsystem === Subsystem.SYS && READ_ONLY_SYS.has(name)) ||
             (subsystem === Subsystem.UTIL && name === 'getDeviceInfo') ||
+            (subsystem === Subsystem.SYS && name === 'stackTune' && payload.operation === 0) ||   /* Z2M transmit_power */
             (subsystem === Subsystem.ZDO && name === 'startupFromApp') ||
             (subsystem === Subsystem.AF && name === 'register' && payload.endpoint === 1) ||
             (subsystem === Subsystem.AF && name === 'dataRequest' && payload.clusterid === 0 && payload.data[2] === 0x00 &&
@@ -114,6 +119,11 @@ async function main() {
             report.register_note = String(e.message ?? e).slice(0, 120);   /* already registered (Z-Stack keeps it) */
         }
         report.resume = {state_before: info0.devicestate, state: info.devicestate};
+        if (args['tx-power'] !== undefined) {
+            /* Z2M applies `transmit_power` at every start (production: 20 dBm). */
+            const r = await znp.requestWithReply(Subsystem.SYS, 'stackTune', {operation: 0, value: Number(args['tx-power'])});
+            report.tx_power_dbm = r.payload.value;   /* power actually applied, as herdsman does it */
+        }
         console.log('network resumed', JSON.stringify(report.resume));
 
         /* targets: routers with a Basic server cluster */
@@ -189,16 +199,24 @@ async function main() {
         const bursts = [];
         for (let b = 0; b < BURSTS; b++) {
             const t0 = Date.now();
-            const res = await Promise.all(routers.map(r => read(r)));
+            /* --burst-size N: N routers per burst (rotating), default all */
+            const size = Math.min(routers.length, Number(args['burst-size'] ?? routers.length));
+            const group = Array.from({length: size}, (_, j) => routers[(b * size + j) % routers.length]);
+            /* --spacing MS: requests of a burst issued MS apart (as a slower
+             * UART would spread them: ~2.5 ms per request at 115200 baud). */
+            const spacing = Number(args.spacing ?? 0);
+            const res = await Promise.all(group.map((r, j) => sleep(j * spacing).then(() => read(r))));
             const ok = res.filter(x => x.ok).map(x => x.ms);
             bursts.push({sent: res.length, ok: ok.length, ...stats(ok), wall_ms: Date.now() - t0,
-                         errors: res.filter(x => !x.ok).map(x => x.error)});
+                         errors: res.filter(x => !x.ok).map(x => x.error),
+                         failed: res.map((x, i) => x.ok ? null : {nwk: group[i].nwk, error: x.error, attempts: x.attempts}).filter(Boolean)});
             console.log(`burst ${b + 1}: ${ok.length}/${res.length} ok, median ${quantile(ok, 0.5)?.toFixed(1)} ms, max ${Math.max(...ok).toFixed(1)} ms`);
             await sleep(3000);
         }
         report.bursts = bursts;
         report.confirm_statuses = confirmStats;
         report.herdsman_retries = RETRIES;
+        report.timeout_ms = TIMEOUT;
         report.passed = true;
     } finally {
         report.znp_commands_sent = sent;
