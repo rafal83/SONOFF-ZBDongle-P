@@ -628,7 +628,10 @@ static bool form(znp_t *z) {
     return true;
 }
 
+static void gp_channel_service(znp_t *z);
+
 void znp_poll(znp_t *z) {
+    gp_channel_service(z);
     if (z->form_pending) {
         z->form_pending = false;
         uint8_t note[3] = {0x00 /* success */, 0x04 /* formation */, 0x00};
@@ -999,7 +1002,7 @@ static uint8_t af_send(znp_t *z, uint16_t dst, bool group, uint8_t dst_ep, uint8
         for (unsigned i = 0; i < ZNP_MAX_CONFIRMS && slot < 0; i++) if (!z->confirms[i].used) slot = (int)i;
     if (!group && !nwk_is_broadcast(dst) && slot < 0) { z->stats.af_tx_failed++; return 0x10u; }
     if (cluster == GP_CLUSTER && (src_ep == GP_ENDPOINT || dst_ep == GP_ENDPOINT))
-        gp_proxy_host_frame(&z->gp, data, len, z->coord->now_ms);   /* we are a GP proxy too */
+        gp_proxy_host_frame(&z->gp, data, len, z->coord->now_ms);   /* we are a GP proxy too (channel: znp_poll) */
     uint8_t status;
     if (options & AF_EN_SECURITY) {
         /* APS encryption with the destination's link key, never silently dropped. */
@@ -1145,8 +1148,34 @@ static void up_gpdf(void *ctx, const uint8_t *nwk, size_t len, uint8_t mac_seq, 
     znp_t *z = ctx;
     if (!endpoint(z, GP_ENDPOINT)) return;
     uint8_t zcl[160];
+    z->gp.net_channel = z->coord->mac.channel;
+    z->gp.cur_channel = z->gp_off_channel ? z->gp_off_channel : z->coord->mac.channel;
     size_t n = gp_proxy_rx(&z->gp, nwk, len, mac_seq, z->coord->now_ms, zcl, sizeof zcl);
+    if (z->gp.tx_ready) {
+        /* First: the GPD listens gpTxOffset after its frame, whatever the host does. */
+        z->gp.tx_ready = false;
+        if (z->p.gp_tx && z->p.gp_tx(z->p.ctx, z->gp.tx_mpdu, z->gp.tx_len)) z->gp_stats.tx++;
+        else z->gp_stats.tx_failed++;
+    }
     if (n) incoming(z, 0, GP_CLUSTER, 0x0000, GP_ENDPOINT, GP_ENDPOINT, true, lqi, zcl, n);
+}
+
+/* TempMaster on another channel: the radio follows what the GP proxy asks
+ * (gp_proxy_tick), back to the network channel when done or expired. */
+static void gp_channel_service(znp_t *z) {
+    if (!z->p.gp_channel) return;
+    z->gp.net_channel = z->coord->mac.channel;
+    uint8_t want = gp_proxy_tick(&z->gp, z->coord->now_ms);
+    if (want == z->coord->mac.channel) want = 0;
+    if (want == z->gp_off_channel) return;
+    uint8_t target = want ? want : z->coord->mac.channel;
+    if (z->p.gp_channel(z->p.ctx, target)) {
+        z->gp_off_channel = want;
+        z->gp_stats.channel_moves++;
+    } else {
+        z->gp_stats.channel_failed++;
+        if (want) z->gp.want_channel = 0;   /* stay on the network channel */
+    }
 }
 
 static void up_channel(void *ctx, uint8_t channel) {
@@ -1202,6 +1231,7 @@ void znp_boot(znp_t *z, const znp_platform_t *platform, zb_coord_t *coord, const
     zb_coord_init(coord, radio, &upper, z->ieee, random_seed, 0);
     zb_coord_attach_store(coord, store);
     gp_proxy_init(&z->gp, store);
+    z->gp.own_short = 0x0000;   /* the coordinator */
     coord->endpoint_count = 0;   /* as Z-Stack ZNP: the host registers every endpoint */
     if (clear_state) {
         (void)zb_coord_restore(coord);   /* load what exists so that it is deleted */

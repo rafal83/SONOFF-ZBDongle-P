@@ -130,11 +130,50 @@ static int8_t plat_tx_power(void *ctx, int8_t dbm) {
     return dbm > 20 ? 20 : dbm < -20 ? -20 : dbm;
 }
 
+/* Green Power TempMaster: no radio here, the calls are logged (one line
+ * each, read back by tools/znp_sim_gp.cjs). */
+static bool plat_gp_tx(void *ctx, const uint8_t *mpdu, uint8_t len) {
+    (void)ctx;
+    fprintf(stderr, "[sim] gp_tx ");
+    for (unsigned i = 0; i < len; i++) fprintf(stderr, "%02x", mpdu[i]);
+    fprintf(stderr, "\n");
+    fflush(stderr);
+    return true;
+}
+static bool plat_gp_channel(void *ctx, uint8_t channel) {
+    (void)ctx;
+    fprintf(stderr, "[sim] gp_channel %u\n", channel);
+    fflush(stderr);
+    return true;
+}
+
 static znp_platform_t platform = {
     .send = send_frame, .reset = plat_reset, .random = plat_random, .network_up = plat_network_up,
     .set_tx_power = plat_tx_power, .revision = 20261118u, .product = ZNP_PRODUCT_EXPERIMENTAL,
-    .major = 2, .minor = 7, .maint = 1,
+    .major = 2, .minor = 7, .maint = 1, .gp_tx = plat_gp_tx, .gp_channel = plat_gp_channel,
 };
+
+/* Frames "heard on the air": <image>.inject holds one MPDU (hex, no FCS) per
+ * line; it is read, deleted, and each frame given to the coordinator. */
+static void inject_frames(void) {
+    if (!image_path) return;
+    char name[1024];
+    snprintf(name, sizeof name, "%s.inject", image_path);
+    FILE *f = fopen(name, "r");
+    if (!f) return;
+    char line[600];
+    while (fgets(line, sizeof line, f)) {
+        uint8_t mpdu[127];
+        unsigned n = 0, b;
+        for (const char *c = line; n < sizeof mpdu && sscanf(c, "%2x", &b) == 1; c += 2) mpdu[n++] = (uint8_t)b;
+        if (n >= 3) {
+            fprintf(stderr, "[sim] inject %u bytes\n", n);
+            zb_coord_rx(&coord, mpdu, (uint8_t)n, 200, -50);
+        }
+    }
+    fclose(f);
+    remove(name);
+}
 
 static void on_frame(void *ctx, const npi_frame *f) {
     (void)ctx;
@@ -214,6 +253,7 @@ int main(int argc, char **argv) {
             tx_pending = false;
             zb_coord_tx_done(&coord, MAC_TX_OK, false);
         }
+        inject_frames();
         zb_coord_tick(&coord, now_ms());
         znp_poll(&znp);
         if (reset_requested) {

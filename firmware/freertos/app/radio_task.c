@@ -87,6 +87,20 @@ static const nv_flash_ops_t STORE_OPS = {hal_flash_read, hal_flash_program, hal_
 static bool tx_active;
 static TickType_t tx_started;
 
+/* Green Power TempMaster (znp_platform_t.gp_tx / gp_channel). While a reply
+ * is pending or on air, or while the radio is on another channel, the
+ * coordinator's transmissions end at once as "channel busy" (a CSMA
+ * failure for the NWK layer, never a link failure; the host may retry). */
+#define GP_TX_ADVANCE_TICKS 0u   /* RAT ticks: TX ramp-up compensation, to calibrate with a sniffer */
+#define GP_TX_WAIT_MS 100u
+static uint32_t cur_rx_timestamp;   /* frame being processed by zb_coord_rx */
+static uint8_t cur_rx_length;
+static uint8_t gp_mpdu[GP_MPDU_MAX], gp_len;
+static uint32_t gp_target;
+static bool gp_pending, gp_active, gp_off_channel, tx_fake_busy;
+static TickType_t gp_started;
+app_gp_stats_t app_gp;
+
 static uint32_t now_ms(void) { return (uint32_t)xTaskGetTickCount() * portTICK_PERIOD_MS; }
 
 static void rf_notify(void) {
@@ -104,6 +118,14 @@ static uint64_t ieee64(void) {
 /* ---- coordinator <-> radio adapter ------------------------------------ */
 static int coord_radio_tx(void *ctx, const uint8_t *mpdu, uint8_t len, bool ack) {
     (void)ctx;
+    if (gp_pending || gp_active || gp_off_channel) {
+        /* Completed as busy by poll_tx (never from inside the MAC's kick). */
+        tx_fake_busy = true;
+        tx_active = true;
+        tx_started = xTaskGetTickCount();
+        app_gp.coord_tx_deferred++;
+        return RF_OK;
+    }
     int rc = rf_tx_start(mpdu, len, ack, 4);
     if (rc == RF_OK) {
         tx_active = true;
@@ -223,14 +245,99 @@ static int8_t znp_tx_power(void *ctx, int8_t dbm) {
     return znp_tx_dbm;   /* the power really applied (after a possible fallback) */
 }
 
+/* Reply to the GPD whose frame is being processed: gpTxOffset after the END
+ * of that frame. The RX timestamp is taken as the start of the PHY header
+ * (after the SFD); the frame lasts (PHR + MPDU + FCS) x 32 us = 128 RAT
+ * ticks per byte. Both points remain to be checked with a sniffer. */
+static bool radio_gp_tx(void *ctx, const uint8_t *mpdu, uint8_t len) {
+    (void)ctx;
+    if (gp_pending || gp_active || len > sizeof gp_mpdu || !rf_is_powered()) return false;
+    for (unsigned i = 0; i < len; i++) gp_mpdu[i] = mpdu[i];
+    gp_len = len;
+    uint32_t end = cur_rx_timestamp + (1u + cur_rx_length + 2u) * 128u;
+    gp_target = end + GP_TX_OFFSET_US * 4u - GP_TX_ADVANCE_TICKS;
+    gp_pending = true;
+    return true;
+}
+
+static rf_rx_config_t network_rx_config(uint8_t channel) {
+    rf_rx_config_t cfg = {
+        .channel = channel, .promiscuous = false, .pan_coordinator = true,
+        .pan_id = coord.mac.pan_id, .short_addr = 0x0000,
+    };
+    for (unsigned i = 0; i < 8; i++) cfg.ext_addr[i] = (uint8_t)(znp.ieee >> (8u * i));
+    return cfg;
+}
+
+/* TempMaster on another channel (Channel Configuration), then back. */
+static bool radio_gp_channel(void *ctx, uint8_t channel) {
+    (void)ctx;
+    if (mode != MODE_ZNP || !rf_is_powered()) return false;
+    if (tx_active && !tx_fake_busy) {          /* a frame in flight ends as busy */
+        rf_tx_abort();
+        tx_active = false;
+        zb_coord_tx_done(&coord, MAC_TX_BUSY, false);
+    }
+    if (gp_active) { rf_tx_abort(); gp_active = false; app_gp.tx_failed++; }
+    gp_pending = false;
+    (void)rf_rx_stop();
+    rf_rx_config_t cfg = network_rx_config(channel);
+    if (rf_rx_start(&cfg)) {
+        cfg = network_rx_config(coord.mac.channel);   /* never stay deaf: back to the network */
+        (void)rf_rx_start(&cfg);
+        gp_off_channel = false;
+        app_gp.channel_failed++;
+        mac_source_match_resync(&coord.mac);
+        return false;
+    }
+    gp_off_channel = channel != coord.mac.channel;
+    if (gp_off_channel) app_gp.channel_moves++;
+    mac_source_match_resync(&coord.mac);   /* the restarted radio lost its pending-bit tables */
+    return true;
+}
+
+/* Starts the pending reply once no coordinator frame is on air; completion. */
+static void gp_service(void) {
+    if (gp_active) {
+        rf_tx_result_t r;
+        bool pending = false;
+        if (rf_tx_poll(&r, &pending)) {
+            gp_active = false;
+            if (r == RF_TX_DONE) app_gp.tx_ok++;
+            else app_gp.tx_failed++;
+        } else if (xTaskGetTickCount() - gp_started > pdMS_TO_TICKS(GP_TX_WAIT_MS)) {
+            rf_tx_abort();
+            gp_active = false;
+            app_gp.tx_failed++;
+        }
+        return;
+    }
+    if (!gp_pending || (tx_active && !tx_fake_busy)) return;   /* a coordinator frame finishes first */
+    gp_pending = false;
+    if (rf_tx_at(gp_mpdu, gp_len, gp_target) == RF_OK) {
+        gp_active = true;
+        gp_started = xTaskGetTickCount();
+        app_gp.tx_started++;
+    } else {
+        app_gp.tx_missed++;   /* window already too close or passed */
+    }
+}
+
 static const znp_platform_t ZNP_PLATFORM = {
     .send = znp_send, .reset = znp_reset, .random = znp_random, .network_up = znp_network_up,
     .set_tx_power = znp_tx_power, .revision = ZNP_REVISION, .product = ZNP_PRODUCT_ZSTACK3X0,
     .major = 2, .minor = 7, .maint = 1,
+    .gp_tx = radio_gp_tx, .gp_channel = radio_gp_channel,
 };
 
 static void poll_tx(void) {
     if (!tx_active) return;
+    if (tx_fake_busy) {
+        tx_fake_busy = false;
+        tx_active = false;
+        zb_coord_tx_done(&coord, MAC_TX_BUSY, false);
+        return;
+    }
     rf_tx_result_t result;
     bool pending = false;
     if (rf_tx_poll(&result, &pending)) {
@@ -262,6 +369,8 @@ static void drain_rx(void) {
                 app_perf.rx_measured++;
             }
             uint32_t t0 = hal_cycles();
+            cur_rx_timestamp = rx_frame.timestamp;
+            cur_rx_length = rx_frame.length;
             zb_coord_rx(&coord, rx_frame.mpdu, rx_frame.length, rx_frame.lqi, rx_frame.rssi);
             uint32_t dt = hal_cycles() - t0;
             app_perf.rx_last = dt;
@@ -460,12 +569,14 @@ static void radio(void *arg) {
     for (;;) {
         uint32_t bits = 0;
         uint32_t wait = mode == MODE_COORD || mode == MODE_ZNP ? COORD_TICK_MS : TASK_CHECKIN_MS;
+        if (gp_pending || gp_active || tx_fake_busy) wait = 1;   /* GP reply due within ~20 ms */
         (void)xTaskNotifyWaitIndexed(0, 0, UINT32_MAX, &bits, pdMS_TO_TICKS(wait));
         wd_quorum_checkin(&app_quorum, WD_BIT_RADIO);
         if (rf_is_powered()) {
             (void)rf_take_events();
             if (mode == MODE_COORD || mode == MODE_ZNP) poll_tx();
             drain_rx();
+            if (mode == MODE_ZNP) { poll_tx(); gp_service(); }
             if (mode == MODE_COORD || mode == MODE_ZNP) {
                 uint32_t t0 = hal_cycles();
                 zb_coord_tick(&coord, now_ms());

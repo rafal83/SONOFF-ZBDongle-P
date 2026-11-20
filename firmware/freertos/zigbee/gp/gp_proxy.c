@@ -43,6 +43,17 @@ int gpdf_parse(const uint8_t *p, size_t len, gpdf_t *g) {
         g->src_id = get32(p + pos);
         pos += 4;
     }
+    if (g->frame_type == 1) {
+        /* Maintenance frame: only the Channel Request (A.4.2.1.4) of a GPD
+         * looking for its channel, without SrcID and without security. */
+        if ((fc & 0x80u) || pos + 2 != len || p[pos] != 0xE3) return -1;
+        g->rx_after_tx = true;                               /* it listens after a Channel Request */
+        g->header_len = pos;
+        g->cmd = p[pos++];
+        g->payload = p + pos;
+        g->payload_len = 1;
+        return 0;
+    }
     if (g->frame_type != 0 || g->src_id == 0 || g->src_id == 0xFFFFFFFFu) return -1;
     if (g->sec_level == 1) return -1;                        /* deprecated 1-byte MIC: refused */
     if (g->sec_level >= 2) {
@@ -106,6 +117,82 @@ static void save(gp_proxy_t *gp, unsigned i) {
     wipe(b, sizeof b);
 }
 
+/* ---- TempMaster (A.3.9.1): gpTxQueue and GPDF to the GPD -------------- */
+
+/* GP Response (A.3.3.4.6) from the host: options, TempMaster short address,
+ * TempMaster Tx channel, GPD id, GPD command id, payload (length-prefixed,
+ * 0xFF = none). Queued only while commissioning and only if we are the
+ * TempMaster (Z-Stack zclGp_GpResponseCommandCB does the same). */
+static void gp_response(gp_proxy_t *gp, const uint8_t *p, size_t n, uint32_t now_ms) {
+    if (n < 1 + 2 + 1 + 4 + 1 + 1 || (p[0] & 7u) != 0) { gp->stats.responses_ignored++; return; }
+    uint16_t temp_master = (uint16_t)(p[1] | p[2] << 8);
+    uint8_t channel = (uint8_t)((p[3] & 0x0Fu) + 11u);
+    uint32_t src_id = get32(p + 4);
+    uint8_t cmd = p[8], len = p[9];
+    if (len == 0xFF) len = 0;
+    bool maintenance = cmd == 0xF3;   /* Channel Configuration: answers a Channel Request (no SrcID) */
+    if (!gp->commissioning || temp_master != gp->own_short || 10u + len > n || len > GP_TXQ_PAYLOAD ||
+        (maintenance && src_id != 0) || (!maintenance && (src_id == 0 || src_id == 0xFFFFFFFFu))) {
+        gp->stats.responses_ignored++;
+        return;
+    }
+    gp->txq = (gp_txq_t){0};
+    gp->txq.used = true;
+    gp->txq.maintenance = maintenance;
+    gp->txq.src_id = src_id;
+    gp->txq.channel = channel;
+    gp->txq.cmd = cmd;
+    gp->txq.len = len;
+    for (unsigned i = 0; i < len; i++) gp->txq.payload[i] = p[10 + i];
+    gp->txq.expires_ms = now_ms + GP_TXQ_LIFETIME_MS;
+    gp->want_channel = channel;
+    gp->want_until = gp->txq.expires_ms;
+    gp->stats.responses++;
+}
+
+/* The GPD opened its receive window: build the queued GPDF for it.
+ * MAC: data, no ACK, no security, dst PAN 0xFFFF, dst 0xFFFF, no source
+ * (application id 0). NWK: Commissioning Reply & co as a data frame with
+ * the extended frame control (direction 1 = from the proxy) and the SrcID;
+ * Channel Configuration as a maintenance frame. Unsecured (as herdsman
+ * sends them: "encryption disabled for RX capable GPDs"). */
+static void reply_if_queued(gp_proxy_t *gp, const gpdf_t *g, uint32_t now_ms) {
+    gp_txq_t *q = &gp->txq;
+    if (!q->used || !g->rx_after_tx) return;
+    if ((int32_t)(now_ms - q->expires_ms) >= 0) return;            /* gp_proxy_tick drops it */
+    if (q->maintenance ? g->cmd != 0xE3 : g->src_id != q->src_id) return;
+    if (gp->cur_channel && gp->cur_channel != q->channel) return;   /* not where the GPD listens */
+    uint8_t *m = gp->tx_mpdu;
+    size_t n = 0;
+    m[n++] = 0x01; m[n++] = 0x08;                                   /* data, dst short, no source */
+    m[n++] = gp->mac_seq_tx++;
+    m[n++] = 0xFF; m[n++] = 0xFF;                                   /* dst PAN */
+    m[n++] = 0xFF; m[n++] = 0xFF;                                   /* dst address */
+    if (q->maintenance) {
+        m[n++] = 0x0D;                                              /* maintenance, protocol 3 */
+    } else {
+        m[n++] = 0x8C;                                              /* data, protocol 3, extended FC */
+        m[n++] = 0x80;                                              /* app id 0, no security, direction 1 */
+        put32(m + n, q->src_id); n += 4;
+    }
+    m[n++] = q->cmd;
+    for (unsigned i = 0; i < q->len; i++) m[n++] = q->payload[i];
+    gp->tx_len = (uint8_t)n;
+    gp->tx_ready = true;
+    q->used = false;
+    gp->stats.replies++;
+    if (gp->want_channel) gp->want_until = now_ms + GP_RETURN_MS;  /* time to send it, then back */
+}
+
+uint8_t gp_proxy_tick(gp_proxy_t *gp, uint32_t now_ms) {
+    if (gp->txq.used && (int32_t)(now_ms - gp->txq.expires_ms) >= 0) {
+        gp->txq.used = false;
+        gp->stats.txq_expired++;
+    }
+    if (gp->want_channel && (int32_t)(now_ms - gp->want_until) >= 0) gp->want_channel = 0;
+    return gp->want_channel;
+}
+
 void gp_proxy_init(gp_proxy_t *gp, nv_log_t *store) {
     *gp = (gp_proxy_t){0};
     gp->store = store;
@@ -138,7 +225,18 @@ size_t gp_proxy_rx(gp_proxy_t *gp, const uint8_t *nwk, size_t len, uint8_t mac_s
                    uint8_t *zcl, size_t cap) {
     gpdf_t g;
     gp->stats.gpdf_rx++;
+    gp->tx_ready = false;
     if (gpdf_parse(nwk, len, &g) != 0) { gp->stats.malformed++; return 0; }
+    /* On the TempMaster channel (A.3.9.1 step 9a): Channel Requests only. */
+    if (gp->want_channel && gp->want_channel != gp->net_channel && gp->cur_channel == gp->want_channel &&
+        g.cmd != 0xE3) {
+        gp->stats.off_channel_dropped++;
+        return 0;
+    }
+    reply_if_queued(gp, &g, now_ms);
+    /* A Channel Request we just answered is not forwarded again: the sink
+     * would answer it once more and keep the radio off the network channel. */
+    if (gp->tx_ready && g.cmd == 0xE3) return 0;
     if (gp->commissioning && gp->commissioning_until && (int32_t)(now_ms - gp->commissioning_until) >= 0)
         gp->commissioning = false;
     gp_entry_t *e = find(gp, g.src_id);
@@ -147,6 +245,7 @@ size_t gp_proxy_rx(gp_proxy_t *gp, const uint8_t *nwk, size_t len, uint8_t mac_s
     if (1 + g.payload_len > sizeof plain || 16 + g.payload_len + 8 > cap) { gp->stats.malformed++; return 0; }
     uint32_t counter = g.sec_level >= 2 ? g.counter : mac_seq;
 
+    if (g.frame_type == 1 && !gp->commissioning) { gp->stats.malformed++; return 0; }
     if (commissioning_cmd && (gp->commissioning || g.cmd == 0xE1)) {
         /* GP Commissioning Notification (A.3.3.4.3). */
         bool failed = false;
@@ -228,6 +327,7 @@ void gp_proxy_host_frame(gp_proxy_t *gp, const uint8_t *zcl, size_t len, uint32_
         if (enter && !gp->commissioning_until) gp->commissioning_until = 1;
         return;
     }
+    if (cmd == 0x06) { gp_response(gp, p, n, now_ms); return; }   /* GP Response */
     if (cmd != 0x01 || n < 7) return;                         /* GP Pairing */
     uint32_t options = (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16;
     if ((options & 7u) != 0) return;                          /* SrcID application only */

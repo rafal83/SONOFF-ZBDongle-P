@@ -115,6 +115,12 @@ typedef struct {
 } app_perf_t;
 extern app_perf_t app_perf;
 
+/* Green Power TempMaster transmissions (radio task). */
+typedef struct {
+    uint32_t tx_started, tx_ok, tx_failed, tx_missed, coord_tx_deferred, channel_moves, channel_failed;
+} app_gp_stats_t;
+extern app_gp_stats_t app_gp;
+
 void host_task_create(void);
 void radio_task_create(void);
 void supervisor_task_create(void);

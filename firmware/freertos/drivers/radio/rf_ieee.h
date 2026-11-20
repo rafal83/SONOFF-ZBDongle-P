@@ -46,6 +46,7 @@ typedef struct {
     uint32_t rx_frames, rx_crc_fail, rx_ignored, rx_buf_full, rx_overflow_restarts;
     uint32_t rx_dropped_parse;
     uint32_t tx_attempts, tx_ok, tx_no_ack, tx_busy, tx_error, tx_ack_pending;
+    uint32_t tx_timed;       /* rf_tx_at transmissions started */
     uint32_t internal_errors, synth_no_lock, src_match_overflow;
     uint32_t isr_count, isr_max_cycles;
     int8_t last_rssi, max_rssi;
@@ -66,6 +67,12 @@ int rf_rx_start(const rf_rx_config_t *config);
 int rf_rx_stop(void);
 /* Take the next received frame, if any. Frees its hardware entry. */
 bool rf_rx_take(rf_rx_frame_t *out);
+/* Timed TX (no CSMA, no ACK) at the absolute radio time `rat_start` (4 MHz
+ * RAT, see rf_rat_now), between RF_TX_AT_MIN_LEAD and RF_TX_AT_MAX_LEAD
+ * ticks from now; completion through rf_tx_poll (RF_TX_DONE / RF_TX_ERROR). */
+#define RF_TX_AT_MIN_LEAD 1200u      /* 300 us: command setup before the trigger */
+#define RF_TX_AT_MAX_LEAD 200000u    /* 50 ms */
+int rf_tx_at(const uint8_t *mpdu, uint8_t length, uint32_t rat_start);
 /* Start CSMA-CA + TX (+ ACK wait). mpdu excludes the FCS. RX must run. */
 int rf_tx_start(const uint8_t *mpdu, uint8_t length, bool wait_ack, uint8_t max_backoffs);
 /* Poll after a notify: returns true once the TX chain finished. */

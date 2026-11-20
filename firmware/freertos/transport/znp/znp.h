@@ -53,6 +53,13 @@ typedef struct {
     uint32_t revision;     /* SYS_VERSION revision (herdsman feature detection) */
     uint8_t product;       /* SYS_VERSION product */
     uint8_t major, minor, maint;
+    /* Green Power TempMaster (optional, NULL: replies to bidirectional GPDs
+     * are not transmitted). gp_tx: transmit `mpdu` (no FCS) without CSMA,
+     * gpTxOffset after the END of the frame being processed (called from
+     * inside the processing of that received frame). gp_channel: move the
+     * receiver (and the coordinator's transmissions) to `channel`. */
+    bool (*gp_tx)(void *ctx, const uint8_t *mpdu, uint8_t len);
+    bool (*gp_channel)(void *ctx, uint8_t channel);
 } znp_platform_t;
 
 typedef struct {
@@ -60,6 +67,8 @@ typedef struct {
     zb_coord_t *coord;
     nv_log_t *store;
     gp_proxy_t gp;                     /* Green Power proxy (basic) */
+    uint8_t gp_off_channel;            /* TempMaster channel the radio is on, 0: network channel */
+    struct { uint32_t tx, tx_failed, channel_moves, channel_failed; } gp_stats;
     uint64_t ieee;
     uint8_t dev_state;
     bool formed;                       /* a network exists (restored or formed) */
