@@ -16,16 +16,16 @@ Valeurs au **20 novembre 2026**. Ce résumé est tenu à jour avec [le détail, 
 
 **Réseau réel :** dongle de production, 130 appareils, lecture d'un attribut sur chaque routeur.
 
-| | Notre firmware (72bc038) | Z-Stack Koenkk 20250321 | ZeroStack (SMLIGHT) |
+| | Notre firmware (1e7b645) | Z-Stack Koenkk 20250321 | ZeroStack (SMLIGHT) |
 |---|---|---|---|
-| Rafale sur tous les routeurs : réponses des routeurs joignables | 89,2 % (meilleure session : 93,3 %) | **100 %** | non mesuré (binaire fermé) |
-| Lecture isolée, médiane | 66 à 78 ms selon la session | 51 ms | non mesuré |
+| Rafale sur tous les routeurs : réponses des routeurs joignables | 95,3 % (2 rafales sur 8 à 100 %) | **100 %** | non mesuré (binaire fermé) |
+| Lecture isolée, médiane | 65 ms (43 à 78 ms selon la session) | 51 ms | non mesuré |
 
 **CPU :** mesuré sur le dongle ou dans l'émulateur. Les chiffres de ZeroStack et du « Z-Stack stock » sont ceux publiés par SMLIGHT ; ils n'ont pas été reproduits.
 
 | | Notre firmware | ZeroStack (publié) | Z-Stack « stock » (selon SMLIGHT) |
 |---|---|---|---|
-| Sécurité d'une trame (CCM\*), sur le dongle | 8 984 cycles (0,19 ms), CCM natif | **≈ 3 900 cycles** | 532 182 cycles |
+| Sécurité d'une trame (CCM\*), sur le dongle | ≈ 3 700 cycles en trafic réel, contrôles logiciels compris (3 171 sans) | ≈ 3 900 cycles | 532 182 cycles |
 | Écho de broadcast (1 000 échos, 50 routeurs) | **≈ 53 ms** au total | 151 ms | 3 s |
 | Trame rejouée | 2 474 cycles | **1 550 cycles** | 143 802 cycles |
 | Écritures avant compaction, 200 appareils | 405 | **1 013** (store vide) | 69 |
