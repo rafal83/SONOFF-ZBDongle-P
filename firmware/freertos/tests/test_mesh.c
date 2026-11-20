@@ -651,6 +651,17 @@ int main(void) {
         h = hdr(NWK_TYPE_DATA, r.short_addr, 0x0000, 0x71);   /* same APS counter, new NWK frame */
         hop_send(&r, &h, aps, sizeof aps, 0x0000, true);
         CHECK(aps_up == up + 1 && coord.stats.aps_duplicates == dups + 1);
+        /* Same APS counter, OTHER content (a device reusing its counter, e.g.
+         * the response right after a report): a new frame, delivered. */
+        uint8_t other[sizeof aps];
+        memcpy(other, aps, sizeof other);
+        other[9] = 0x06;   /* another ZCL sequence number */
+        h = hdr(NWK_TYPE_DATA, r.short_addr, 0x0000, 0x72);
+        hop_send(&r, &h, other, sizeof other, 0x0000, true);
+        CHECK(aps_up == up + 2 && coord.stats.aps_duplicates == dups + 1 && coord.stats.aps_counter_reuse == 1);
+        h = hdr(NWK_TYPE_DATA, r.short_addr, 0x0000, 0x73);   /* and ITS retransmission is a duplicate */
+        hop_send(&r, &h, other, sizeof other, 0x0000, true);
+        CHECK(aps_up == up + 2 && coord.stats.aps_duplicates == dups + 2);
     }
     /* ---- Local Mgmt_Lqi / Mgmt_Rtg (Zigbee2MQTT network map) ----------- */
     {

@@ -171,6 +171,7 @@ typedef struct {
     uint32_t early_mtorr_deferred;   /* early many-to-one request moved to the end of the minimum gap */
     uint32_t disc_buffered, disc_sent, disc_expired;   /* frames held during route discovery */
     uint32_t rreq_coalesced;     /* no new Route Request: one for that destination is pending */
+    uint32_t aps_counter_reuse;  /* same source and APS counter, other content: NOT a duplicate */
     uint32_t frag_rx_ok, frag_rx_dropped, frag_tx_ok, frag_tx_failed, frag_tx_retries;
     uint32_t channel_changes, key_updates, key_switches, gpdf_rx;
 } zb_coord_stats_t;
@@ -216,7 +217,7 @@ typedef struct {
     } bcast[ZB_BCAST_PENDING];
     struct { uint16_t originator, sender; uint8_t id, cost; uint32_t ms; bool used; } rdisc[ZB_ROUTE_DISCOVERIES];
     /* APS duplicate rejection: (source, APS counter) seen recently. */
-    struct { uint16_t src; uint8_t counter; uint32_t ms; bool used; } aps_dup[ZB_APS_DUP_TABLE];
+    struct { uint16_t src, hash; uint8_t counter; uint32_t ms; bool used; } aps_dup[ZB_APS_DUP_TABLE];
     uint8_t aps_dup_next;
     /* Routing outcome of each pending unicast (route repair on failure). */
     struct { uint16_t dst, mac_dst, relayed_src; uint8_t handle; bool used; } tx_track[ZB_TX_TRACK];

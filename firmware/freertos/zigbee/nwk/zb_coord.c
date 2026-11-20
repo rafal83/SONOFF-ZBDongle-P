@@ -565,7 +565,7 @@ static void send_link_status(zb_coord_t *c) {
 }
 
 /* APS command, APS-secured with `key` under key identifier `key_id`. */
-static bool aps_fresh(zb_coord_t *c, uint16_t src, uint8_t counter);
+static bool aps_fresh(zb_coord_t *c, uint16_t src, uint8_t counter, uint16_t cluster, const uint8_t *data, size_t len);
 static void send_aps_ack(zb_coord_t *c, const nwk_header_t *h, const aps_header_t *a, const uint8_t *key);
 /* ---- APS fragmentation (window of one block) ---------------------------- */
 static void frag_tx_finish(zb_coord_t *c, uint8_t status) {
@@ -691,7 +691,7 @@ static void frag_rx(zb_coord_t *c, const nwk_header_t *h, const aps_header_t *a,
     whole.extended = false;
     whole.fragmentation = APS_FRAG_NONE;
     s->used = false;
-    if (!aps_fresh(c, h->src, s->counter)) { c->stats.aps_duplicates++; return; }
+    if (!aps_fresh(c, h->src, s->counter, a->cluster, s->data, s->len)) { c->stats.aps_duplicates++; return; }
     c->stats.frag_rx_ok++;
     if (c->upper.aps_data) {
         c->stats.aps_data_up++;
@@ -793,15 +793,34 @@ uint8_t zb_coord_send_aps_secured(zb_coord_t *c, uint16_t dst, uint8_t dst_ep, u
 }
 
 /* APS duplicate rejection (Zigbee 2.2.8.4.2): true when (src, counter) is new. */
-static bool aps_fresh(zb_coord_t *c, uint16_t src, uint8_t counter) {
+/* APS duplicate rejection. A duplicate is a RETRANSMISSION: same source,
+ * same APS counter AND same content (cluster + payload, 16-bit FNV-1a).
+ * Some devices reuse their APS counter for different frames (e.g. the
+ * response to a request right after a report): with the counter alone, such
+ * a fresh response was dropped as a duplicate. */
+static uint16_t aps_hash(uint16_t cluster, const uint8_t *data, size_t len) {
+    uint32_t h = 2166136261u;
+    h = (h ^ (cluster & 0xFFu)) * 16777619u;
+    h = (h ^ (cluster >> 8)) * 16777619u;
+    for (size_t i = 0; i < len; i++) h = (h ^ data[i]) * 16777619u;
+    return (uint16_t)(h ^ (h >> 16));
+}
+
+static bool aps_fresh(zb_coord_t *c, uint16_t src, uint8_t counter, uint16_t cluster, const uint8_t *data, size_t len) {
+    uint16_t hash = aps_hash(cluster, data, len);
+    bool reuse = false;
     for (unsigned i = 0; i < ZB_APS_DUP_TABLE; i++) {
         if (!c->aps_dup[i].used || c->now_ms - c->aps_dup[i].ms > ZB_APS_DUP_MS) continue;
-        if (c->aps_dup[i].src == src && c->aps_dup[i].counter == counter) return false;
+        if (c->aps_dup[i].src != src || c->aps_dup[i].counter != counter) continue;
+        if (c->aps_dup[i].hash == hash) return false;
+        reuse = true;
     }
+    if (reuse) c->stats.aps_counter_reuse++;
     unsigned i = c->aps_dup_next++ % ZB_APS_DUP_TABLE;
     c->aps_dup[i].used = true;
     c->aps_dup[i].src = src;
     c->aps_dup[i].counter = counter;
+    c->aps_dup[i].hash = hash;
     c->aps_dup[i].ms = c->now_ms;
     return true;
 }
@@ -1690,7 +1709,7 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
     }
     if (a.ack_request && !nwk_is_broadcast(h.dst) && a.delivery == APS_DELIVERY_UNICAST)
         send_aps_ack(c, &h, &a, a.security ? aps_key : 0);   /* re-acknowledged even if duplicate */
-    if (!aps_fresh(c, h.src, a.counter)) { c->stats.aps_duplicates++; return; }
+    if (!aps_fresh(c, h.src, a.counter, a.cluster, a.payload, a.payload_len)) { c->stats.aps_duplicates++; return; }
     if (a.profile == ZDO_PROFILE && a.dst_endpoint == 0 && a.delivery != APS_DELIVERY_GROUP) {
         if (a.cluster == ZDO_DEVICE_ANNOUNCE) {
             handle_announce(c, &h, f->src_mode == MAC_ADDR_SHORT ? f->src_short : 0xFFFF, aux.source, a.payload,
