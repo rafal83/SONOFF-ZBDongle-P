@@ -21,7 +21,12 @@ Suites (each run is repeated with --seeds seeds, the median is reported):
   sleepy   10, 20, 40 sleepy end devices (children of the coordinator and of
            routers), spread or simultaneous wake-ups, a congested router,
            a parent lost during the run, a child moving to
-           a router without a rejoin we hear (herdsman's assocRemove recovery).
+           a router without a rejoin we hear (herdsman's assocRemove recovery);
+  bursts   tools/znp_prod_bench.cjs on the simulator: one read to each of the
+           28 routers at once every 12 s (no 16-transaction window), 120 s,
+           with no faulty relay, then with a relay losing 30 % of what it
+           relays (a router that "does not always react"): first-attempt
+           failures are what the production bench counts.
 """
 import argparse
 import json
@@ -134,7 +139,7 @@ def main():
                     help="tools/bench_transaction_cpu.py output (default instruction counts otherwise)")
     ap.add_argument("--seeds", type=int, default=3)
     ap.add_argument("--duration", type=float, default=30)
-    ap.add_argument("--suites", default="levels,max,reports,sleepy")
+    ap.add_argument("--suites", default="levels,max,reports,sleepy,bursts")
     ap.add_argument("--quick", action="store_true", help="1 seed, 15 s runs")
     ap.add_argument("--extra", default="", help="options appended to every net_bench run (e.g. '--tick-every-wake 1')")
     args = ap.parse_args()
@@ -213,6 +218,20 @@ def main():
             r = runner.run(name, **opts)
             report["sleepy"][name] = r
             lines.append(row(name, r))
+    if "bursts" in suites:
+        report["bursts"] = {}
+        lines += ["", "| Rafales (28 lectures ensemble, toutes les 12 s) | Lectures | Échecs au 1er essai | Réussite finale % | "
+                  "Bout en bout p95 (ms) | Trames perdues par le relais |", "|---|---|---|---|---|---|"]
+        for relay in (0, 1, 2):
+            opts = dict(rate=0, burst_size=28, burst_every_ms=12000, concurrency=32, duration=120)
+            if relay:
+                opts.update(lossy_relay=relay, lossy_pct=30)
+            name = f"bursts-relay{relay}"
+            r = runner.run(name, **opts)
+            report["bursts"][name] = r
+            label = "aucun relais défaillant" if not relay else f"relais {relay} perdant 30 %"
+            lines.append(f"| {label} | {r['offered']:.0f} | {r['retransmissions']['host_retries']:.0f} | "
+                         f"{r['success_pct']:.2f} | {r['latency_ms']['p95']:.0f} | {r['radio'].get('lossy_relay_drops', 0):.0f} |")
     (out / "summary.json").write_text(json.dumps(report, indent=1) + "\n")
     (out / "summary.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))

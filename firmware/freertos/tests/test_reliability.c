@@ -194,7 +194,15 @@ static void znp_out(void *ctx, uint8_t c0, uint8_t c1, const uint8_t *p, uint8_t
     memcpy(znp_last, p, n);
 }
 static uint8_t tl_last_channel;
-static bool tl_channel(void *ctx, uint8_t channel) { (void)ctx; tl_last_channel = channel; return true; }
+static unsigned tl_fail_left, tl_net_up_calls, tl_resets;   /* radio that fails to change channel */
+static bool tl_channel(void *ctx, uint8_t channel) {
+    (void)ctx;
+    if (tl_fail_left) { tl_fail_left--; return false; }
+    tl_last_channel = channel;
+    return true;
+}
+static void tl_net_up(void *ctx, uint8_t channel) { (void)ctx; (void)channel; tl_net_up_calls++; }
+static void tl_reset(void *ctx) { (void)ctx; tl_resets++; }
 static void read_answer(node_dev_t *d, uint8_t tsn) {
     const uint8_t aps[8 + 8] = {0x00, 0x01, 0x00, 0x00, 0x04, 0x01, 0x01, d->aps++,
                                 0x18, tsn, 0x01, 0x05, 0x00, 0x00, 0x20, 0x01};
@@ -399,6 +407,54 @@ int main(void) {
         seen_t s;
         CHECK(take(&s) && s.mac.dst_short == moved.short_addr);
         printf("reliability: a device polling us becomes our child\n");
+    }
+
+    /* 5b. Re-association while the indirect queue is full: 16 frames wait
+     *     for sleepy children (a 17th is refused), a sleeper that lost its
+     *     parent sends a secured Rejoin Request: its Rejoin Response is still
+     *     queued and handed over on its poll (IEEE source). */
+    {
+        advance(8000);   /* earlier indirect frames expired */
+        drain(0);
+        for (unsigned i = 0; i < 16; i++) CHECK(read_to(&sleeper[i], (uint8_t)(0x60 + i)) == ZB_SEND_OK);
+        node_dev_t extra, lost;
+        dev_init(&extra, 0x3600, 0x00158D0000AC0002ull, true, 0x80, true);
+        CHECK(read_to(&extra, 0x70) != ZB_SEND_OK);                   /* data slots full */
+        dev_init(&lost, 0x3601, 0x00158D0000AC0003ull, false, 0x80, true);
+        const uint8_t rj[2] = {0x06, 0x80};
+        nwk_header_t h = {0};
+        h.type = NWK_TYPE_COMMAND; h.src = lost.short_addr; h.dst = 0x0000; h.radius = 1; h.seq = lost.nwk_seq++;
+        h.has_src_ieee = true; h.src_ieee = lost.ext;
+        uint8_t nwk[CORE_SECURITY_MAX_FRAME];
+        size_t hl = nwk_build(&h, nwk, sizeof nwk);
+        memcpy(nwk + hl, rj, sizeof rj);
+        uint8_t local[8];
+        for (unsigned i = 0; i < 8; i++) local[i] = (uint8_t)(lost.ext >> (8 * i));
+        size_t total;
+        CHECK(core_security_seal(&lost.sec, 0, local, nwk, hl, sizeof rj, sizeof nwk, &total));
+        mac_frame_t f = {0};
+        f.type = MAC_TYPE_DATA; f.pan_id_compression = true; f.ack_request = true; f.seq = lost.mac_seq++;
+        f.dst_mode = MAC_ADDR_SHORT; f.dst_pan = PAN; f.dst_short = 0x0000;
+        f.src_mode = MAC_ADDR_EXT; f.src_ext = lost.ext;
+        uint8_t mpdu[MAC_MAX_MPDU];
+        size_t n = mac_frame_build(&f, nwk, total, mpdu, sizeof mpdu);
+        uint32_t rejoins0 = coord.stats.rejoins, full0 = coord.mac.stats.queue_full;
+        zb_coord_rx(&coord, mpdu, (uint8_t)n, 200, -50);
+        CHECK(coord.stats.rejoins == rejoins0 + 1 && coord.mac.stats.queue_full == full0);   /* queued */
+        CHECK(air_head == air_tail);                                     /* waits for its poll */
+        const uint8_t cmd = MAC_CMD_DATA_REQUEST;
+        mac_frame_t pf = {0};
+        pf.type = MAC_TYPE_COMMAND; pf.ack_request = true; pf.pan_id_compression = true; pf.seq = lost.mac_seq++;
+        pf.dst_mode = MAC_ADDR_SHORT; pf.dst_pan = PAN; pf.dst_short = 0x0000;
+        pf.src_mode = MAC_ADDR_EXT; pf.src_ext = lost.ext;
+        n = mac_frame_build(&pf, &cmd, 1, mpdu, sizeof mpdu);
+        zb_coord_rx(&coord, mpdu, (uint8_t)n, 200, -50);
+        seen_t s;
+        CHECK(take(&s) && s.mac.dst_mode == MAC_ADDR_EXT && s.mac.dst_ext == lost.ext && s.ok &&
+              s.nwk.type == NWK_TYPE_COMMAND && s.plain[s.nwk.header_len + 14] == 0x07);   /* Rejoin Response */
+        advance(8000);   /* the children's frames expire */
+        drain(0);
+        printf("reliability: rejoin response queued and delivered while 16 frames filled the indirect queue\n");
     }
 
     /* 6. Capacities: 12 extended-address transactions at once; 12 poll
@@ -650,6 +706,85 @@ int main(void) {
         printf("reliability: stale counter floor of a v1-tag twin not inherited, own floor applied\n");
     }
 
+    /* 11c. Re-pairing clears the persisted floor on every real path, across
+     *      a reboot: direct re-association, then Update Device "fresh join"
+     *      (status 1) relayed by a router. The device restarts its counters. */
+    {
+        static nv_log_t log;
+        static const nv_flash_ops_t OPS = {nor_read, nor_program, nor_erase, 0};
+        memset(nor, 0xFF, sizeof nor);
+        CHECK(nv_log_mount(&log, &OPS, 0, NOR_BANK, NOR_SECTOR) || nv_log_format(&log));
+        static zb_coord_t ca, cb, cc;
+        const uint8_t epid4[8] = {4, 4, 4, 4, 4, 4, 4, 4};
+        zb_coord_init(&ca, &RADIO, &upper, 0x00124B000000CCCCull, 0x5555u, 1);
+        zb_coord_attach_store(&ca, &log);
+        zb_coord_form(&ca, PAN, 25, epid4, KEY, 0);
+        node_dev_t d, rt;
+        memset(&d, 0, sizeof d);
+        memset(&rt, 0, sizeof rt);
+        dev_init_on(&ca, &d, 0x7979, 0x00158D0000FA0001ull);
+        dev_init_on(&ca, &rt, 0x1212, 0x00158D0000FA0002ull);
+        uint8_t mpdu[MAC_MAX_MPDU];
+        size_t n;
+        /* frames 1020..1029: floor 1024 persisted */
+        d.sec.tx_next = d.sec.tx_reserved = 1020;
+        for (unsigned i = 0; i < 10; i++) {
+            const uint8_t aps[8 + 3] = {0x00, 0x01, 0x06, 0x00, 0x04, 0x01, 0x01, d.aps++, 0x18, (uint8_t)i, 0x0A};
+            n = build_from(&d, d.short_addr, d.short_addr, NWK_TYPE_DATA, aps, sizeof aps, mpdu);
+            zb_coord_rx(&ca, mpdu, (uint8_t)n, 200, -50);
+        }
+        CHECK(ca.stats.nwk_auth_failures == 0 && ca.stats.nwk_counters_stored >= 2);
+        /* re-pairing 1: direct (MAC) association */
+        zb_coord_permit_join(&ca, 60);
+        mac_frame_t f = {0};
+        const uint8_t assoc[2] = {MAC_CMD_ASSOC_REQUEST, 0x8E};
+        f.type = MAC_TYPE_COMMAND; f.ack_request = true; f.seq = d.mac_seq++;
+        f.dst_mode = MAC_ADDR_SHORT; f.dst_pan = PAN; f.dst_short = 0x0000;
+        f.src_mode = MAC_ADDR_EXT; f.src_pan = 0xFFFF; f.src_ext = d.ext;
+        n = mac_frame_build(&f, assoc, sizeof assoc, mpdu, sizeof mpdu);
+        uint32_t accepted0 = ca.stats.associations_accepted;
+        zb_coord_rx(&ca, mpdu, (uint8_t)n, 200, -50);
+        CHECK(ca.stats.associations_accepted == accepted0 + 1);
+        air_head = air_tail;
+        zb_coord_init(&cb, &RADIO, &upper, 0x00124B000000CCCCull, 0x6666u, 1);   /* reboot */
+        zb_coord_attach_store(&cb, &log);
+        CHECK(zb_coord_restore(&cb) && cb.stats.nwk_counters_restored == 0);
+        d.short_addr = cb.devices.dev[nwk_devices_find_ext(&cb.devices, d.ext)].short_addr;
+        d.sec.tx_next = d.sec.tx_reserved = 3;   /* restarted counters */
+        const uint8_t aps1[8 + 3] = {0x00, 0x01, 0x06, 0x00, 0x04, 0x01, 0x01, d.aps++, 0x18, 0x31, 0x0A};
+        n = build_from(&d, d.short_addr, d.short_addr, NWK_TYPE_DATA, aps1, sizeof aps1, mpdu);
+        zb_coord_rx(&cb, mpdu, (uint8_t)n, 200, -50);
+        CHECK(cb.stats.nwk_auth_failures == 0);
+        /* frames 2040..2049: floor 2048 persisted again */
+        d.sec.tx_next = d.sec.tx_reserved = 2040;
+        for (unsigned i = 0; i < 10; i++) {
+            const uint8_t aps[8 + 3] = {0x00, 0x01, 0x06, 0x00, 0x04, 0x01, 0x01, d.aps++, 0x18, (uint8_t)(0x40 + i), 0x0A};
+            n = build_from(&d, d.short_addr, d.short_addr, NWK_TYPE_DATA, aps, sizeof aps, mpdu);
+            zb_coord_rx(&cb, mpdu, (uint8_t)n, 200, -50);
+        }
+        CHECK(cb.stats.nwk_auth_failures == 0);
+        /* re-pairing 2: through a router, APS Update Device status 1 (fresh join) */
+        zb_coord_permit_join(&cb, 60);
+        uint8_t upd[2 + 12] = {0x01, rt.aps++, 0x06};
+        for (unsigned i = 0; i < 8; i++) upd[3 + i] = (uint8_t)(d.ext >> (8 * i));
+        upd[11] = (uint8_t)d.short_addr; upd[12] = (uint8_t)(d.short_addr >> 8); upd[13] = 0x01;
+        uint32_t upd0 = cb.stats.update_device;
+        n = build_from(&rt, rt.short_addr, rt.short_addr, NWK_TYPE_DATA, upd, sizeof upd, mpdu);
+        zb_coord_rx(&cb, mpdu, (uint8_t)n, 200, -50);
+        CHECK(cb.stats.update_device == upd0 + 1);
+        air_head = air_tail;
+        zb_coord_init(&cc, &RADIO, &upper, 0x00124B000000CCCCull, 0x7777u, 1);   /* reboot */
+        zb_coord_attach_store(&cc, &log);
+        CHECK(zb_coord_restore(&cc) && cc.stats.nwk_counters_restored == 1);   /* the router's floor only */
+        d.sec.tx_next = d.sec.tx_reserved = 4;
+        const uint8_t aps2[8 + 3] = {0x00, 0x01, 0x06, 0x00, 0x04, 0x01, 0x01, d.aps++, 0x18, 0x32, 0x0A};
+        n = build_from(&d, d.short_addr, d.short_addr, NWK_TYPE_DATA, aps2, sizeof aps2, mpdu);
+        zb_coord_rx(&cc, mpdu, (uint8_t)n, 200, -50);
+        CHECK(cc.stats.nwk_auth_failures == 0);
+        air_head = air_tail;
+        printf("reliability: re-pairing (direct association, Update Device fresh join) clears the persisted floor\n");
+    }
+
     /* 12. Touchlink through ZNP, as herdsman drives it: interPanCtl (channel,
      *     endpoint 12), Scan Request broadcast on PAN 0xFFFF, Scan Response
      *     back as AF_INCOMING_MSG_EXT; nothing passed up once restored. */
@@ -657,7 +792,7 @@ int main(void) {
         static znp_t zt;
         static zb_coord_t zc;
         static const znp_platform_t PLAT = {.send = znp_out, .product = ZNP_PRODUCT_ZSTACK3X0, .revision = 20261120u,
-                                            .gp_channel = tl_channel};
+                                            .gp_channel = tl_channel, .network_up = tl_net_up, .reset = tl_reset};
         znp_boot(&zt, &PLAT, &zc, &RADIO, 0, 0x00124B000000C0DEull, 0x77u, 0);
         zc.upper.reserve_nwk_counter = reserve;
         zb_coord_form(&zc, 0x6A6A, 20, epid, KEY, 0);
@@ -734,6 +869,37 @@ int main(void) {
         zb_coord_tick(&zc, t0 + ZNP_INTERPAN_IDLE_MS + 100);
         znp_poll(&zt);
         CHECK(zt.interpan_channel == 0 && tl_last_channel == 20 && zt.interpan_stats.timeouts == 1);
+        /* the radio does not come back at once: bounded retries, it recovers on the 3rd */
+        req[0] = 0x01; req[1] = 11;
+        znp_handle(&zt, 0x24, 0x10, req, 2);
+        CHECK(znp_last[0] == 0 && tl_last_channel == 11);
+        tl_fail_left = 3;   /* the close, then 2 retries fail */
+        req[0] = 0x00;
+        znp_handle(&zt, 0x24, 0x10, req, 1);
+        CHECK(znp_last[0] != 0 && zt.radio_recover == 1 && zt.interpan_stats.restore_failed == 1);   /* told */
+        req[0] = 0x01; req[1] = 15;
+        znp_handle(&zt, 0x24, 0x10, req, 2);
+        CHECK(znp_last[0] != 0 && tl_last_channel == 11);   /* no new session while recovering */
+        uint32_t t1 = zc.now_ms;
+        for (unsigned i = 0; i < 400 && zt.radio_recover; i++) { t1 += 50; zb_coord_tick(&zc, t1); znp_poll(&zt); }
+        CHECK(!zt.radio_recover && tl_last_channel == 20 && zt.interpan_stats.restore_retries == 3 &&
+              zt.interpan_stats.restore_recovered == 1 && tl_net_up_calls == 0 && tl_resets == 0);
+        CHECK(t1 - t0 - ZNP_INTERPAN_IDLE_MS < 2000u);   /* 100 + 200 + 400 ms of retries */
+        /* it never comes back: 6 retries, one full radio restart, then a reboot */
+        req[0] = 0x01; req[1] = 11;
+        znp_handle(&zt, 0x24, 0x10, req, 2);
+        CHECK(znp_last[0] == 0);
+        tl_fail_left = 1000;
+        uint32_t start = zc.now_ms, retries0 = zt.interpan_stats.restore_retries;
+        req[0] = 0x00;
+        znp_handle(&zt, 0x24, 0x10, req, 1);
+        t1 = zc.now_ms;
+        for (unsigned i = 0; i < 800 && zt.radio_recover; i++) { t1 += 50; zb_coord_tick(&zc, t1); znp_poll(&zt); }
+        CHECK(!zt.radio_recover && zt.interpan_stats.restore_retries == retries0 + ZNP_RECOVER_RETRIES);
+        CHECK(zt.interpan_stats.restore_restarts == 1 && tl_net_up_calls == 1);
+        CHECK(zt.interpan_stats.restore_reboots == 1 && tl_resets == 1);
+        CHECK(t1 - start < 15000u);   /* deaf for ~13 s at most */
+        tl_fail_left = 0;
         printf("reliability: Touchlink scan request sent inter-PAN, scan response passed up, other inter-PAN frames "
                "dropped, session closed (by the host or after %u s idle)\n", ZNP_INTERPAN_IDLE_MS / 1000u);
     }

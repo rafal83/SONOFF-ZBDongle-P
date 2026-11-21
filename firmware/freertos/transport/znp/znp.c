@@ -635,7 +635,40 @@ static bool interpan_close(znp_t *z) {
     bool ok = true;
     if (z->interpan_channel && z->p.gp_channel) ok = z->p.gp_channel(z->p.ctx, z->coord->mac.channel);
     z->interpan_channel = 0;
+    if (!ok) {   /* recovered by radio_recover_service */
+        z->interpan_stats.restore_failed++;
+        z->radio_recover = 1;
+        z->radio_recover_at_ms = z->coord->now_ms + ZNP_RECOVER_FIRST_MS;
+    }
     return ok;
+}
+
+/* Bounded recovery of a radio left off the network channel (see
+ * ZNP_RECOVER_RETRIES): channel moves with a doubling delay, one full
+ * restart, then a reboot. */
+static void radio_recover_service(znp_t *z) {
+    if (!z->radio_recover || (int32_t)(z->coord->now_ms - z->radio_recover_at_ms) < 0) return;
+    uint8_t net = z->coord->mac.channel;
+    if (z->radio_recover > ZNP_RECOVER_RETRIES + 1u) {
+        z->interpan_stats.restore_reboots++;
+        z->radio_recover = 0;
+        if (z->p.reset) z->p.reset(z->p.ctx);
+        return;
+    }
+    if (z->radio_recover == ZNP_RECOVER_RETRIES + 1u) {
+        z->interpan_stats.restore_restarts++;
+        if (z->p.network_up) z->p.network_up(z->p.ctx, net);   /* RF core powered down and up */
+    } else {
+        z->interpan_stats.restore_retries++;
+    }
+    if (z->p.gp_channel && z->p.gp_channel(z->p.ctx, net)) {
+        z->interpan_stats.restore_recovered++;
+        z->radio_recover = 0;
+        return;
+    }
+    uint8_t shift = z->radio_recover < 6u ? z->radio_recover : 5u;
+    z->radio_recover_at_ms = z->coord->now_ms + (ZNP_RECOVER_FIRST_MS << shift);
+    z->radio_recover++;
 }
 
 void znp_poll(znp_t *z) {
@@ -643,6 +676,7 @@ void znp_poll(znp_t *z) {
         (void)interpan_close(z);
         z->interpan_stats.timeouts++;
     }
+    radio_recover_service(z);
     gp_channel_service(z);
     if (z->form_pending) {
         z->form_pending = false;
@@ -1124,7 +1158,7 @@ static void handle_af(znp_t *z, uint8_t cmd, const uint8_t *in, uint8_t n) {
         uint8_t status = ST_FAILURE;
         if (in[0] == 0) {
             status = interpan_close(z) ? ST_SUCCESS : ST_FAILURE;   /* the host learns the radio is deaf */
-        } else if (in[0] == 1 && n == 2 && in[1] >= 11 && in[1] <= 26 && z->p.gp_channel) {
+        } else if (in[0] == 1 && n == 2 && in[1] >= 11 && in[1] <= 26 && z->p.gp_channel && !z->radio_recover) {
             if (z->p.gp_channel(z->p.ctx, in[1])) {
                 z->interpan_channel = in[1];
                 z->interpan_last_ms = z->coord->now_ms;
@@ -1260,7 +1294,7 @@ static void up_gpdf(void *ctx, const uint8_t *nwk, size_t len, uint8_t mac_seq, 
 /* TempMaster on another channel: the radio follows what the GP proxy asks
  * (gp_proxy_tick), back to the network channel when done or expired. */
 static void gp_channel_service(znp_t *z) {
-    if (!z->p.gp_channel || z->interpan_channel) return;   /* Touchlink owns the radio */
+    if (!z->p.gp_channel || z->interpan_channel || z->radio_recover) return;   /* Touchlink owns the radio */
     z->gp.net_channel = z->coord->mac.channel;
     uint8_t want = gp_proxy_tick(&z->gp, z->coord->now_ms);
     if (want == z->coord->mac.channel) want = 0;

@@ -210,6 +210,10 @@ static int diag_perf(le_writer_t *w) {
         app_gp.channel_moves, app_gp.channel_failed,
         /* 44..47: native CCM* profile (cycles summed over aes_ccm_ops) */
         hs.prof_setup, hs.prof_aad, hs.prof_data, hs.prof_tail,
+        /* 48..55: Touchlink sessions and radio recovery */
+        app_touchlink.timeouts, app_touchlink.rx_dropped, app_touchlink.restore_failed,
+        app_touchlink.restore_retries, app_touchlink.restore_recovered, app_touchlink.restore_restarts,
+        app_touchlink.restore_reboots, app_touchlink.recovering,
     };
     le_u8(w, (uint8_t)(sizeof values / sizeof values[0]));
     for (unsigned i = 0; i < sizeof values / sizeof values[0]; i++) le_u32(w, values[i]);
