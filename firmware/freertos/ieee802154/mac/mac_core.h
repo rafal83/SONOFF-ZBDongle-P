@@ -36,9 +36,11 @@
  * 20 November: 32 simultaneous reads, about half lost); Z-Stack queues up
  * to 48 NWK buffers. */
 #define MAC_POOL_SLOTS 48u
-/* Indirect transactions may wait 7.68 s each: they never take more than
- * this many frame buffers, so direct traffic (link status, routed frames,
- * many-to-one requests) always finds MAC_POOL_SLOTS - MAC_INDIRECT_SLOTS. */
+/* Indirect transactions may wait 7.68 s each: short-addressed ones (data for
+ * sleepy children) never take more than this many frame buffers, IEEE-
+ * addressed ones (association / rejoin responses) at most MAC_EXT_INDIRECT,
+ * so direct traffic (link status, routed frames, many-to-one requests)
+ * always finds MAC_POOL_SLOTS - MAC_INDIRECT_SLOTS - MAC_EXT_INDIRECT. */
 #define MAC_INDIRECT_SLOTS 16u
 #define MAC_DIRECT_QUEUE 32u
 /* Frames answering a data poll (and beacons) go before everything else: the

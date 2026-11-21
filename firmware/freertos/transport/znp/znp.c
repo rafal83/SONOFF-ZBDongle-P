@@ -630,7 +630,19 @@ static bool form(znp_t *z) {
 
 static void gp_channel_service(znp_t *z);
 
+/* End of a Touchlink session: radio back on the network channel. */
+static bool interpan_close(znp_t *z) {
+    bool ok = true;
+    if (z->interpan_channel && z->p.gp_channel) ok = z->p.gp_channel(z->p.ctx, z->coord->mac.channel);
+    z->interpan_channel = 0;
+    return ok;
+}
+
 void znp_poll(znp_t *z) {
+    if (z->interpan_channel && z->coord->now_ms - z->interpan_last_ms > ZNP_INTERPAN_IDLE_MS) {
+        (void)interpan_close(z);
+        z->interpan_stats.timeouts++;
+    }
     gp_channel_service(z);
     if (z->form_pending) {
         z->form_pending = false;
@@ -1093,6 +1105,7 @@ static void handle_af(znp_t *z, uint8_t cmd, const uint8_t *in, uint8_t n) {
             else {
                 status = zb_coord_send_interpan(z->coord, dst64, pan, get16(in + 13), ep->profile, in + 20, (uint8_t)dlen) ==
                          ZB_SEND_OK ? ST_SUCCESS : ST_FAILURE;
+                z->interpan_last_ms = z->coord->now_ms;
                 if (status == ST_SUCCESS) data_confirm(z, ST_SUCCESS, in[12], in[15]);   /* on hand-over */
             }
         }
@@ -1110,11 +1123,14 @@ static void handle_af(znp_t *z, uint8_t cmd, const uint8_t *in, uint8_t n) {
         if (n < 1) break;
         uint8_t status = ST_FAILURE;
         if (in[0] == 0) {
-            if (z->interpan_channel && z->p.gp_channel) (void)z->p.gp_channel(z->p.ctx, z->coord->mac.channel);
-            z->interpan_channel = 0;
-            status = ST_SUCCESS;
+            status = interpan_close(z) ? ST_SUCCESS : ST_FAILURE;   /* the host learns the radio is deaf */
         } else if (in[0] == 1 && n == 2 && in[1] >= 11 && in[1] <= 26 && z->p.gp_channel) {
-            if (z->p.gp_channel(z->p.ctx, in[1])) { z->interpan_channel = in[1]; status = ST_SUCCESS; }
+            if (z->p.gp_channel(z->p.ctx, in[1])) {
+                z->interpan_channel = in[1];
+                z->interpan_last_ms = z->coord->now_ms;
+                z->gp_off_channel = 0;   /* the radio left any TempMaster channel; GP asks again after */
+                status = ST_SUCCESS;
+            }
         } else if (in[0] == 2 && n == 2 && endpoint(z, in[1])) {
             z->interpan_ep = in[1];
             status = ST_SUCCESS;
@@ -1198,8 +1214,12 @@ static const zb_endpoint_t *endpoint(znp_t *z, uint8_t ep);
 static void up_interpan(void *ctx, bool src_ext, uint64_t src, uint16_t src_pan, bool broadcast, uint16_t cluster,
                         uint16_t profile, const uint8_t *zcl, size_t len, uint8_t lqi) {
     znp_t *z = ctx;
-    (void)profile;
     if (!z->interpan_channel || !z->interpan_ep || len > 200u) return;
+    /* Inter-PAN frames are not secured and their source IEEE is not
+     * authenticated: only Touchlink commissioning is passed up, never what
+     * could pass for a known device's report or command. */
+    if (profile != ZNP_TOUCHLINK_PROFILE || cluster != ZNP_TOUCHLINK_CLUSTER) { z->interpan_stats.rx_dropped++; return; }
+    z->interpan_last_ms = z->coord->now_ms;
     uint8_t out[230];
     size_t k = 0;
     put16(out + k, 0x0000); k += 2;                      /* group */

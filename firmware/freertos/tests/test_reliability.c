@@ -597,6 +597,59 @@ int main(void) {
         printf("reliability: incoming NWK counters restored after a reboot (old frame refused), reset on re-join\n");
     }
 
+    /* 11b. A stale floor left in a slot (its clearing write failed) is not
+     *      inherited by the next device of that slot, even when the two IEEE
+     *      addresses had the same v1 tag (16 bits, low bit forced). Positive
+     *      control: the same floor tagged for the device itself is applied. */
+    {
+        static nv_log_t log;
+        static const nv_flash_ops_t OPS = {nor_read, nor_program, nor_erase, 0};
+        const uint8_t epid3[8] = {3, 3, 3, 3, 3, 3, 3, 3};
+        const uint64_t b_ext = 0x00158D0000DD0001ull;
+        uint64_t a_ext = 0;
+        for (uint64_t cand = 0x00158D0000EE0000ull; !a_ext; cand++) {   /* same v1 tag as b_ext */
+            uint32_t xa = (uint32_t)cand ^ (uint32_t)(cand >> 32), xb = (uint32_t)b_ext ^ (uint32_t)(b_ext >> 32);
+            xa ^= xa >> 16; xb ^= xb >> 16;
+            if (cand != b_ext && (uint16_t)(xa | 1u) == (uint16_t)(xb | 1u)) a_ext = cand;
+        }
+        for (unsigned round = 0; round < 2; round++) {
+            memset(nor, 0xFF, sizeof nor);
+            CHECK(nv_log_mount(&log, &OPS, 0, NOR_BANK, NOR_SECTOR) || nv_log_format(&log));
+            static zb_coord_t c3, c4;
+            zb_coord_init(&c3, &RADIO, &upper, 0x00124B000000BBBBull, 0x3333u, 1);
+            zb_coord_attach_store(&c3, &log);
+            zb_coord_form(&c3, PAN, 25, epid3, KEY, 0);
+            node_dev_t d;
+            memset(&d, 0, sizeof d);
+            dev_init_on(&c3, &d, 0x7878, b_ext);
+            uint16_t slot = nwk_devices_find_ext(&c3.devices, b_ext);
+            CHECK(slot != NWK_DEVICE_NONE);
+            /* stale floor 5000 in the slot: tagged for A (round 0) or for B itself (round 1) */
+            uint64_t owner = round == 0 ? a_ext : b_ext;
+            uint64_t x = owner;   /* the firmware's v2 tag (splitmix64 finalizer, high 32 bits) */
+            x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+            x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+            uint32_t tag = (uint32_t)((x ^ (x >> 31)) >> 32);
+            uint8_t rec[2 + 8 * 16] = {2, c3.key_seq};
+            uint8_t *e = rec + 2 + 8 * (slot % 16);
+            for (unsigned i = 0; i < 4; i++) { e[i] = (uint8_t)(tag >> (8 * i)); e[4 + i] = (uint8_t)(5000u >> (8 * i)); }
+            CHECK(nv_log_write(&log, (uint16_t)(224 + slot / 16), rec, sizeof rec));
+            /* reboot */
+            zb_coord_init(&c4, &RADIO, &upper, 0x00124B000000BBBBull, 0x4444u, 1);
+            zb_coord_attach_store(&c4, &log);
+            CHECK(zb_coord_restore(&c4));
+            CHECK(c4.stats.nwk_counters_restored == round);
+            d.sec.tx_next = d.sec.tx_reserved = 10;   /* well below the stale floor */
+            uint8_t mpdu[MAC_MAX_MPDU];
+            const uint8_t aps[8 + 3] = {0x00, 0x01, 0x06, 0x00, 0x04, 0x01, 0x01, d.aps++, 0x18, 0x21, 0x0A};
+            size_t n = build_from(&d, d.short_addr, d.short_addr, NWK_TYPE_DATA, aps, sizeof aps, mpdu);
+            zb_coord_rx(&c4, mpdu, (uint8_t)n, 200, -50);
+            CHECK(c4.stats.nwk_auth_failures == round);   /* accepted unless the floor is its own */
+            air_head = air_tail;
+        }
+        printf("reliability: stale counter floor of a v1-tag twin not inherited, own floor applied\n");
+    }
+
     /* 12. Touchlink through ZNP, as herdsman drives it: interPanCtl (channel,
      *     endpoint 12), Scan Request broadcast on PAN 0xFFFF, Scan Response
      *     back as AF_INCOMING_MSG_EXT; nothing passed up once restored. */
@@ -652,6 +705,14 @@ int main(void) {
         CHECK(src == 0x0017880100ABCDEFull && znp_last[13] == 0xFE && znp_last[14] == 0x34 && znp_last[15] == 0x12 &&
               znp_last[16] == 12 && znp_last[17] == 0 && znp_last[18] == 180);
         CHECK(znp_last[25] == 8 && znp_last[26] == 0 && !memcmp(znp_last + 27, rsp + 7, 8));
+        /* an inter-PAN frame that is not Touchlink (On/Off report, HA profile,
+         * any source IEEE): unauthenticated, never passed up */
+        const uint8_t spoof[7 + 5] = {0x0B, 0x00, 0x03, 0x06, 0x00, 0x04, 0x01, 0x18, 0x22, 0x0A, 0x00, 0x00};
+        m.seq++;
+        size_t sn = mac_frame_build(&m, spoof, sizeof spoof, mpdu, sizeof mpdu);
+        znp_c1 = 0;
+        zb_coord_rx(&zc, mpdu, (uint8_t)sn, 180, -60);
+        CHECK(znp_c1 != 0x82 && zt.interpan_stats.rx_dropped == 1);
         req[0] = 0x00;
         znp_handle(&zt, 0x24, 0x10, req, 1);                                  /* back to the network */
         CHECK(znp_last[0] == 0 && tl_last_channel == 20);
@@ -662,7 +723,19 @@ int main(void) {
         CHECK(znp_c1 != 0x82);                                               /* no session: not passed up */
         znp_handle(&zt, 0x24, 0x02, ext, sizeof ext);
         CHECK(znp_c1 == 0x02 && znp_last[0] == 0x02 && air_tail == air_head);   /* refused, nothing sent */
-        printf("reliability: Touchlink scan request sent inter-PAN, scan response passed up, session closed\n");
+        /* a session the host abandons (no restoreChannelInterPAN) ends by itself */
+        req[0] = 0x01; req[1] = 11;
+        znp_handle(&zt, 0x24, 0x10, req, 2);
+        CHECK(znp_last[0] == 0 && tl_last_channel == 11 && zt.interpan_channel == 11);
+        uint32_t t0 = zc.now_ms;
+        zb_coord_tick(&zc, t0 + ZNP_INTERPAN_IDLE_MS - 100);
+        znp_poll(&zt);
+        CHECK(zt.interpan_channel == 11 && tl_last_channel == 11);
+        zb_coord_tick(&zc, t0 + ZNP_INTERPAN_IDLE_MS + 100);
+        znp_poll(&zt);
+        CHECK(zt.interpan_channel == 0 && tl_last_channel == 20 && zt.interpan_stats.timeouts == 1);
+        printf("reliability: Touchlink scan request sent inter-PAN, scan response passed up, other inter-PAN frames "
+               "dropped, session closed (by the host or after %u s idle)\n", ZNP_INTERPAN_IDLE_MS / 1000u);
     }
 
     /* 8. Native CCM* rejections: a flood of forged frames is re-verified in

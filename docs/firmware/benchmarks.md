@@ -19,8 +19,9 @@ Banc en lecture seule `tools/znp_prod_bench.cjs`, dongle de production sur COM8,
 
 | Image | Conditions | Lecture isolée, médiane / p95 | Rafales réussies | Part des routeurs joignables |
 |---|---|---|---|---|
-| Commit d5f5fa1, 21 novembre vers 7 h 30 : 1er passage, juste après le flash | 29 routeurs dont 1 muet (`0x2ebd`, volet Profalux : il ne répond qu'après avoir été réveillé par une commande ; il répondait au banc de la veille), 20 dBm, réessais herdsman, délai 10 s | 51,3 ms / 362 ms | 224 / 232 | 100 % (8 rafales sur 8 à 28 / 28) |
+| Commit d5f5fa1, 21 novembre vers 7 h 30 : 1er passage, juste après le flash | 29 routeurs dont 1 adresse périmée (`0x2ebd` : ce routeur a changé d'adresse depuis la copie de la base utilisée, datée de la veille), 20 dBm, réessais herdsman, délai 10 s | 51,3 ms / 362 ms | 224 / 232 | 100 % (8 rafales sur 8 à 28 / 28) |
 | Commit d5f5fa1, passages suivants (3, enchaînés) | idem | 39,0 à 46,1 ms / 94 à 106 ms | 203, 215 et 218 / 232 | 90,6 %, 96,0 % et 97,3 % |
+| Essai écarté, 21 novembre vers 9 h 15 : d5f5fa1 + réémissions ZCL en direct vers les voisins | **dongle déplacé dans la maison : non comparable** ; base fraîche, 29 routeurs | 51 à 57 ms / 183 à 519 ms | 193, 198 et 192 / 232 | 83 à 85 % ; MAC sans ACK ×2 à ×3 : changement retiré, d5f5fa1 reflashé |
 | **Commit 666f804** (priorité routes, recent_tx 32, reroutage) | 28 routeurs joignables, 20 dBm, réessais herdsman, délai 10 s | **34,4 ms / 60,4 ms** | **224 / 224** | **100 %** (8 rafales sur 8 à 28 / 28) |
 | Commit 2f787a6 (reroutage Network Status, CCM\* optimisé) | 29 routeurs, 20 dBm, réessais herdsman, délai 10 s | 68 ms / 168 ms | 223 / 232 | 96,1 % (3 rafales sur 8 à 29 / 29) |
 | Commit 1e7b645 (store 2 × 56 Kio, CCM\* natif allégé) | idem | 65 ms / 221 ms | 221 / 232 | 95,3 % (2 rafales sur 8 à 29 / 29) |
@@ -43,7 +44,11 @@ Lecture :
 - **La lecture isolée varie avec l'état du réseau,** de 43 à 78 ms selon la session. L'écart avec Koenkk (51 ms) est du même ordre que cette variation. Une comparaison serrée exige des sessions entrelacées.
 - **La durée d'une rafale n'est pas comparable :** le délai d'attente est de 10 s pour le firmware FreeRTOS et de 4 s pour Koenkk.
 
-**Par Zigbee2MQTT, en production (d5f5fa1, 21 novembre, 3 minutes après le démarrage) :** 5 rafales de lectures `get` (`state`, `position` ou `brightness`) envoyées en même temps aux 28 routeurs par MQTT, à 20 s d'intervalle. **Aucun échec dans le journal de Zigbee2MQTT pour ces 140 lectures.** 138 réponses sont publiées en moins de 12 s ; les 2 autres (Lumière garage, Bougie) arrivent un peu plus tard. Médiane de 0,8 à 1,3 s par rafale, et 5 s pendant les reconfigurations de démarrage lancées par Zigbee2MQTT : la file de herdsman, qui garde 16 requêtes en vol, domine. Les seules erreurs du journal sur cette période concernent des lectures d'attributs Tuya et une reconfiguration lancées par Zigbee2MQTT, surtout vers des boutons endormis.
+**Par Zigbee2MQTT, en production (d5f5fa1, 21 novembre, 3 minutes après le démarrage) :** 5 rafales de lectures `get` (`state`, `position` ou `brightness`) envoyées en même temps aux 28 routeurs par MQTT, à 20 s d'intervalle. **Aucun échec dans le journal de Zigbee2MQTT pour ces 140 lectures.** 138 réponses sont publiées en moins de 12 s ; les 2 autres (deux routeurs) arrivent un peu plus tard. Médiane de 0,8 à 1,3 s par rafale, et 5 s pendant les reconfigurations de démarrage lancées par Zigbee2MQTT : la file de herdsman, qui garde 16 requêtes en vol, domine. Les seules erreurs du journal sur cette période concernent des lectures d'attributs Tuya et une reconfiguration lancées par Zigbee2MQTT, surtout vers des boutons endormis.
+
+**Lectures en rafale par Zigbee2MQTT, image corrigée (`238aee53`, 21 novembre, 30 s après le démarrage) :** même protocole. 22 à 27 routeurs sur 28 publient en moins de 12 s, médiane de 0,6 à 2,0 s par rafale. **Aucun échec journalisé sur les 140 lectures** : les autres réponses arrivent plus tard. Non comparable au matin : le dongle est à un autre emplacement et le réseau sortait d'environ 50 minutes sans coordinateur, donc les routes se reconstruisaient.
+
+**Commandes en rafale par Zigbee2MQTT (d5f5fa1, 21 novembre) :** les 13 lumières à un seul canal sont inversées toutes ensemble, puis remises dans leur état d'origine, 2 cycles, soit 52 commandes. **2 échecs** (délai de 10 s dépassé), tous deux au premier cycle, sur deux routeurs (`0x3db6` et `0x68d`) : ce sont aussi les routeurs les plus souvent en échec au banc. Les remises en état du premier cycle ont attendu jusqu'à 13 s derrière ces délais. Médiane de 0,3 à 1,5 s par rafale. **À la fin, toutes les lumières sont dans leur état d'origine.**
 
 Données brutes : `private/perf-20261120-prod-117e5ba/bench-*/bench.json` et `private/perf-20261121-d5f5fa1*/bench.json`, hors Git. Rafales MQTT : `private/z2m-burst-20261121/`.
 
@@ -134,8 +139,8 @@ Ce qui dépasse désormais ZeroStack :
 | Table anti-doublon des broadcasts | 32 | 30 (`MAX_BCAST`) | 40 |
 | Réessais MAC | 3 par tour, 3 tours (file de 32 trames) | 7 | non publié |
 | Store non volatil | **2 × 56 Kio** (disposition 2) | NV Z-Stack (géométrie non comparée ici) | non publié |
-| Flash occupée | 101 520 o (image `--hw-aes` 1 Mbaud du commit `d5f5fa1`, non flashée ; 95 972 o en AES logiciel) | 178 669 o (20240710) | non publié |
-| SRAM | 73 264 o statiques sur 81 920 (8 656 libres), piles et MSP comprises, **sans tas** | 42 228 o statiques + tas dynamique de 33 371 o | 88 Ko de SRAM sur CC2652P, sans précision |
+| Flash occupée | 101 776 o (image `--hw-aes` 1 Mbaud de l'arbre de travail du 21 novembre, non flashée ; 96 244 o en AES logiciel ; d5f5fa1 : 101 520 o) | 178 669 o (20240710) | non publié |
+| SRAM | 73 280 o statiques sur 81 920 (8 640 libres), piles et MSP comprises, **sans tas** | 42 228 o statiques + tas dynamique de 33 371 o | 88 Ko de SRAM sur CC2652P, sans précision |
 
 ## 5. Débit soutenu et appareils endormis : SIMULATION
 
@@ -150,7 +155,7 @@ Ce qui est modélisé :
 - **Routeurs :** 28 au total, 16 à 1 saut, 9 à 2 sauts et 3 à 3 sauts. Chacun a sa file, ses réessais MAC et NWK et sa sécurité refaite à chaque saut. Il envoie un Route Record après chaque Many-to-One, renvoie ses broadcasts deux fois et répond aux lectures en 2 à 10 ms. Il garde les trames de ses enfants endormis.
 - **Appareils endormis :** *poll* toutes les 2 s, avec attente de la trame annoncée et *polls* rapides ensuite. Après une perte de parent, ils se réassocient par le coordinateur.
 
-Médiane de 3 graines × 30 s par point. « Avant » = sources du commit `3cda4b6` ; « après » = commit `d5f5fa1` (21 novembre). Les deux tournent sur la même version du simulateur. Résultats bruts : `summary.json` et `runs/` dans le dossier `--out`.
+Médiane de 3 graines × 30 s par point. « Avant » = sources du commit `3cda4b6` ; « après » = arbre de travail du 21 novembre (d5f5fa1 et les corrections de sécurité, Touchlink et MAC de l'après-midi : identique à d5f5fa1 sur tous les scénarios sauf « parent perdu », 98,25 → 98,5 % et 6,2 → 4,8 s). Les deux tournent sur la même version du simulateur. Résultats bruts : `summary.json` et `runs/` dans le dossier `--out`.
 
 Le 21 novembre, le modèle de *source match* est passé de 8 entrées IEEE fixes au nombre d'entrées du firmware. Avec 8 entrées, au-delà de 8 appareils en attente d'une réponse de réassociation, le simulateur n'annonçait plus la trame alors que le firmware l'aurait fait : le scénario « parent perdu » de l'après tombait à 96,5 %. Les chiffres des endormis publiés avant cette date ne sont pas comparables.
 
@@ -220,13 +225,15 @@ Scénarios : 20 transactions/s, dont 30 % vers les appareils endormis (50 % pour
 | 40 endormis, réveils simultanés | 100 → 100 % | 5,1 → 6,5 s | 70 → 1 |
 | 20 endormis derrière un routeur congestionné (file de 2, 4 trames indirectes) | 69,7 → 74,5 % | — | 24 → 0 |
 | 10 endormis, un enfant passe derrière un routeur sans réassociation entendue (herdsman : `assocRemove`) | 95,0 → 99,75 % | — | 40 → 0 |
-| 20 endormis, parent perdu à 8 s, réassociation | 97,5 → 98,25 % | 7,1 → 6,2 s | 53 → 1 |
+| 20 endormis, parent perdu à 8 s, réassociation | 97,5 → 98,5 % | 7,1 → 4,8 s | 53 → 1 |
 
 Les réponses en double disparaissent dans tous les scénarios. La latence médiane avec 40 réveils simultanés se dégrade (5,1 → 6,5 s) : les lectures attendent davantage leur créneau dans la fenêtre de 16 de herdsman, alors que le temps de service médian reste à ≈ 40 ms. Le scénario « parent perdu » est très dispersé selon la graine. Sur 6 graines, l'après donne 97,2 à 98,5 % et une médiane de 3,1 à 6,6 s ; la référence donne 96,8 à 98,5 % et 1,8 à 10,1 s.
 
 Pour l'enfant qui change de parent, la version d'avant répondait à `assocRemove` par une erreur RPC : herdsman abandonnait la commande. Ses trames s'accumulaient dans la file indirecte du coordinateur jusqu'à expirer.
 
 Les latences de plusieurs secondes sont celles du *poll* (2 s) et de la fenêtre herdsman, pas du coordinateur.
+
+**Essayé et écarté (21 novembre) :** interroger soi-même (`Node_Desc_req`) un appareil de capacité inconnue après une lecture sans réponse, pour ne plus réémettre vers un endormi. Le pire cas du routeur congestionné passait de 67 à 75 %, mais la latence médiane se dégradait dans les scénarios légers (36 ms → 2,25 s avec 10 réveils simultanés) : la requête occupe elle-même la file du parent et le *poll* suivant.
 
 ### Blocages Flash
 

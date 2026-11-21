@@ -280,6 +280,18 @@ int main(void) {
     unsigned free_slots = 0;
     for (unsigned i = 0; i < MAC_POOL_SLOTS; i++) free_slots += mac.slots[i].kind == SLOT_FREE;
     CHECK(free_slots >= MAC_POOL_SLOTS - MAC_INDIRECT_SLOTS - 1);   /* direct traffic still has buffers */
+    /* A Rejoin Response (indirect, IEEE-addressed) still goes in while data
+     * for children fills the short-addressed indirect slots. */
+    {
+        const uint8_t rsp[4] = {0x07, 0x34, 0x12, 0x00};
+        mac_data_request_t r = {.dst_mode = MAC_ADDR_EXT, .dst_ext = 0x00158D0000AB0001ull, .handle = 52,
+                                .ack_request = true, .indirect = true, .payload = rsp, .length = sizeof rsp};
+        CHECK(mac_data_request(&mac, &r) == MAC_STATUS_SUCCESS);
+        free_slots = 0;
+        for (unsigned i = 0; i < MAC_POOL_SLOTS; i++) free_slots += mac.slots[i].kind == SLOT_FREE;
+        CHECK(free_slots >= MAC_POOL_SLOTS - MAC_INDIRECT_SLOTS - MAC_EXT_INDIRECT);
+        CHECK(mac_purge(&mac, 52));
+    }
     mac_tick(&mac, 2000 + 3 * MAC_PERSISTENCE_MS);
     CHECK(data(0x0200, 51, true) == 0);
     mac_tick(&mac, 2000 + 5 * MAC_PERSISTENCE_MS);

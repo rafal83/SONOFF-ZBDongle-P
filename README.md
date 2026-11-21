@@ -40,7 +40,7 @@ Valeurs au **21 novembre 2026**. Ce résumé est tenu à jour avec [le détail, 
 |---|---|---|
 | Messages entrants (rapports), 28 routeurs à 1 saut | **190 /s soutenus** (≥ 99,8 % livrés, p99 ≈ 60 ms, CPU ≈ 3 %), ≈ 197 /s au plafond ; ≈ 110 /s dans un arbre à 3 niveaux | « 180 messages/s », conditions non publiées |
 | Transactions complètes (lecture ZCL aller-retour), débit stable | 56 /s (arbre à 3 niveaux) à 103 /s (1 saut) : limite de l'air et de la fenêtre de 16 de herdsman, pas du CPU | non publié |
-| 20 appareils endormis, parent perdu | 98,25 % des lectures servies (97,5 % avant les corrections), réassociation par le coordinateur | non publié |
+| 20 appareils endormis, parent perdu | 98,5 % des lectures servies (97,5 % avant les corrections), réassociation par le coordinateur | non publié |
 
 ## Construire et tester
 

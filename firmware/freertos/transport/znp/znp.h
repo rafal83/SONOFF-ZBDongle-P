@@ -70,6 +70,8 @@ typedef struct {
     uint8_t gp_off_channel;            /* TempMaster channel the radio is on, 0: network channel */
     uint8_t interpan_channel;          /* Touchlink (interPanCtl): channel the radio is on, 0: none */
     uint8_t interpan_ep;               /* endpoint inter-PAN frames are delivered to, 0: none */
+    uint32_t interpan_last_ms;         /* last Touchlink activity (interPanCtl, inter-PAN frame) */
+    struct { uint32_t timeouts, rx_dropped; } interpan_stats;
     struct { uint32_t tx, tx_failed, channel_moves, channel_failed; } gp_stats;
     uint64_t ieee;
     uint8_t dev_state;
@@ -98,6 +100,14 @@ typedef struct {
  * 32-bit space; devices accept any higher counter. With a counters record
  * in the store, its floor already prevails (no margin). */
 #define ZNP_RESTORE_COUNTER_MARGIN (1u << 22)
+
+/* A Touchlink session (interPanCtl) idle this long ends by itself, the radio
+ * back on the network channel: a host that died or failed between
+ * setChannelInterPAN and restoreChannelInterPAN must not leave the whole
+ * network without its coordinator. herdsman's steps are seconds apart. */
+#define ZNP_INTERPAN_IDLE_MS 30000u
+#define ZNP_TOUCHLINK_PROFILE 0xC05Eu   /* ZLL */
+#define ZNP_TOUCHLINK_CLUSTER 0x1000u   /* ZLL commissioning */
 
 /* Boot: (re)initialize the coordinator, apply the startup options, restore
  * the stored network, then emit SYS_RESET_IND with `reset_reason`. */

@@ -15,7 +15,7 @@ Défauts vus en production dans la nuit, avant `969fb13` :
 
 | Défaut | Cause | Correction | Sur le dongle |
 |---|---|---|---|
-| Commandes Z2M en `NWK_NO_ROUTE`, états non remontés (Miroir commandé par un bouton) | Commandes NWK sans IEEE source, ignorées par les routeurs réels ; *Link Status* trop long au-delà de 25 voisins, jamais émis | `969fb13` | **Oui** (image actuelle) |
+| Commandes Z2M en `NWK_NO_ROUTE`, états non remontés (lumière commandée par un bouton) | Commandes NWK sans IEEE source, ignorées par les routeurs réels ; *Link Status* trop long au-delà de 25 voisins, jamais émis | `969fb13` | **Oui** (image actuelle) |
 | Sauvegarde Z2M en échec à l'arrêt (lecture des TCLK sans réponse) | Files ZNP qui refusaient au lieu d'attendre | `0d5987e` | **Non** : à programmer, avec accord |
 
 **Le 19 novembre à 09:27**, avec l'accord du propriétaire, la production est passée sur l'image **`--hw-aes` du commit `1c92c11`** (SHA-256 `068b1e5f…`), store conservé. Elle inclut `0d5987e` et les corrections de [stabilization-20261119.md](stabilization-20261119.md). L'image logicielle du même commit avait été programmée à 09:20 : Z2M l'avait reprise (`resumed`) et avait écrit sa sauvegarde à l'arrêt, ce qui n'arrivait plus avec `969fb13`. Z2M a repris l'image `--hw-aes` à 09:29 (`resumed`, 75 appareils, aucune erreur).
@@ -47,10 +47,10 @@ Cette version intègre :
 - Piles observées sous charge : radio marge 420 mots, hôte marge 308 mots, superviseur 232 mots, idle 109 mots.
 - Charge CPU pic sous rafale : 31,2 %, 0 erreur DMA/AES, intégrité complète du store conservée.
 
-Diagnostic du « retard de la Douche » (journal Z2M en debug, 19 novembre) :
+Diagnostic du « retard d'une lumière » (journal Z2M en debug, 19 novembre) :
 - Le firmware répondait `NWK_NO_ROUTE` à la première commande après plusieurs minutes d'inactivité, puis herdsman réessayait 2 s plus tard. C'est corrigé par `7c24ecc`.
-- **Cause principale, hors firmware** : Z2M avait reconfiguré le Miroir le 19 novembre à 06:59 avec un intervalle minimal de *reporting* de 60 s (on/off et niveau). Ses changements faits au bouton remontaient donc jusqu'à une minute plus tard ; des changements rapprochés étaient fusionnés. Après reconfiguration du *reporting* par l'utilisateur, la synchronisation fonctionne.
-- *Switch piscine* et *Dressing Livia* ne répondent pas, avec `NWK_NO_ROUTE` après la découverte : ils ne sont plus entendus depuis le 19 septembre et le 2 novembre, soit bien avant la migration.
+- **Cause principale, hors firmware** : Z2M avait reconfiguré une lumière le 19 novembre à 06:59 avec un intervalle minimal de *reporting* de 60 s (on/off et niveau). Ses changements faits au bouton remontaient donc jusqu'à une minute plus tard ; des changements rapprochés étaient fusionnés. Après reconfiguration du *reporting* par l'utilisateur, la synchronisation fonctionne.
+- Deux routeurs ne répondent pas, avec `NWK_NO_ROUTE` après la découverte : ils ne sont plus entendus depuis le 19 septembre et le 2 novembre, soit bien avant la migration.
 
 Ne jamais réécrire une ancienne capture complète après exploitation du réseau : voir [sauvegardes et restauration](restauration.md).
 
@@ -87,6 +87,9 @@ Ne jamais réécrire une ancienne capture complète après exploitation du rése
 | Compteurs NWK entrants persistés tous les 1 024 (16 appareils par enregistrement, aucun octet de SRAM) : rejeu après redémarrage limité à cette fenêtre ; état anti-rejeu remis à zéro quand un appareil rejoint de zéro (avant : un appareil réappairé sans redémarrage du coordinateur voyait ses trames refusées) | Oui (20 novembre, soir) | `test_reliability` (redémarrage, rejeu refusé, réappairage), `test_store_integrity` | Non |
 | SRAM : files ZNP de 4 trames au lieu de 8 (herdsman n'envoie qu'une requête à la fois ; banc à 115 200 bauds : 4 au plus en attente), file du renifleur à 4 : **3 384 o libres** au lieu de 832 | Oui (20 novembre, soir) | Banc de débit | Non |
 | **Touchlink** (inter-PAN) : `interPanCtl`, `dataRequestExt` vers un autre PAN, trames reçues en `AF_INCOMING_MSG_EXT`, radio sur le canal Touchlink pendant la séance | Oui (21 novembre) | `test_reliability` (trames produites et reçues), `znp_sim_touchlink.cjs` (vrai herdsman 11.2.1 : scan, identify, reset, retour au canal) | Non |
+| Planchers des compteurs NWK entrants, format v2 : empreinte IEEE de 32 bits (mélange des 64 bits) au lieu de 16 bits dont 1 forcé ; un plancher resté dans un emplacement repris par un autre appareil (effacement en échec) ne lui est plus appliqué. Les enregistrements v1 sont ignorés (planchers reconstruits aux trames suivantes) | Oui (21 novembre) | `test_reliability` (deux IEEE de même empreinte v1, contrôle positif), `test_store_integrity` | Non |
+| Touchlink : fin de séance automatique après 30 s sans activité inter-PAN (radio rendue au canal du réseau si l'hôte disparaît) ; seules les trames ZLL (profil 0xC05E, cluster 0x1000) remontent, les autres trames inter-PAN, non authentifiées, sont ignorées ; échec signalé si la radio ne revient pas | Oui (21 novembre) | `test_reliability`, `znp_sim_touchlink.cjs` (vrai herdsman 11.2.1) | Non |
+| Réponses de réassociation (indirectes, adressées par IEEE) hors de la limite des 16 trames indirectes de données, comme les réponses d'association : des données en attente ne font plus échouer une réassociation | Oui (21 novembre) | `test_mac_core`, banc simulé (parent perdu 98,25 → 98,5 %) | Non |
 | Index des appareils : deux tableaux d'emplacements triés (IEEE, adresse courte) au lieu de deux index Patricia avec copie des clés : **8 656 o de SRAM libres** au lieu de 3 384, recherche en 8 étapes au plus | Oui (21 novembre) | `test_nwk_join` (30 000 opérations aléatoires contre une recherche linéaire), toute la suite | Non |
 | *Handles* MAC uniques tant qu'une confirmation est attendue (plus de confirmation remise à la mauvaise requête) | Oui (20 novembre, soir) | `test_reliability` (600 trames pendant une attente indirecte) | Non |
 | Réémission ZCL par lecture (destination + numéro ZCL), réponse en double filtrée, pas de réémission vers un endormi connu, route reconstruite seulement sans réponse récente, budget d'une réémission par seconde | Oui (20 novembre, soir) | `test_reliability`, banc de débit (réponses en double vers l'hôte 452 → 4 sur les 9 scénarios endormis, 21 novembre) | Non |

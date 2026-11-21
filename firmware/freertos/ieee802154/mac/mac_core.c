@@ -46,8 +46,10 @@ static int pop(uint8_t *q, uint8_t cap, uint8_t *head, uint8_t *count) {
 }
 
 /* dst_pan 0: our PAN (PAN ID compression); else an inter-PAN frame from our
- * extended address (Touchlink). */
-static size_t build(mac_t *m, mac_slot_t *slot, uint8_t type, uint8_t dst_mode, uint16_t dst_short,
+ * extended address (Touchlink). Never inlined: inside mac_data_request its
+ * frame descriptor would add 80 bytes to the radio task's deepest stack
+ * path (receive -> ZDO answer -> fragmented send -> MAC). */
+__attribute__((noinline)) static size_t build(mac_t *m, mac_slot_t *slot, uint8_t type, uint8_t dst_mode, uint16_t dst_short,
                     uint64_t dst_ext, bool ack, const uint8_t *payload, size_t len, uint16_t dst_pan) {
     mac_frame_t f = {0};
     f.type = type;
@@ -190,10 +192,17 @@ uint8_t mac_data_request(mac_t *m, const mac_data_request_t *r) {
     if (broadcast && r->indirect) return MAC_STATUS_INVALID_PARAMETER;
     if (r->indirect && r->dst_mode == MAC_ADDR_SHORT && r->dst_short >= 0xFFF8u) return MAC_STATUS_INVALID_PARAMETER;
     if (r->indirect) {
+        /* Data for sleepy children only. IEEE-addressed transactions (Rejoin
+         * Responses, like Association Responses) have their own
+         * MAC_EXT_INDIRECT slots: queued data never makes a device's
+         * (re)join fail (production, 21 November: rejoin responses refused
+         * while 16 frames waited for children that had lost their parent). */
         unsigned waiting = 0;
-        for (unsigned i = 0; i < MAC_POOL_SLOTS; i++)
-            waiting += m->slots[i].kind == SLOT_INDIRECT_SHORT || m->slots[i].kind == SLOT_INDIRECT_EXT;
-        if (waiting >= MAC_INDIRECT_SLOTS) { m->stats.queue_full++; return MAC_STATUS_TRANSACTION_OVERFLOW; }
+        for (unsigned i = 0; i < MAC_POOL_SLOTS; i++) waiting += m->slots[i].kind == SLOT_INDIRECT_SHORT;
+        if (waiting >= MAC_INDIRECT_SLOTS && r->dst_mode == MAC_ADDR_SHORT) {
+            m->stats.queue_full++;
+            return MAC_STATUS_TRANSACTION_OVERFLOW;
+        }
     }
     int s = alloc_slot(m);
     if (s == NO_SLOT) return MAC_STATUS_TRANSACTION_OVERFLOW;
