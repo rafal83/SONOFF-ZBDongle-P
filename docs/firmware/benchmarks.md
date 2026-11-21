@@ -40,7 +40,12 @@ Lecture :
   - Découverte de route avec temporisation d'attente (`disc_fresh_for`) pour laisser aux réponses multi-sauts le temps d'arriver avant repli.
   - Table `recent_tx` portée à 32 trames et réservée aux données applicatives avec réémission graduée en cas d'absence de réponse ZCL.
   - Priorisation des `APS ACK` en tête de file MAC directe (`direct_q`).
-- **d5f5fa1 (21 novembre) est en retrait sur les rafales enchaînées :** 100 % au premier passage, puis 90,6 à 97,3 %. Les échecs sont des réponses jamais reçues, surtout sur les derniers routeurs de chaque rafale (`0x68d`, `0x5459`, `0x25a4`, `0x1331`, `0x5e32`) ; ces routeurs répondent en lecture isolée. Les réémissions par rafale sont du même ordre qu'avec 666f804 (6 à 18 contre 3 à 24). Les compteurs du dongle ne montrent rien d'anormal : 0 perte de file ZNP, 0 faute AES, pic CPU 35 %, 416 mots de pile radio libres. Les mesures de 666f804 datent de la veille, sous d'autres conditions radio : la cause n'est pas établie, une comparaison entrelacée reste à faire.
+- **d5f5fa1 (21 novembre) est en retrait sur les rafales enchaînées :** 100 % au premier passage, puis 90,6 à 97,3 %. Les échecs sont des réponses jamais reçues, surtout sur les derniers routeurs de chaque rafale (`0x68d`, `0x5459`, `0x25a4`, `0x1331`, `0x5e32`) ; ces routeurs répondent en lecture isolée. Les réémissions par rafale sont du même ordre qu'avec 666f804 (6 à 18 contre 3 à 24). Les compteurs du dongle ne montrent rien d'anormal : 0 perte de file ZNP, 0 faute AES, pic CPU 35 %, 416 mots de pile radio libres. **Analyse (21 novembre après-midi) : la cause est radio, pas le firmware.**
+  - **Au niveau MAC, les deux versions se valent :** 15 à 22 % de trames sans ACK, 84 à 106 réémissions par passage.
+  - **Aucune réponse arrivée n'est jetée par le coordinateur :** 0 échec d'authentification NWK (aucune trame refusée comme rejeu), autant de doublons APS (14 à 22) et de trames remontées (262 à 318). Les réponses manquantes n'arrivent jamais.
+  - **Les échecs suivent les relais :** sur 24 rafales, les routeurs joints via un moteur de volet échouent 9,2 % du temps, contre 2,7 % pour les autres. Quatre des cinq routeurs les plus touchés passent par le même volet ; ils sont aussi en fin de liste.
+  - **Les deux mécanismes du firmware soupçonnés sont mis hors de cause en simulation** (suite `bursts`, section 5) : un budget de réémissions de 32 au lieu de 8, ou une route reconstruite à chaque deuxième lecture manquée, donnent les mêmes échecs au premier essai à ±1 près, pour trois relais défaillants sur quatre.
+  - **L'écart avec 666f804** s'explique par des routes qui ne passaient pas par ce volet la veille.
 - **La lecture isolée varie avec l'état du réseau,** de 43 à 78 ms selon la session. L'écart avec Koenkk (51 ms) est du même ordre que cette variation. Une comparaison serrée exige des sessions entrelacées.
 - **La durée d'une rafale n'est pas comparable :** le délai d'attente est de 10 s pour le firmware FreeRTOS et de 4 s pour Koenkk.
 
@@ -139,8 +144,8 @@ Ce qui dépasse désormais ZeroStack :
 | Table anti-doublon des broadcasts | 32 | 30 (`MAX_BCAST`) | 40 |
 | Réessais MAC | 3 par tour, 3 tours (file de 32 trames) | 7 | non publié |
 | Store non volatil | **2 × 56 Kio** (disposition 2) | NV Z-Stack (géométrie non comparée ici) | non publié |
-| Flash occupée | 101 776 o (image `--hw-aes` 1 Mbaud de l'arbre de travail du 21 novembre, non flashée ; 96 244 o en AES logiciel ; d5f5fa1 : 101 520 o) | 178 669 o (20240710) | non publié |
-| SRAM | 73 280 o statiques sur 81 920 (8 640 libres), piles et MSP comprises, **sans tas** | 42 228 o statiques + tas dynamique de 33 371 o | 88 Ko de SRAM sur CC2652P, sans précision |
+| Flash occupée | 102 032 o (image `--hw-aes` 1 Mbaud de l'arbre de travail du 21 novembre, non flashée ; 96 516 o en AES logiciel ; en production, 25538e6 : 101 776 o) | 178 669 o (20240710) | non publié |
+| SRAM | 73 328 o statiques sur 81 920 (8 592 libres), piles et MSP comprises, **sans tas** | 42 228 o statiques + tas dynamique de 33 371 o | 88 Ko de SRAM sur CC2652P, sans précision |
 
 ## 5. Débit soutenu et appareils endormis : SIMULATION
 
@@ -171,7 +176,7 @@ Une transaction est une lecture d'attribut ZCL, de l'`AF_DATA_REQUEST` à la ré
 | 150 /s | 93,3 → 91,9 % | 139,8 → 137,9 | 52 / 177 / 10 101 ms | 70 / 223 / 4 621 ms | — |
 | 180 /s | 77,3 → 76,6 % | 139,2 → 137,9 | 56 / 173 / 10 086 ms | 72 / 224 / 8 342 ms | — |
 
-Le **débit maximal stable** est le plus haut débit qui garde au moins 99,9 % de réussite et un p95 de bout en bout de 1 s au plus. Il est cherché par dichotomie, à ±6 /s près.
+Le **débit maximal stable** est le plus haut débit qui garde au moins 99,9 % de réussite et un p95 de bout en bout de 1 s au plus. Il est cherché par dichotomie, à ±6 /s près. Dans l'arbre, il varie de 45 à 56 /s pour quelques instructions de plus ou de moins sur le chemin d'émission (même firmware, coûts CPU décalés de 3 instructions) : c'est une plage, pas une valeur au /s près.
 
 | Conditions | Avant | Après | p99 de service au maximum (après) |
 |---|---|---|---|
@@ -183,6 +188,17 @@ Le **débit maximal stable** est le plus haut débit qui garde au moins 99,9 % d
 Lecture :
 - **La limite n'est ni le CPU ni les files du coordinateur.** La tâche radio reste sous 3,2 % de CPU à 180 /s. La file MAC ne dépasse pas 17 / 32 trames, les tampons RX 1 / 4, la file de sortie ZNP 2 / 4. Les limites sont l'occupation du canal (≈ 67 % à 138 /s dans un seul domaine) et la **fenêtre de 16 transactions de herdsman**. Chaque réponse perdue y bloque un créneau 10 s : au-delà de ≈ 60 /s, la latence de bout en bout passe à plusieurs secondes, alors que le temps de service reste sous 250 ms au p95.
 - **Les corrections ne changent pas le débit maximal**, à la précision près. Elles réduisent les réessais herdsman (11 → 1 à 50 /s) et la queue de latence au débit maximal dans l'arbre (p99 de 10 s à 1,2 s). La médiane augmente un peu au-delà de 50 /s : les lectures récupérées ajoutent des trames. Les réémissions sont limitées à une par seconde, avec des rafales de 8. Sans cette limite, le débit servi à 180 /s tombait à 122 /s.
+
+### Rafales comme le banc réel
+
+Suite `bursts` : une lecture vers chacun des 28 routeurs, toutes ensemble, toutes les 12 s, pendant 120 s, sans fenêtre de 16 (comme `znp_prod_bench.cjs`). Les échecs au premier essai correspondent à ce que compte le banc réel.
+
+| Conditions | Lectures | Échecs au 1er essai | Réussite finale | Bout en bout p95 |
+|---|---|---|---|---|
+| Aucun relais défaillant | 280 | 0 à 1 | 100 % | 0,6 à 1,1 s |
+| Un relais à 1 saut perd 30 % de ce qu'il relaie | 280 | 3 à 8 | 99,6 à 100 % | 1,1 s |
+
+Sur 6 graines × 280 lectures, un relais défaillant donne 22 à 107 échecs au premier essai selon sa position. Les deux variantes du firmware testées n'y changent rien (voir section 1).
 
 ### Messages entrants
 

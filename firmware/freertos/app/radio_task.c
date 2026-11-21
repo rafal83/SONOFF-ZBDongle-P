@@ -100,6 +100,7 @@ static uint32_t gp_target;
 static bool gp_pending, gp_active, gp_off_channel, tx_fake_busy;
 static TickType_t gp_started;
 app_gp_stats_t app_gp;
+app_touchlink_stats_t app_touchlink;
 
 static uint32_t now_ms(void) { return (uint32_t)xTaskGetTickCount() * portTICK_PERIOD_MS; }
 
@@ -231,6 +232,7 @@ static void znp_network_up(void *ctx, uint8_t channel) {
     for (unsigned i = 0; i < 8; i++) cfg.ext_addr[i] = (uint8_t)(znp.ieee >> (8u * i));
     if (rf_rx_start(&cfg)) { rf_power_down(); return; }
     mode = MODE_ZNP;
+    gp_off_channel = false;   /* on the network channel now (coordinator frames no longer deferred) */
     mac_source_match_resync(&coord.mac);   /* the restarted radio lost its pending-bit tables */
 }
 
@@ -639,6 +641,10 @@ static void radio(void *arg) {
             snapshot();
         }
         znp_poll(&znp);
+        app_touchlink = (app_touchlink_stats_t){
+            znp.interpan_stats.timeouts, znp.interpan_stats.rx_dropped, znp.interpan_stats.restore_failed,
+            znp.interpan_stats.restore_retries, znp.interpan_stats.restore_recovered,
+            znp.interpan_stats.restore_restarts, znp.interpan_stats.restore_reboots, znp.radio_recover};
         app_perf.radio_stack_free_words = (uint32_t)uxTaskGetStackHighWaterMark(0);
         if (bits & EVT_REQUEST) {
             uint32_t seq = slot_seq;

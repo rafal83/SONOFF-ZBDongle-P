@@ -78,6 +78,8 @@ static struct {
     unsigned poll_ms, sed_sync, resp_min_ms, resp_max_ms, sed_resp_ms, fast_polls, fast_poll_ms, sed_wait_ms;
     unsigned baud, timeout_ms, sed_parent, sed_move_node, sed_move_to, sed_move_at_s, kill_router, kill_at_s, congest_router, congest_queue, spatial_reuse;
     unsigned seed, hw_aes, tick_every_wake, guessed, quiet, mesh, stall_at_ms, stall_ms, stall_count;
+    unsigned burst_size, burst_every_ms, lossy_relay;   /* production-bench bursts; a relay that loses frames */
+    double lossy_pct;
     /* instructions per step (tools/bench_transaction_cpu.py), CCM* excluded */
     unsigned i_af, i_confirm, i_rx, i_dup, i_poll, i_tick;
     unsigned ccm_native_cycles, host_frame_cycles;
@@ -244,6 +246,7 @@ static struct {
     unsigned host_backlog_max, host_inflight_max;
     unsigned router_drops, router_queue_full, router_retries, router_nwk_retries, child_q_full, child_expired;
     unsigned sed_polls, sed_fp_miss, sed_data, sed_rejoins, sed_fp_set, sed_rejoin_retries, sed_moves, assoc_removes, assoc_rpc_errors;
+    unsigned lossy_drops;
     unsigned dup_responses, stray_confirms, wrong_confirms, handle_collisions, response_timeouts, btt_seq_reuse;
     unsigned confirm_by_status[256];
 } st;
@@ -1004,6 +1007,9 @@ static void router_handle(int r, const mac_frame_t *mf, int from) {
             if (node[t].parent == r) { next = t; break; }
     }
     if (next < 0) return;
+    /* --lossy-relay: this router loses part of the unicasts it relays (a
+     * relay that "does not always react", as some shutter motors) */
+    if (cfg.lossy_relay && r == (int)cfg.lossy_relay && chance(cfg.lossy_pct)) { st.lossy_drops++; return; }
     uint8_t nwk[CORE_SECURITY_MAX_FRAME], mpdu[MAC_MAX_MPDU];
     size_t n = seal_nwk(d, &nh, p, plen, nwk);
     if (next > 0 && node[next].kind == K_SED && node[next].parent == r) {
@@ -1327,7 +1333,24 @@ static void host_on_frame(const npi_t *f) {
         st.dup_responses++;
     }
 }
+/* --burst-size: one read to each of the first N routers at once, in a fixed
+ * order, every --burst-every-ms (tools/znp_prod_bench.cjs: all sent back to
+ * back, no 16-transaction window when --concurrency >= N). */
+static void host_burst(void) {
+    if (now >= t_measure_end) return;
+    for (unsigned i = 0; i < cfg.burst_size && txn_n < MAX_TX; i++) {
+        txn_t *x = &txn[txn_n];
+        memset(x, 0, sizeof *x);
+        x->target = targets[i % ntargets];
+        x->offered = now;
+        x->measured = now >= t_measure_start;
+        txn_n++;
+        if (host_inflight < cfg.concurrency && host_next_q == txn_n - 1) host_start(host_next_q++);
+    }
+    push_ev(now + MS(cfg.burst_every_ms ? cfg.burst_every_ms : 10000), EV_HOST_GEN, 0, 0, 0);
+}
 static void host_generate(void) {
+    if (cfg.burst_size) { host_burst(); return; }
     if (now >= t_measure_end || txn_n >= MAX_TX) return;
     txn_t *x = &txn[txn_n];
     memset(x, 0, sizeof *x);
@@ -1397,7 +1420,8 @@ static int parse_args(int argc, char **argv) {
 #define OPT_D(name, field) if (!strcmp(a, name)) { cfg.field = atof(v); i++; continue; }
 #define OPT_U(name, field) if (!strcmp(a, name)) { cfg.field = (unsigned)strtoul(v, 0, 0); i++; continue; }
         OPT_D("--rate", rate) OPT_D("--duration", duration_s) OPT_D("--warmup", warmup_s) OPT_D("--loss", loss_pct)
-        OPT_D("--sed-share", sed_share) OPT_D("--reports", reports)
+        OPT_D("--sed-share", sed_share) OPT_D("--reports", reports) OPT_D("--lossy-pct", lossy_pct)
+        OPT_U("--burst-size", burst_size) OPT_U("--burst-every-ms", burst_every_ms) OPT_U("--lossy-relay", lossy_relay)
         OPT_U("--hop1", hops[0]) OPT_U("--hop2", hops[1]) OPT_U("--hop3", hops[2])
         OPT_U("--seds-coord", seds_coord) OPT_U("--seds-router", seds_router) OPT_U("--concurrency", concurrency)
         OPT_U("--rx-entries", rx_entries) OPT_U("--znp-out-queue", znp_out_q) OPT_U("--router-indirect", router_indirect)
@@ -1483,7 +1507,7 @@ int main(int argc, char **argv) {
     push_ev(MS(10), EV_CPU_TIMER, 0, 0, ++cpu.timer_gen);
     t_measure_start = S(cfg.warmup_s);
     t_measure_end = t_measure_start + (us_t)(cfg.duration_s * 1e6);
-    if (cfg.rate > 0) push_ev(S(cfg.warmup_s) - S(1), EV_HOST_GEN, 0, 0, 0);   /* routes learnt (link status, route records) */
+    if (cfg.rate > 0 || cfg.burst_size) push_ev(S(cfg.warmup_s) - S(1), EV_HOST_GEN, 0, 0, 0);   /* routes learnt (link status, route records) */
     if (cfg.reports > 0) push_ev(S(cfg.warmup_s) - S(1), EV_REPORT, 0, 0, 0);
     for (unsigned k = 0; k < cfg.stall_count; k++)   /* one stall per measured second from --stall-at */
         push_ev(MS(cfg.stall_at_ms) + S(k), EV_STALL, 0, 0, 0);
@@ -1654,10 +1678,10 @@ int main(int argc, char **argv) {
         fprintf(fp, " \"radio\": {\"air_load_pct\": %.1f, \"frames\": %u, \"acks\": %u, \"collisions\": %u, "
                     "\"random_losses\": %u, \"coord_cca_fail\": %u, \"coord_no_ack\": %u, \"rx_buffer_drops\": %u, "
                     "\"rx_entries_max\": %u, \"router_drops\": %u, \"router_queue_full\": %u, \"rreq\": %u, \"mtorr\": %u, "
-                    "\"flash_stalls\": %u, \"flash_stall_ms\": %.1f},\n",
+                    "\"flash_stalls\": %u, \"flash_stall_ms\": %.1f, \"lossy_relay_drops\": %u},\n",
                 air_load, st.frames_on_air, st.acks_on_air, st.collisions, st.random_losses, coord.mac.stats.tx_busy,
                 coord.mac.stats.tx_no_ack, st.rx_buf_drops, st.rx_entries_max, st.router_drops, st.router_queue_full,
-                coord.stats.rreq_tx, coord.stats.mtorr_tx, st.stalls, st.stall_us / 1000.0);
+                coord.stats.rreq_tx, coord.stats.mtorr_tx, st.stalls, st.stall_us / 1000.0, st.lossy_drops);
         fprintf(fp, " \"queues\": {\"mac_direct_max\": %u, \"mac_direct_cap\": %u, \"mac_urgent_max\": %u, "
                     "\"mac_pool_max\": %u, \"mac_pool_cap\": %u, \"mac_indirect_max\": %u, \"tx_track_max\": %u, "
                     "\"disc_max\": %u, \"recent_tx_max\": %u, \"znp_confirms_max\": %u, \"znp_in_max\": %u, "
@@ -1682,12 +1706,13 @@ int main(int argc, char **argv) {
                     "\"rreq_coalesced\": %u, \"rreq_suppressed\": %u, \"rrep_rx\": %u, \"route_records\": %u, "
                     "\"network_status_rx\": %u, \"route_failures\": %u, \"neighbors_dropped\": %u, \"early_mtorr\": %u, "
                     "\"tx_not_link_failures\": %u, \"zcl_route_rebuilds\": %u, \"bcast_seq_skipped\": %u, "
-                    "\"poll_children\": %u, \"zcl_retx_sleepy_skipped\": %u},\n",
+                    "\"poll_children\": %u, \"zcl_retx_sleepy_skipped\": %u, \"zcl_retx_deferred\": %u},\n",
                 coord.stats.no_route, coord.stats.disc_buffered, coord.stats.disc_sent, coord.stats.disc_expired,
                 coord.stats.rreq_coalesced, coord.stats.rreq_suppressed, coord.stats.rrep_rx, coord.stats.route_records,
                 coord.stats.network_status_rx, coord.stats.route_failures, coord.stats.neighbors_dropped,
                 coord.stats.early_mtorr, coord.stats.tx_not_link_failures, NEW_STAT(coord, zcl_route_rebuilds),
-                NEW_STAT(coord, bcast_seq_skipped), NEW_STAT(coord, poll_children), NEW_STAT(coord, zcl_retx_sleepy_skipped));
+                NEW_STAT(coord, bcast_seq_skipped), NEW_STAT(coord, poll_children), NEW_STAT(coord, zcl_retx_sleepy_skipped),
+                NEW_STAT(coord, zcl_retx_deferred));
         fprintf(fp, " \"failures_by_status\": {");
         bool first_s = true;
         for (unsigned s = 0; s < 256; s++)

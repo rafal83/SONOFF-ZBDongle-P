@@ -127,6 +127,13 @@ typedef struct {
 } app_gp_stats_t;
 extern app_gp_stats_t app_gp;
 
+/* Touchlink sessions and radio recovery (copied from znp_t by the radio task). */
+typedef struct {
+    uint32_t timeouts, rx_dropped, restore_failed, restore_retries, restore_recovered, restore_restarts,
+        restore_reboots, recovering;
+} app_touchlink_stats_t;
+extern app_touchlink_stats_t app_touchlink;
+
 void host_task_create(void);
 void radio_task_create(void);
 void supervisor_task_create(void);

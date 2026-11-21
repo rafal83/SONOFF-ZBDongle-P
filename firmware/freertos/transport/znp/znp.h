@@ -71,7 +71,15 @@ typedef struct {
     uint8_t interpan_channel;          /* Touchlink (interPanCtl): channel the radio is on, 0: none */
     uint8_t interpan_ep;               /* endpoint inter-PAN frames are delivered to, 0: none */
     uint32_t interpan_last_ms;         /* last Touchlink activity (interPanCtl, inter-PAN frame) */
-    struct { uint32_t timeouts, rx_dropped; } interpan_stats;
+    /* The radio could not be put back on the network channel at the end of a
+     * Touchlink session: attempt number (0: radio fine) and next try. */
+    uint8_t radio_recover;
+    uint32_t radio_recover_at_ms;
+    struct {
+        uint32_t timeouts, rx_dropped;      /* idle sessions closed, non-Touchlink frames ignored */
+        uint32_t restore_failed;            /* returns to the network channel that failed at once */
+        uint32_t restore_retries, restore_recovered, restore_restarts, restore_reboots;
+    } interpan_stats;
     struct { uint32_t tx, tx_failed, channel_moves, channel_failed; } gp_stats;
     uint64_t ieee;
     uint8_t dev_state;
@@ -108,6 +116,12 @@ typedef struct {
 #define ZNP_INTERPAN_IDLE_MS 30000u
 #define ZNP_TOUCHLINK_PROFILE 0xC05Eu   /* ZLL */
 #define ZNP_TOUCHLINK_CLUSTER 0x1000u   /* ZLL commissioning */
+/* Radio not back on the network channel: ZNP_RECOVER_RETRIES more channel
+ * moves 100 ms, 200 ms ... 3.2 s apart, then one full radio restart
+ * (network_up), then a reboot (the store keeps the network): never deaf
+ * for more than ~13 s. */
+#define ZNP_RECOVER_RETRIES 6u
+#define ZNP_RECOVER_FIRST_MS 100u
 
 /* Boot: (re)initialize the coordinator, apply the startup options, restore
  * the stored network, then emit SYS_RESET_IND with `reset_reason`. */
