@@ -82,14 +82,14 @@ Ne jamais réécrire une ancienne capture complète après exploitation du rése
 | *Update Device* et tunnel APS | Oui | `test_mesh` | Non |
 | Appareils endormis : *poll*, quotas, expiration, copies de broadcast, *End Device Timeout* | Oui | `test_sleepy` | Observé en production (capteurs sur pile entendus) ; pas de mesure dédiée |
 | Endormis : 12 réponses de *poll* en file (réveils simultanés), 12 transactions IEEE (réassociations en masse après perte d'un parent), appareil qui nous interroge = notre enfant, capacité MAC apprise du Node Descriptor | Oui (20 novembre, soir) | `test_reliability`, banc `bench_throughput.py` (10 à 40 endormis, parent perdu, routeur congestionné) | Non |
-| Enfants qui partent : vieillissement selon l'*End Device Timeout* demandé (256 min par défaut), enfant entendu via un routeur retiré, ZNP `assocRemove` / `assocAdd` servis (reprise de herdsman, auparavant erreur RPC) | Oui (20 novembre, soir) | `test_reliability`, banc (enfant qui change de parent sans réassociation : 94,8 → 99,5 % des lectures) | Non |
+| Enfants qui partent : vieillissement selon l'*End Device Timeout* demandé (256 min par défaut), enfant entendu via un routeur retiré, ZNP `assocRemove` / `assocAdd` servis (reprise de herdsman, auparavant erreur RPC) | Oui (20 novembre, soir) | `test_reliability`, banc (enfant qui change de parent sans réassociation : 95,0 → 99,75 % des lectures) | Non |
 | Tables : 48 voisins (bitmap d'acquittement passif sur 64 bits) et 48 routes AODV au lieu de 32 ; `Mgmt_Rtg_rsp` produit sans copie des tables sur la pile | Oui (20 novembre, soir) | `test_reliability` (45 voisins, pagination de `Mgmt_Rtg`), `test_mesh`, `test_mesh_scale` | Non |
 | Compteurs NWK entrants persistés tous les 1 024 (16 appareils par enregistrement, aucun octet de SRAM) : rejeu après redémarrage limité à cette fenêtre ; état anti-rejeu remis à zéro quand un appareil rejoint de zéro (avant : un appareil réappairé sans redémarrage du coordinateur voyait ses trames refusées) | Oui (20 novembre, soir) | `test_reliability` (redémarrage, rejeu refusé, réappairage), `test_store_integrity` | Non |
 | SRAM : files ZNP de 4 trames au lieu de 8 (herdsman n'envoie qu'une requête à la fois ; banc à 115 200 bauds : 4 au plus en attente), file du renifleur à 4 : **3 384 o libres** au lieu de 832 | Oui (20 novembre, soir) | Banc de débit | Non |
 | **Touchlink** (inter-PAN) : `interPanCtl`, `dataRequestExt` vers un autre PAN, trames reçues en `AF_INCOMING_MSG_EXT`, radio sur le canal Touchlink pendant la séance | Oui (21 novembre) | `test_reliability` (trames produites et reçues), `znp_sim_touchlink.cjs` (vrai herdsman 11.2.1 : scan, identify, reset, retour au canal) | Non |
 | Index des appareils : deux tableaux d'emplacements triés (IEEE, adresse courte) au lieu de deux index Patricia avec copie des clés : **8 656 o de SRAM libres** au lieu de 3 384, recherche en 8 étapes au plus | Oui (21 novembre) | `test_nwk_join` (30 000 opérations aléatoires contre une recherche linéaire), toute la suite | Non |
 | *Handles* MAC uniques tant qu'une confirmation est attendue (plus de confirmation remise à la mauvaise requête) | Oui (20 novembre, soir) | `test_reliability` (600 trames pendant une attente indirecte) | Non |
-| Réémission ZCL par lecture (destination + numéro ZCL), réponse en double filtrée, pas de réémission vers un endormi connu, route reconstruite seulement sans réponse récente, budget d'une réémission par seconde | Oui (20 novembre, soir) | `test_reliability`, banc de débit (doublons vers l'hôte ≈ 1 200 → 11 sur les scénarios endormis) | Non |
+| Réémission ZCL par lecture (destination + numéro ZCL), réponse en double filtrée, pas de réémission vers un endormi connu, route reconstruite seulement sans réponse récente, budget d'une réémission par seconde | Oui (20 novembre, soir) | `test_reliability`, banc de débit (réponses en double vers l'hôte 452 → 4 sur les 9 scénarios endormis, 21 novembre) | Non |
 | Numéro de séquence NWK d'un broadcast jamais réutilisé tant qu'il est dans les tables anti-doublon ; *backoff* de découverte de 4 s (au lieu de 30 s), doublé jusqu'à 5 min | Oui (20 novembre, soir) | `test_reliability`, `test_mesh` | Non |
 | CCM\* natif : revérification logicielle des rejets dans un budget (8, puis 1 toutes les 16 opérations réussies) | Oui (20 novembre, soir) | `test_reliability` (200 trames falsifiées : 11 revérifications ; panne silencieuse détectée en 144 opérations) | Non |
 | Tâche radio : un seul *tick* de la pile par milliseconde | Oui (20 novembre, soir) | Banc de débit | Non |
@@ -103,12 +103,12 @@ Ne jamais réécrire une ancienne capture complète après exploitation du rése
 | Mesure | Valeur | Nature |
 |---|---|---|
 | Bloc AES logiciel | 4 693 instructions | Émulation ARM (instructions, pas cycles) |
-| CCM\* : 22 octets d'AAD, 40 octets de données | 51 064 instructions | Émulation ARM |
-| Réception d'un rapport ZCL chiffré (MAC, NWK, APS, remontée) | 44 441 instructions | Émulation ARM |
-| Envoi d'une commande ZCL | 35 657 instructions | Émulation ARM |
-| `AF_DATA_REQUEST` ZNP jusqu'à la file MAC | 35 748 instructions | Émulation ARM |
-| Pile : `AF_DATA_REQUEST` / réception jusqu'à ZNP / *Link Status* | 2 240 / 1 680 / 1 576 o | Émulation ARM |
-| Pile radio, pire cas statique (logiciel / `--hw-aes`) | 4 264 / 4 592 o sur 5 120 | Analyse de l'ELF |
-| Flash / SRAM statique (image 1 Mbaud) | 77 884 o / 66 800 o sur 81 920 | ELF lié |
+| CCM\* : 22 octets d'AAD, 40 octets de données | 50 954 instructions | Émulation ARM |
+| Réception d'un rapport ZCL chiffré (MAC, NWK, APS, remontée) | 44 398 instructions | Émulation ARM |
+| Envoi d'une commande ZCL | 35 912 instructions | Émulation ARM |
+| `AF_DATA_REQUEST` ZNP jusqu'à la file MAC | 35 703 instructions | Émulation ARM |
+| Pile : `AF_DATA_REQUEST` / réception jusqu'à ZNP / *Link Status* | 2 264 / 1 720 / 1 624 o | Émulation ARM |
+| Pile radio, pire cas statique (logiciel / `--hw-aes`) | 4 344 / 4 656 o sur 5 120 | Analyse de l'ELF |
+| Flash / SRAM statique (image 1 Mbaud, `d5f5fa1`, logiciel / `--hw-aes`) | 95 972 / 101 520 o ; 71 968 / 73 264 o sur 81 920 | ELF lié |
 
 À 48 MHz, et à raison d'environ un cycle par instruction, une trame coûte de 0,7 à 1 ms, dont plus de 90 % en AES logiciel. Le gain de l'accélérateur, la latence radio, la charge CPU et les piles réelles seront mesurés par la recette [hardware-campaign.md](hardware-campaign.md), et par elle seule.
