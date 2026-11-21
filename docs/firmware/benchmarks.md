@@ -1,6 +1,6 @@
 # Performances : firmware FreeRTOS face à Z-Stack (Koenkk) et ZeroStack (SMLIGHT)
 
-Dernière mise à jour : **20 novembre 2026**. Ce document est la référence chiffrée ; le [README](../../README.md#comparatif) en reprend le résumé. Il est mis à jour à chaque nouvelle mesure (voir [Mettre à jour](#mettre-à-jour)).
+Dernière mise à jour : **21 novembre 2026**. Ce document est la référence chiffrée ; le [README](../../README.md#comparatif) en reprend le résumé. Il est mis à jour à chaque nouvelle mesure (voir [Mettre à jour](#mettre-à-jour)).
 
 Trois sources, à ne pas confondre :
 
@@ -94,11 +94,11 @@ Banc `tools/bench_freertos.py`, scénarios dans `firmware/freertos/tests/arm_per
 
 | Charge (définition SMLIGHT) | Firmware FreeRTOS | ZeroStack (publié) | Z-Stack « stock » (selon SMLIGHT) |
 |---|---|---|---|
-| Écho d'un broadcast relayé (50 routeurs, 1 000 échos) | **≈ 1 692 cycles (35 µs) par écho, total ≈ 35 ms** : doublon reconnu avant tout déchiffrement | 7 076 cycles (147 µs), total 151 ms | 143 865 cycles (3 ms), total 3 s |
-| Trame rejouée | **≈ 1 449 cycles (30 µs)**, rejetée avant déchiffrement | 1 550 cycles | 143 802 cycles |
-| En-tête de sécurité tronqué | **≈ 1 082 cycles (23 µs)** | 320 à 6 631 cycles | défaut distant ≈ 3 ms |
-| MIC falsifié | ≈ 62 792 cycles en AES logiciel ; en production : CCM\* natif plus revérification logicielle | **4 760 cycles** | 143 058 cycles |
-| Réception d'un rapport ZCL sécurisé (MAC, NWK, APS), 200 appareils | ≈ 65 219 cycles (1,36 ms) en AES logiciel | — | — |
+| Écho d'un broadcast relayé (50 routeurs, 1 000 échos) | **≈ 1 701 cycles (35 µs) par écho, total ≈ 35 ms** : doublon reconnu avant tout déchiffrement | 7 076 cycles (147 µs), total 151 ms | 143 865 cycles (3 ms), total 3 s |
+| Trame rejouée | **≈ 1 458 cycles (30 µs)**, rejetée avant déchiffrement | 1 550 cycles | 143 802 cycles |
+| En-tête de sécurité tronqué | **≈ 1 101 cycles (23 µs)** | 320 à 6 631 cycles | défaut distant ≈ 3 ms |
+| MIC falsifié | ≈ 62 822 cycles en AES logiciel ; en production : CCM\* natif plus revérification logicielle | **4 760 cycles** | 143 058 cycles |
+| Réception d'un rapport ZCL sécurisé (MAC, NWK, APS), 200 appareils | ≈ 65 740 cycles (1,37 ms) en AES logiciel | — | — |
 | Appareil inconnu cherché dans une table pleine | **≈ 265 cycles (5,5 µs)**, 200 entrées (recherche dichotomique, 8 étapes au plus) | 326 cycles, 300 entrées | 1 486 228 cycles |
 | Allocation mémoire | **sans objet : aucun tas**, tout est statique | 218 cycles | 2 550 cycles |
 | Écriture identique de 100 octets, × 48 | ≈ 4 537 cycles (94,5 µs), 0 octet écrit | **3 770 cycles (78,5 µs)**, 0 octet | 100 714 cycles, 48 écritures |
@@ -114,8 +114,8 @@ Ce qui reste en retrait de ZeroStack :
 - **l'écriture identique (sans écriture flash) :** 4 537 cycles contre 3 770 cycles chez ZeroStack.
 
 Ce qui dépasse désormais ZeroStack :
-- **la trame rejouée :** 1 449 cycles contre 1 550 annoncés ;
-- **l'écho de broadcast :** 1 692 cycles par écho (35 ms total) contre 7 076 cycles (151 ms) ;
+- **la trame rejouée :** 1 458 cycles contre 1 550 annoncés ;
+- **l'écho de broadcast :** 1 701 cycles par écho (35 ms total) contre 7 076 cycles (151 ms) ;
 - **l'endurance du store :** 1 024 écritures avant compaction sur store vide contre 1 013 publiées par ZeroStack.
 
 ## 4. Capacités et mémoire
@@ -129,7 +129,7 @@ Ce qui dépasse désormais ZeroStack :
 | Table anti-doublon des broadcasts | 32 | 30 (`MAX_BCAST`) | 40 |
 | Réessais MAC | 3 par tour, 3 tours (file de 32 trames) | 7 | non publié |
 | Store non volatil | **2 × 56 Kio** (disposition 2) | NV Z-Stack (géométrie non comparée ici) | non publié |
-| Flash occupée | 101 520 o (image `--hw-aes` 1 Mbaud de l'arbre de travail du 20 novembre, non flashée) | 178 669 o (20240710) | non publié |
+| Flash occupée | 101 520 o (image `--hw-aes` 1 Mbaud du commit `d5f5fa1`, non flashée ; 95 972 o en AES logiciel) | 178 669 o (20240710) | non publié |
 | SRAM | 73 264 o statiques sur 81 920 (8 656 libres), piles et MSP comprises, **sans tas** | 42 228 o statiques + tas dynamique de 33 371 o | 88 Ko de SRAM sur CC2652P, sans précision |
 
 ## 5. Débit soutenu et appareils endormis : SIMULATION
@@ -138,14 +138,16 @@ Ce qui dépasse désormais ZeroStack :
 
 Ce qui est modélisé :
 - **Hôte :** modèle de zigbee-herdsman 11 (adaptateur Z-Stack 3.x). 16 transactions au plus en même temps, chaque créneau étant tenu jusqu'à la réponse ZCL. Une seule SREQ à la fois sur l'UART. Attente de 10 s de la réponse. Reprises de herdsman : 2 s de pause après un échec, 5 tentatives au plus, une nouvelle tentative après une réponse manquante.
-- **Liaison série :** UART à 1 Mbaud, ou 115 200 bauds pour une série. Files ZNP de 8 trames ; la tâche radio se bloque quand la file de sortie est pleine, comme `znp_send()`.
+- **Liaison série :** UART à 1 Mbaud, ou 115 200 bauds pour une série. Files ZNP de 4 trames, comme le firmware ; la tâche radio se bloque quand la file de sortie est pleine, comme `znp_send()`.
 - **Tâche radio :** un seul CPU, avec l'ordre des étapes de `radio_task.c`. Chaque étape coûte les instructions mesurées sur le code ARM compilé (`tools/bench_transaction_cpu.py`, CCM\* exclu) × 1,464 cycle par instruction. S'y ajoute chaque opération CCM\* : 1 650 cycles en natif, moyenne mesurée en production.
-- **Cœur radio :** 4 tampons de réception, ACK matériel et bit *frame pending* issu de la table de *source match*.
+- **Cœur radio :** 4 tampons de réception, ACK matériel et bit *frame pending* issu de la table de *source match* : adresses courtes, et autant d'entrées IEEE que le firmware simulé (12 ; 4 pour la référence).
 - **Canal 802.15.4 :** CSMA-CA non slotté, ACK, collisions entre toutes les émissions qui se chevauchent, 1 % de pertes aléatoires. Par défaut, un seul domaine de collision (cas défavorable). L'option de réutilisation spatiale sépare les sous-arbres.
 - **Routeurs :** 28 au total, 16 à 1 saut, 9 à 2 sauts et 3 à 3 sauts. Chacun a sa file, ses réessais MAC et NWK et sa sécurité refaite à chaque saut. Il envoie un Route Record après chaque Many-to-One, renvoie ses broadcasts deux fois et répond aux lectures en 2 à 10 ms. Il garde les trames de ses enfants endormis.
 - **Appareils endormis :** *poll* toutes les 2 s, avec attente de la trame annoncée et *polls* rapides ensuite. Après une perte de parent, ils se réassocient par le coordinateur.
 
-Médiane de 3 graines × 30 s par point. « Avant » = sources du commit `3cda4b6` ; « après » = arbre de travail actuel. Les deux tournent sur la même version du simulateur. Résultats bruts : `summary.json` et `runs/` dans le dossier `--out`.
+Médiane de 3 graines × 30 s par point. « Avant » = sources du commit `3cda4b6` ; « après » = commit `d5f5fa1` (21 novembre). Les deux tournent sur la même version du simulateur. Résultats bruts : `summary.json` et `runs/` dans le dossier `--out`.
+
+Le 21 novembre, le modèle de *source match* est passé de 8 entrées IEEE fixes au nombre d'entrées du firmware. Avec 8 entrées, au-delà de 8 appareils en attente d'une réponse de réassociation, le simulateur n'annonçait plus la trame alors que le firmware l'aurait fait : le scénario « parent perdu » de l'après tombait à 96,5 %. Les chiffres des endormis publiés avant cette date ne sont pas comparables.
 
 ### Transactions complètes
 
@@ -153,24 +155,24 @@ Une transaction est une lecture d'attribut ZCL, de l'`AF_DATA_REQUEST` à la ré
 
 | Débit offert | Réussite avant → après | Obtenu (/s) | Service p50 / p95 / p99 avant | après | Réessais herdsman avant → après |
 |---|---|---|---|---|---|
-| 25 /s | 100 → 100 % | 25,0 | 18 / 37 / 57 ms | 18 / 36 / 59 ms | 0 → 0 |
-| 50 /s | 100 → 100 % | 50,0 | 30 / 127 / 195 ms | 32 / 145 / 284 ms | 9 → 2 |
-| 100 /s | 99,93 → 99,93 % | 100,0 | 59 / 192 / 10 136 ms | 75 / 232 / 10 076 ms | 57 → 44 |
-| 150 /s | 93,1 → 92,0 % | 139,6 → 138,1 | 52 / 163 / 10 093 ms | 69 / 223 / 5 997 ms | — |
-| 180 /s | 77,3 → 75,7 % | 139,1 → 136,5 | 54 / 171 / 10 104 ms | 70 / 211 / 10 066 ms | — |
+| 25 /s | 100 → 100 % | 24,9 | 18 / 38 / 59 ms | 18 / 37 / 58 ms | 0 → 0 |
+| 50 /s | 100 → 100 % | 50,0 | 29 / 124 / 190 ms | 29 / 119 / 178 ms | 11 → 1 |
+| 100 /s | 99,97 → 99,87 % | 99,9 → 99,8 | 54 / 192 / 10 127 ms | 70 / 225 / 10 088 ms | 51 → 42 |
+| 150 /s | 93,3 → 91,9 % | 139,8 → 137,9 | 52 / 177 / 10 101 ms | 70 / 223 / 4 621 ms | — |
+| 180 /s | 77,3 → 76,6 % | 139,2 → 137,9 | 56 / 173 / 10 086 ms | 72 / 224 / 8 342 ms | — |
 
 Le **débit maximal stable** est le plus haut débit qui garde au moins 99,9 % de réussite et un p95 de bout en bout de 1 s au plus. Il est cherché par dichotomie, à ±6 /s près.
 
 | Conditions | Avant | Après | p99 de service au maximum (après) |
 |---|---|---|---|
-| Arbre de 28 routeurs, un domaine de collision | 59 /s | 53 /s | 212 ms (avant : 10 s) |
-| 28 routeurs à 1 saut | 103 /s | 103 /s | 319 ms |
-| Arbre, réutilisation spatiale | 48 /s | 48 /s | 2,1 s |
-| Arbre, UART à 115 200 bauds | 59 /s | 62 /s | 10 s |
+| Arbre de 28 routeurs, un domaine de collision | 56 /s | 56 /s | 1,2 s (avant : 10 s) |
+| 28 routeurs à 1 saut | 103 /s | 103 /s | 316 ms (avant : 241 ms) |
+| Arbre, réutilisation spatiale | 42 /s | 45 /s | 1,1 s (avant : 140 ms) |
+| Arbre, UART à 115 200 bauds | 59 /s | 59 /s | 10 s (avant : 10 s) |
 
 Lecture :
-- **La limite n'est ni le CPU ni les files du coordinateur.** La tâche radio reste sous 3,1 % de CPU à 180 /s. La file MAC ne dépasse pas 17 / 32 trames, les tampons RX 1 / 4, la file de sortie ZNP 3 / 8. Les limites sont l'occupation du canal (≈ 65 % à 140 /s dans un seul domaine) et la **fenêtre de 16 transactions de herdsman**. Chaque réponse perdue y bloque un créneau 10 s : au-delà de ≈ 60 /s, la latence de bout en bout passe à plusieurs secondes, alors que le temps de service reste sous 250 ms au p95.
-- **Les corrections ne changent pas le débit maximal**, à la précision près. Elles réduisent les réessais herdsman (9 → 2 à 50 /s) et la queue de latence au débit maximal (p99 de 10 s à 0,2 s). La médiane augmente un peu au-delà de 50 /s : les lectures récupérées ajoutent des trames. Les réémissions sont limitées à une par seconde, avec des rafales de 8. Sans cette limite, le débit servi à 180 /s tombait à 122 /s.
+- **La limite n'est ni le CPU ni les files du coordinateur.** La tâche radio reste sous 3,2 % de CPU à 180 /s. La file MAC ne dépasse pas 17 / 32 trames, les tampons RX 1 / 4, la file de sortie ZNP 2 / 4. Les limites sont l'occupation du canal (≈ 67 % à 138 /s dans un seul domaine) et la **fenêtre de 16 transactions de herdsman**. Chaque réponse perdue y bloque un créneau 10 s : au-delà de ≈ 60 /s, la latence de bout en bout passe à plusieurs secondes, alors que le temps de service reste sous 250 ms au p95.
+- **Les corrections ne changent pas le débit maximal**, à la précision près. Elles réduisent les réessais herdsman (11 → 1 à 50 /s) et la queue de latence au débit maximal dans l'arbre (p99 de 10 s à 1,2 s). La médiane augmente un peu au-delà de 50 /s : les lectures récupérées ajoutent des trames. Les réémissions sont limitées à une par seconde, avec des rafales de 8. Sans cette limite, le débit servi à 180 /s tombait à 122 /s.
 
 ### Messages entrants
 
@@ -178,27 +180,27 @@ Ce sont des rapports d'attributs spontanés : l'essentiel du trafic d'un réseau
 
 | Rapports offerts | Arbre : livrés, latence p99 | 1 saut : livrés, latence p99 | CPU (1 saut) |
 |---|---|---|---|
-| 50 /s | 100 %, 24 ms | 100 %, 7 ms | 1,2 % |
+| 50 /s | 100 %, 24 ms | 100 %, 7 ms | 1,3 % |
 | 100 /s | 99,97 %, 58 ms | 100 %, 8 ms | 1,9 % |
-| 150 /s | 74,7 % (canal saturé à 82 %) | 100 %, 18 ms | 2,5 % |
-| **180 /s** | 52,3 % (canal à 97 %) | **99,94 %, 50 ms** | 3,0 % |
-| 250 /s | 29 % | 54,7 % (canal saturé) | 2,5 % |
+| 150 /s | 72,4 % (canal saturé à 83 %) | 100 %, 16 ms | 2,6 % |
+| **180 /s** | 51,1 % (canal à 98 %) | **99,80 %, 54 ms** | 3,1 % |
+| 250 /s | 29 % | 56,4 % (canal saturé) | 2,7 % |
 
 **Plafond**, mesuré par pas de 10 /s avec 3 graines :
 
 | Topologie | Débit soutenu (≥ 99,8 % livrés) | Débit livré au maximum | Au-delà |
 |---|---|---|---|
-| 28 routeurs à 1 saut | **190 /s** (p99 55 à 61 ms) | ≈ 195 /s (200 offerts, 97 à 99 % livrés) | Effondrement par collisions : 150 /s livrés à 240 offerts |
-| Arbre à 3 niveaux | ≈ 110 /s (99,4 %) | ≈ 124 /s | 119 /s livrés à 140 offerts |
+| 28 routeurs à 1 saut | **190 /s** (99,81 à 99,95 %, p99 55 à 61 ms) | ≈ 197 /s (200 offerts, 98,1 à 98,7 % livrés) | Effondrement par collisions : ≈ 150 /s livrés à 240 offerts |
+| Arbre à 3 niveaux | ≈ 110 /s (99,3 à 99,8 %) | ≈ 123 /s (130 offerts) | ≈ 114 /s livrés à 140 offerts |
 
-Une trame reçue coûte ≈ 6 800 cycles au coordinateur, CCM\* natif compris. **Le CPU suffirait donc pour ≈ 7 000 messages/s : à 180 /s, la limite est l'air.** Les messages relayés occupent le canal à chaque saut.
+Une trame reçue coûte ≈ 7 100 cycles au coordinateur, CCM\* natif compris (5 474 cycles de pile et 1 650 de CCM\*). **Le CPU suffirait donc pour ≈ 6 700 messages/s : à 180 /s, la limite est l'air.** Les messages relayés occupent le canal à chaque saut.
 
 ### Comparaison avec ZeroStack
 
 Les **180 messages/s** de SMLIGHT sont annoncés sans topologie, sans taille de trame et sans dire s'il s'agit de messages entrants ou de transactions. Ici, en simulation, le firmware FreeRTOS :
-- livre 180 rapports/s à 99,94 % quand les 28 routeurs sont à 1 saut ;
+- livre 180 à 190 rapports/s à 99,8 % quand les 28 routeurs sont à 1 saut ;
 - plafonne entre 100 et 150 rapports/s dans un arbre à 3 niveaux sur un seul domaine de collision ;
-- sert ≈ 140 transactions complètes/s au plus, et 53 à 103 /s en régime stable, car le modèle herdsman ne garde que 16 transactions en vol.
+- sert ≈ 138 transactions complètes/s au plus, et 56 à 103 /s en régime stable, car le modèle herdsman ne garde que 16 transactions en vol.
 
 Ces chiffres ne sont pas comparables à ceux de SMLIGHT à conditions égales.
 
@@ -208,12 +210,14 @@ Scénarios : 20 transactions/s, dont 30 % vers les appareils endormis (50 % pour
 
 | Scénario | Réussite avant → après | Bout en bout p50 avant → après | Réponses en double vers l'hôte avant → après |
 |---|---|---|---|
-| 10 endormis, réveils étalés | 100 → 100 % | 43 → 28 ms | 103 → 0 |
-| 20 endormis, réveils simultanés | 100 → 100 % | 3,8 → 2,5 s | 190 → 4 |
-| 40 endormis, réveils simultanés | 100 → 99,7 % | 5,9 → 4,8 s | 244 → 1 |
-| 20 endormis derrière un routeur congestionné (file de 2, 4 trames indirectes) | 66,6 → 77,3 % | — | 52 → 1 |
-| 10 endormis, un enfant passe derrière un routeur sans réassociation entendue (herdsman : `assocRemove`) | 94,8 → 99,5 % | — | — |
-| 20 endormis, parent perdu à 8 s, réassociation | 97,3 → 98,5 % | 8,1 → 1,5 s | 154 → 3 |
+| 10 endormis, réveils étalés | 99,8 → 99,8 % | 37 → 48 ms | 31 → 0 |
+| 20 endormis, réveils simultanés | 99,8 → 100 % | 4,0 → 3,9 s | 66 → 1 |
+| 40 endormis, réveils simultanés | 100 → 100 % | 5,1 → 6,5 s | 70 → 1 |
+| 20 endormis derrière un routeur congestionné (file de 2, 4 trames indirectes) | 69,7 → 74,5 % | — | 24 → 0 |
+| 10 endormis, un enfant passe derrière un routeur sans réassociation entendue (herdsman : `assocRemove`) | 95,0 → 99,75 % | — | 40 → 0 |
+| 20 endormis, parent perdu à 8 s, réassociation | 97,5 → 98,25 % | 7,1 → 6,2 s | 53 → 1 |
+
+Les réponses en double disparaissent dans tous les scénarios. La latence médiane avec 40 réveils simultanés se dégrade (5,1 → 6,5 s) : les lectures attendent davantage leur créneau dans la fenêtre de 16 de herdsman, alors que le temps de service médian reste à ≈ 40 ms. Le scénario « parent perdu » est très dispersé selon la graine. Sur 6 graines, l'après donne 97,2 à 98,5 % et une médiane de 3,1 à 6,6 s ; la référence donne 96,8 à 98,5 % et 1,8 à 10,1 s.
 
 Pour l'enfant qui change de parent, la version d'avant répondait à `assocRemove` par une erreur RPC : herdsman abandonnait la commande. Ses trames s'accumulaient dans la file indirecte du coordinateur jusqu'à expirer.
 
@@ -225,10 +229,10 @@ Une compaction du store efface 7 secteurs. Pendant ce temps, le CPU, qui exécut
 
 | Tampons RX | Trames perdues faute de tampon (sans ACK) | Rapports livrés | Latence p99 |
 |---|---|---|---|
-| 4 (firmware) | 138 | 99,97 % | 69 ms |
-| 8 | 10 | 100 % | 61 ms |
+| 4 (firmware) | 149 | 99,87 % | 69 ms |
+| 8 | 19 | 100 % | 62 ms |
 
-Les émetteurs réessaient les trames non acquittées, donc presque rien n'est perdu. La compaction n'arrive que toutes les quelques heures en charge. **Les 4 tampons sont gardés :** 4 de plus coûteraient ≈ 580 o de SRAM pour un gain marginal (3,4 Kio libres au 20 novembre au soir).
+Les émetteurs réessaient les trames non acquittées, donc presque rien n'est perdu. La compaction n'arrive que toutes les quelques heures en charge. **Les 4 tampons sont gardés :** 4 de plus coûteraient ≈ 580 o de SRAM pour un gain marginal (8,6 Kio libres au 21 novembre).
 
 ## Ce qui n'est pas mesuré
 

@@ -52,6 +52,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "rf_logic.h"
 #include "zb_ccm_backend.h"
 #include "zb_coord.h"
 #include "znp.h"
@@ -299,7 +300,7 @@ typedef struct { uint8_t mpdu[MAC_MAX_MPDU]; uint8_t len; } rx_entry_t;
 static rx_entry_t rx_ring[RXCAP];
 static unsigned rx_h, rx_n;
 static bool src_match_short[0x10000];
-static uint64_t src_match_ext[8];
+static uint64_t src_match_ext[RF_SRC_EXT_ENTRIES];   /* the RF core's extended source match table */
 static void cpu_notify(void);
 
 /* MAC radio ops */
@@ -314,10 +315,10 @@ static int sim_tx(void *ctx, const uint8_t *mpdu, uint8_t len, bool ack) {
 static void sim_match(void *ctx, bool ext, uint64_t a, bool p) {
     (void)ctx;
     if (!ext) { src_match_short[a & 0xFFFF] = p; return; }
-    for (unsigned i = 0; i < 8; i++) if (src_match_ext[i] == a) src_match_ext[i] = 0;
-    if (p) for (unsigned i = 0; i < 8; i++) if (!src_match_ext[i]) { src_match_ext[i] = a; break; }
+    for (unsigned i = 0; i < RF_SRC_EXT_ENTRIES; i++) if (src_match_ext[i] == a) src_match_ext[i] = 0;
+    if (p) for (unsigned i = 0; i < RF_SRC_EXT_ENTRIES; i++) if (!src_match_ext[i]) { src_match_ext[i] = a; break; }
 }
-static bool ext_pending(uint64_t a) { for (unsigned i = 0; i < 8; i++) if (src_match_ext[i] == a) return true; return false; }
+static bool ext_pending(uint64_t a) { for (unsigned i = 0; i < RF_SRC_EXT_ENTRIES; i++) if (src_match_ext[i] == a) return true; return false; }
 
 /* ---- node transmit side --------------------------------------------------------- */
 static void node_try_send(int n);

@@ -12,7 +12,7 @@ Le [flasher USB](https://rafal83.github.io/SONOFF-ZBDongle-P/) est disponible su
 
 ## Comparatif
 
-Valeurs au **20 novembre 2026**. Ce résumé est tenu à jour avec [le détail, les conditions et la méthode](docs/firmware/benchmarks.md).
+Valeurs au **21 novembre 2026**. Ce résumé est tenu à jour avec [le détail, les conditions et la méthode](docs/firmware/benchmarks.md).
 
 **Réseau réel :** dongle de production, 130 appareils, lecture d'un attribut sur chaque routeur.
 
@@ -26,8 +26,8 @@ Valeurs au **20 novembre 2026**. Ce résumé est tenu à jour avec [le détail, 
 | | Firmware FreeRTOS | ZeroStack (publié) | Z-Stack « stock » (selon SMLIGHT) |
 |---|---|---|---|
 | Sécurité d'une trame (CCM\*), sur le dongle | ≈ 1 650 cycles en trafic réel, contrôles logiciels compris (1 950 au banc) | ≈ 3 900 cycles | 532 182 cycles |
-| Écho de broadcast (1 000 échos, 50 routeurs) | **≈ 35 ms** au total (1 692 cycles / écho) | 151 ms (7 076 cycles / écho) | 3 s (143 865 cycles / écho) |
-| Trame rejouée | **1 449 cycles** (30 µs) | 1 550 cycles | 143 802 cycles |
+| Écho de broadcast (1 000 échos, 50 routeurs) | **≈ 35 ms** au total (1 701 cycles / écho) | 151 ms (7 076 cycles / écho) | 3 s (143 865 cycles / écho) |
+| Trame rejouée | **1 458 cycles** (30 µs) | 1 550 cycles | 143 802 cycles |
 | Écritures avant compaction (store vide) | **1 024** (écritures 44 o) / **512** (100 o) | 1 013 (store vide) | 69 |
 | Écritures avant compaction (200 appareils vivants) | **756** (mises à jour 48 o) / **405** (100 o) | non publié | non supporté |
 | Coupures de courant testées, 0 perte | **27 980** | 22 959 | — |
@@ -38,9 +38,9 @@ Valeurs au **20 novembre 2026**. Ce résumé est tenu à jour avec [le détail, 
 
 | | Firmware FreeRTOS (simulation) | ZeroStack (publié) |
 |---|---|---|
-| Messages entrants (rapports), 28 routeurs à 1 saut | **190 /s soutenus** (≥ 99,8 % livrés, p99 ≈ 60 ms, CPU ≈ 3 %), ≈ 195 /s au plafond ; ≈ 110 /s dans un arbre à 3 niveaux | « 180 messages/s », conditions non publiées |
-| Transactions complètes (lecture ZCL aller-retour), débit stable | 53 /s (arbre à 3 niveaux) à 103 /s (1 saut) : limite de l'air et de la fenêtre de 16 de herdsman, pas du CPU | non publié |
-| 20 appareils endormis, parent perdu | 98,5 % des lectures servies, réassociation par le coordinateur | non publié |
+| Messages entrants (rapports), 28 routeurs à 1 saut | **190 /s soutenus** (≥ 99,8 % livrés, p99 ≈ 60 ms, CPU ≈ 3 %), ≈ 197 /s au plafond ; ≈ 110 /s dans un arbre à 3 niveaux | « 180 messages/s », conditions non publiées |
+| Transactions complètes (lecture ZCL aller-retour), débit stable | 56 /s (arbre à 3 niveaux) à 103 /s (1 saut) : limite de l'air et de la fenêtre de 16 de herdsman, pas du CPU | non publié |
+| 20 appareils endormis, parent perdu | 98,25 % des lectures servies (97,5 % avant les corrections), réassociation par le coordinateur | non publié |
 
 ## Construire et tester
 
