@@ -16,11 +16,16 @@
 #define STORE_ID_DEVICE0 16u
 /* Floors of the incoming NWK frame counters, 16 devices per record (ids
  * 224..236: the 512 ids of the store are otherwise all assigned). Entry =
- * IEEE tag u16 (never 0) + counter u32, the record bound to a key sequence. */
+ * IEEE tag u32 + counter u32 (0: empty), the record bound to a key sequence.
+ * v1 had a 16-bit tag with its low bit forced (15 useful bits): a slot taken
+ * over by another device whose floor could not be cleared had a 1/32768
+ * chance of inheriting it, all its frames then refused as replays. v1
+ * records are ignored (floors rebuilt from the next frames). */
 #define STORE_ID_NWKCTR0 224u
 #define NWKCTR_PER_RECORD 16u
-#define NWKCTR_VERSION 1u
-#define NWKCTR_LEN (2u + 6u * NWKCTR_PER_RECORD)
+#define NWKCTR_VERSION 2u
+#define NWKCTR_ENTRY 8u
+#define NWKCTR_LEN (2u + NWKCTR_ENTRY * NWKCTR_PER_RECORD)
 #define NWKCTR_STEP_SHIFT 10u   /* persisted every 1024 counter values, as the APS ones */
 #define STORE_NET_VERSION 2u
 #define STORE_COUNTERS_VERSION 2u
@@ -151,10 +156,14 @@ static void save_device(zb_coord_t *c, uint16_t slot) {
     wipe(b, sizeof b);
 }
 
-static uint16_t ext_tag(uint64_t ext) {
-    uint32_t x = (uint32_t)ext ^ (uint32_t)(ext >> 32);
-    x ^= x >> 16;
-    return (uint16_t)(x | 1u);
+/* 32-bit tag of an IEEE address (splitmix64 finalizer: every input bit
+ * reaches every output bit, so devices of one vendor, which differ only in
+ * their low bytes, do not share tags). */
+static uint32_t ext_tag(uint64_t ext) {
+    uint64_t x = ext;
+    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+    x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+    return (uint32_t)((x ^ (x >> 31)) >> 32);
 }
 
 /* Incoming NWK frame counter of the device in `slot` made durable (0 clears
@@ -171,10 +180,12 @@ static void nwkctr_store(zb_coord_t *c, uint16_t slot, uint8_t key_seq, uint32_t
         b[0] = NWKCTR_VERSION;
         b[1] = key_seq;
     }
-    uint8_t *e = b + 2 + 6u * (slot % NWKCTR_PER_RECORD);
-    uint16_t tag = counter ? ext_tag(c->devices.dev[slot].ext) : 0;
-    e[0] = (uint8_t)tag; e[1] = (uint8_t)(tag >> 8);
-    for (unsigned i = 0; i < 4; i++) e[2 + i] = (uint8_t)(counter >> (8u * i));
+    uint8_t *e = b + 2 + NWKCTR_ENTRY * (slot % NWKCTR_PER_RECORD);
+    uint32_t tag = counter ? ext_tag(c->devices.dev[slot].ext) : 0;
+    for (unsigned i = 0; i < 4; i++) {
+        e[i] = (uint8_t)(tag >> (8u * i));
+        e[4 + i] = (uint8_t)(counter >> (8u * i));
+    }
     if (store_put(c, id, b, NWKCTR_LEN)) c->stats.nwk_counters_stored++;
 }
 
@@ -2569,9 +2580,9 @@ bool zb_coord_restore(zb_coord_t *c) {
             continue;
         for (unsigned k = 0; k < NWKCTR_PER_RECORD; k++) {
             uint16_t slot = (uint16_t)(g * NWKCTR_PER_RECORD + k);
-            const uint8_t *e = b + 2 + 6u * k;
-            uint16_t tag = (uint16_t)(e[0] | e[1] << 8);
-            uint32_t counter = (uint32_t)e[2] | (uint32_t)e[3] << 8 | (uint32_t)e[4] << 16 | (uint32_t)e[5] << 24;
+            const uint8_t *e = b + 2 + NWKCTR_ENTRY * k;
+            uint32_t tag = (uint32_t)e[0] | (uint32_t)e[1] << 8 | (uint32_t)e[2] << 16 | (uint32_t)e[3] << 24;
+            uint32_t counter = (uint32_t)e[4] | (uint32_t)e[5] << 8 | (uint32_t)e[6] << 16 | (uint32_t)e[7] << 24;
             if (!counter || slot >= NWK_MAX_DEVICES || !c->devices.dev[slot].ext ||
                 tag != ext_tag(c->devices.dev[slot].ext))
                 continue;
