@@ -19,6 +19,8 @@ Banc en lecture seule `tools/znp_prod_bench.cjs`, dongle de production sur COM8,
 
 | Image | Conditions | Lecture isolée, médiane / p95 | Rafales réussies | Part des routeurs joignables |
 |---|---|---|---|---|
+| Commit d5f5fa1, 21 novembre vers 7 h 30 : 1er passage, juste après le flash | 29 routeurs dont 1 muet (`0x2ebd`, volet Profalux : il ne répond qu'après avoir été réveillé par une commande ; il répondait au banc de la veille), 20 dBm, réessais herdsman, délai 10 s | 51,3 ms / 362 ms | 224 / 232 | 100 % (8 rafales sur 8 à 28 / 28) |
+| Commit d5f5fa1, passages suivants (3, enchaînés) | idem | 39,0 à 46,1 ms / 94 à 106 ms | 203, 215 et 218 / 232 | 90,6 %, 96,0 % et 97,3 % |
 | **Commit 666f804** (priorité routes, recent_tx 32, reroutage) | 28 routeurs joignables, 20 dBm, réessais herdsman, délai 10 s | **34,4 ms / 60,4 ms** | **224 / 224** | **100 %** (8 rafales sur 8 à 28 / 28) |
 | Commit 2f787a6 (reroutage Network Status, CCM\* optimisé) | 29 routeurs, 20 dBm, réessais herdsman, délai 10 s | 68 ms / 168 ms | 223 / 232 | 96,1 % (3 rafales sur 8 à 29 / 29) |
 | Commit 1e7b645 (store 2 × 56 Kio, CCM\* natif allégé) | idem | 65 ms / 221 ms | 221 / 232 | 95,3 % (2 rafales sur 8 à 29 / 29) |
@@ -37,10 +39,13 @@ Lecture :
   - Découverte de route avec temporisation d'attente (`disc_fresh_for`) pour laisser aux réponses multi-sauts le temps d'arriver avant repli.
   - Table `recent_tx` portée à 32 trames et réservée aux données applicatives avec réémission graduée en cas d'absence de réponse ZCL.
   - Priorisation des `APS ACK` en tête de file MAC directe (`direct_q`).
+- **d5f5fa1 (21 novembre) est en retrait sur les rafales enchaînées :** 100 % au premier passage, puis 90,6 à 97,3 %. Les échecs sont des réponses jamais reçues, surtout sur les derniers routeurs de chaque rafale (`0x68d`, `0x5459`, `0x25a4`, `0x1331`, `0x5e32`) ; ces routeurs répondent en lecture isolée. Les réémissions par rafale sont du même ordre qu'avec 666f804 (6 à 18 contre 3 à 24). Les compteurs du dongle ne montrent rien d'anormal : 0 perte de file ZNP, 0 faute AES, pic CPU 35 %, 416 mots de pile radio libres. Les mesures de 666f804 datent de la veille, sous d'autres conditions radio : la cause n'est pas établie, une comparaison entrelacée reste à faire.
 - **La lecture isolée varie avec l'état du réseau,** de 43 à 78 ms selon la session. L'écart avec Koenkk (51 ms) est du même ordre que cette variation. Une comparaison serrée exige des sessions entrelacées.
 - **La durée d'une rafale n'est pas comparable :** le délai d'attente est de 10 s pour le firmware FreeRTOS et de 4 s pour Koenkk.
 
-Données brutes : `private/perf-20261120-prod-117e5ba/bench-*/bench.json`, hors Git.
+**Par Zigbee2MQTT, en production (d5f5fa1, 21 novembre, 3 minutes après le démarrage) :** 5 rafales de lectures `get` (`state`, `position` ou `brightness`) envoyées en même temps aux 28 routeurs par MQTT, à 20 s d'intervalle. **Aucun échec dans le journal de Zigbee2MQTT pour ces 140 lectures.** 138 réponses sont publiées en moins de 12 s ; les 2 autres (Lumière garage, Bougie) arrivent un peu plus tard. Médiane de 0,8 à 1,3 s par rafale, et 5 s pendant les reconfigurations de démarrage lancées par Zigbee2MQTT : la file de herdsman, qui garde 16 requêtes en vol, domine. Les seules erreurs du journal sur cette période concernent des lectures d'attributs Tuya et une reconfiguration lancées par Zigbee2MQTT, surtout vers des boutons endormis.
+
+Données brutes : `private/perf-20261120-prod-117e5ba/bench-*/bench.json` et `private/perf-20261121-d5f5fa1*/bench.json`, hors Git. Rafales MQTT : `private/z2m-burst-20261121/`.
 
 ## 2. CPU : trame CCM\* (sécurité NWK) mesurée sur le dongle
 
