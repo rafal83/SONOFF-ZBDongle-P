@@ -40,6 +40,7 @@ L'hôte le pilote par ZNP ([znp-compat.md](znp-compat.md)). Depuis le 18 novembr
 - Un appareil qui interroge le coordinateur avec son adresse courte devient son enfant.
 - Vieillissement des enfants selon l'*End Device Timeout* demandé (256 min par défaut).
 - Enfant entendu via un routeur : il n'est plus traité comme enfant direct. `assocRemove` et `assocAdd` sont servis.
+- *Parent_annce* (Zigbee R21, ZDO `0x001F` / `0x801F`). Après une restauration du réseau, le coordinateur liste ses enfants terminaux aux routeurs, 9 par trame, 10 à 20 s après le démarrage. Un routeur qui sert l'un d'eux répond, et l'enfant cesse d'être le nôtre. Dans les 60 s qui suivent l'annonce, une telle réponse libère l'enfant ; plus tard, elle est ignorée. À l'inverse, quand un routeur redémarré liste ses enfants, ceux que le coordinateur a entendus dans les 5 dernières minutes lui sont renvoyés (*Parent_annce_rsp*).
 
 **APS et ZCL**
 - Doublons filtrés, groupes, chiffrement APS sur demande de l'hôte.
@@ -56,9 +57,10 @@ L'hôte le pilote par ZNP ([znp-compat.md](znp-compat.md)). Depuis le 18 novembr
 - Planchers des compteurs NWK entrants (format v2, empreinte IEEE de 32 bits), écrits tous les 1 024 et effacés à chaque réappairage.
 
 **Diagnostic**
-- Sous-système MT privé `0x1F`, et les mêmes blocs en éléments NV virtuels `0x0FA0` à `0x0FA7`, lisibles pendant que Zigbee2MQTT tourne : identité de l'image (commit), performances, maillage, coordinateur, store, UART.
+- Sous-système MT privé `0x1F`, et les mêmes blocs en éléments NV virtuels `0x0FA0` à `0x0FA8`, lisibles pendant que Zigbee2MQTT tourne : identité de l'image (commit), performances, maillage, coordinateur, store, UART.
+- Liens qui perdent des réponses (`DIAG 0x1E`, NV `0x0FA8`). Le bloc liste les 8 destinations dont des lectures ZCL restent sans réponse après toutes leurs réémissions, avec le premier relais de leur route. Il liste aussi 8 relais, avec le nombre de lectures passées par eux qui ont dû être réémises. Un relais est signalé pendant 10 min dès que 6 lectures au moins, et au moins une sur trois, ont dû être réémises. Le relais est noté au premier envoi de chaque lecture.
 - Journal des 8 derniers événements réseau : départs, *Update Device*, réassociations, associations, conflits, enfants vieillis ou déplacés, retraits.
-- Compteurs de fiabilité. Lecture par l'extension Zigbee2MQTT [`tools/z2m/coordinator-diag.js`](../../tools/z2m/coordinator-diag.js).
+- Compteurs de fiabilité, enfants directs et endormis, trames en file indirecte (actuelles et pic). Lecture par l'extension Zigbee2MQTT [`tools/z2m/coordinator-diag.js`](../../tools/z2m/coordinator-diag.js).
 
 ## Limites
 
@@ -69,13 +71,13 @@ L'hôte le pilote par ZNP ([znp-compat.md](znp-compat.md)). Depuis le 18 novembr
 | Réémission APS d'un envoi simple avec ACK demandé par l'hôte | Non faite (herdsman ne demande pas d'ACK APS ; la fragmentation attend bien chaque ACK) |
 | LED | Aucune LED pilotée (`ledControl` : erreur RPC, interceptée par herdsman) |
 | SAPI, BDB *finding & binding* | Non faits |
-| Contournement d'un relais qui perd des trames | Non fait : la route source apprise est utilisée telle quelle (voir [benchmarks.md](benchmarks.md#1-réseau-réel)) |
+| Contournement d'un relais qui perd des trames | Non fait : le relais est repéré et signalé dans le diagnostic, mais la route source apprise reste utilisée. En simulation, une découverte de route déclenchée par le signalement réduisait les échecs en rafale derrière un relais défaillant, mais dégradait un routeur congestionné qui sert des enfants endormis (de 76,4 à 70,0 % livrés). Décision reportée aux données de production (voir [benchmarks.md](benchmarks.md#1-réseau-réel)) |
 
 Aucune conformité ni certification Zigbee n'est revendiquée.
 
 ## Mémoire et performances
 
 - **Aucune allocation dynamique :** pools et anneaux de taille fixe, saturation définie (refus compté).
-- **Image `--hw-aes` à 1 Mbaud :** 103 896 o de flash, 74 752 o de SRAM statique sur 81 920 (piles et MSP comprises).
+- **Image `--hw-aes` à 1 Mbaud :** 106 840 o de flash, 75 272 o de SRAM statique sur 81 920 (piles et MSP comprises).
 - **Pile radio :** 4 656 o au pire cas statique sur 5 120.
 - **CPU :** une trame sécurisée coûte environ 1 650 cycles en CCM\* natif. Le rejet d'un écho de broadcast ou d'un rejeu coûte environ 1 500 cycles, avant tout déchiffrement. Détail dans [benchmarks.md](benchmarks.md).

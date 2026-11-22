@@ -59,6 +59,7 @@
 #define DIAG_PERF 0x1Bu          /* performance counters (app_perf_t, cycles at 48 MHz) */
 #define DIAG_EVENTS 0x1Cu        /* last network events, newest first (leave, Update Device, rejoin...) */
 #define DIAG_RELIABILITY 0x1Du   /* ZCL re-sends, duplicates, counter floors, children (count-prefixed u32) */
+#define DIAG_LINKS 0x1Eu         /* destinations losing answers, first relays of their routes */
 
 /* Read-only virtual NV items: the diagnostics through the standard ZNP reads
  * SYS osalNvRead / osalNvReadExt / osalNvLength (Z-Stack application id range,
@@ -68,7 +69,7 @@
  * are refused by the ZNP layer (they are not generic items). */
 #define MT_DIAG_NV_FIRST 0x0FA0u
 #define MT_DIAG_NV_CMDS {DIAG_INFO, DIAG_COUNTERS, DIAG_COORD_STATS, DIAG_MESH_STATS, DIAG_STORE_STATUS, DIAG_PERF, \
-                         DIAG_EVENTS, DIAG_RELIABILITY}
+                         DIAG_EVENTS, DIAG_RELIABILITY, DIAG_LINKS}
 #define MT_SYS_OSAL_NV_READ 0x08u
 #define MT_SYS_OSAL_NV_LENGTH 0x13u
 #define MT_SYS_OSAL_NV_READ_EXT 0x1Cu

@@ -406,6 +406,35 @@ static void snapshot(void) {
         for (unsigned i = 0; i < ZB_EVENTS; i++) app_coord.events[i] = coord.events[i];
         app_coord.events_total = coord.events_total;
     }
+    if (app_coord.links_version != coord.links_version) {
+        for (unsigned i = 0; i < ZB_LINK_STATS; i++) app_coord.links[i] = coord.links[i];
+        for (unsigned i = 0; i < ZB_RELAY_STATS; i++) app_coord.relays[i] = coord.relays[i];
+        app_coord.links_version = coord.links_version;
+    }
+    /* Indirect frames waiting for a poll (48 slot reads). */
+    uint8_t ind_short = 0, ind_ext = 0;
+    for (unsigned i = 0; i < MAC_POOL_SLOTS; i++) {
+        ind_short += coord.mac.slots[i].kind == SLOT_INDIRECT_SHORT;
+        ind_ext += coord.mac.slots[i].kind == SLOT_INDIRECT_EXT;
+    }
+    app_coord.indirect_short = ind_short;
+    app_coord.indirect_ext = ind_ext;
+    if (ind_short > app_coord.indirect_short_peak) app_coord.indirect_short_peak = ind_short;
+    if (ind_ext > app_coord.indirect_ext_peak) app_coord.indirect_ext_peak = ind_ext;
+    /* Children, once a second (up to 200 devices). */
+    static uint32_t children_ms;
+    if (coord.now_ms - children_ms >= 1000u) {
+        children_ms = coord.now_ms;
+        uint16_t ch = 0, sl = 0;
+        for (uint16_t k = 0; k < coord.devices.count; k++) {
+            const nwk_device_t *d = &coord.devices.dev[coord.devices.by_ext[k]];
+            if (d->relationship != NWK_REL_CHILD || (d->capability & NWK_CAP_FFD)) continue;
+            ch++;
+            sl += !d->capability_guessed && !(d->capability & NWK_CAP_RX_ON_IDLE);
+        }
+        app_coord.children = ch;
+        app_coord.sleepy_children = sl;
+    }
 }
 
 

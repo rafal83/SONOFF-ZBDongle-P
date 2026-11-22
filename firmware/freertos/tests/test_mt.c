@@ -123,7 +123,9 @@ int main(void) {
         len.payload[0] = 0xA7;                                                       /* block the platform lacks */
         CHECK(mt_diag_nv(&P, &len, &rsp) && rsp.payload[0] == 0 && rsp.payload[1] == 0);
         /* not ours: other items, other commands, writes (the ZNP layer refuses those) */
-        len.payload[0] = 0xA8;
+        len.payload[0] = 0xA8;                                                       /* 0x0FA8: DIAG_LINKS, the last */
+        CHECK(mt_diag_nv(&P, &len, &rsp));
+        len.payload[0] = 0xA9;
         CHECK(!mt_diag_nv(&P, &len, &rsp));
         req.payload[0] = 0x21; req.payload[1] = 0x00; req.payload[2] = 0;           /* a real NV item */
         CHECK(!mt_diag_nv(&P, &req, &rsp));

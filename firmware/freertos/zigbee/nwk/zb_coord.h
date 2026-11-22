@@ -87,6 +87,29 @@
  * it, re-joins, associations... answers "why did this device disappear"
  * without a host-side log. */
 #define ZB_EVENTS 8u
+
+/* Diagnostics only (routing unchanged): reads left unanswered after every
+ * re-send, by destination and by the first relay of their route, and reads
+ * that needed a re-send, by relay. A relay is flagged when at least 1 read in
+ * 3 through it needed one (production, 21 November: shutter motors used as
+ * relays lost the answers of the routers behind them). Acting on it (route
+ * discovery) helped bursts in simulation but hurt a congested router
+ * serving sleepy children: left to production data first. */
+/* Parent_annce (Zigbee R21, ZDO 0x001F / 0x801F): after a restart the
+ * coordinator lists its end-device children to the routers; a router that
+ * serves one of them actively answers, and it is no longer ours. */
+#define ZB_PARENT_ANNCE_BASE_MS 10000u     /* apcParentAnnounceBaseTimer */
+#define ZB_PARENT_ANNCE_JITTER_MS 10000u   /* apcParentAnnounceJitterMax */
+#define ZB_PARENT_ANNCE_MAX 9u             /* children per frame (8-byte IEEE each) */
+#define ZB_PARENT_ANNCE_RSP_MS 60000u      /* answers accepted this long after ours */
+#define ZB_CHILD_HEARD_MS 300000u          /* a child we claim was heard this recently */
+#define ZB_LINK_STATS 8u
+#define ZB_RELAY_STATS 8u
+#define ZB_RELAY_SUSPECT_LATE 6u            /* reads that needed a re-send, at least 1 in 3 */
+#define ZB_RELAY_SUSPECT_MS 600000u         /* flag shown 10 min */
+#define ZB_LINK_STATS_RESET_MS 1800000u     /* counts older than 30 min start over */
+typedef struct { uint32_t last_ms; uint16_t dst, via, misses, answers; } zb_link_stat_t;
+typedef struct { uint32_t last_ms, suspect_until_ms; uint16_t addr, misses, answers, late; } zb_relay_stat_t;
 enum {
     ZB_EV_LEAVE = 1,          /* NWK Leave heard; detail: options (0x20 rejoin), from: MAC source */
     ZB_EV_UPDATE_DEVICE,      /* APS Update Device; detail: status (2 = left), from: the router */
@@ -250,6 +273,9 @@ typedef struct {
     uint32_t zcl_route_rebuilds;      /* unanswered read, nothing answered lately: route rebuilt */
     uint32_t bcast_seq_skipped;       /* NWK sequence numbers skipped: still in a broadcast table */
     uint32_t zcl_retx_deferred;       /* ZCL re-send postponed: re-send budget used up */
+    uint32_t reads_unanswered;        /* ZCL reads still unanswered after every re-send */
+    uint32_t relays_suspected;        /* relays flagged as losing frames (ZB_RELAY_*) */
+    uint32_t parent_annce_sent, parent_annce_rsp_sent, parent_annce_children_released;
     uint32_t children_aged;           /* children silent beyond their End Device Timeout */
     uint32_t children_moved;          /* children heard through a router: no longer ours */
     uint32_t nwk_counters_stored, nwk_counters_restored;   /* incoming NWK counter floors (store) */
@@ -261,7 +287,7 @@ typedef struct {
 typedef struct {
     uint8_t payload[ZB_RECENT_MAX];
     uint8_t len, radius, retries, answer_cmd;
-    uint16_t dst;
+    uint16_t dst, via;                 /* via: first hop of the first send (link statistics) */
     uint32_t sent_ms;
     bool used, secured, expects_reply, answered;   /* answered: kept to drop a second answer */
 } zb_recent_tx_t;
@@ -332,6 +358,12 @@ typedef struct {
     uint32_t retx_refill_ms;
     bool sending_ack, retrying_recent;
     zb_event_t events[ZB_EVENTS];          /* ring, events_total % ZB_EVENTS is the next slot */
+    zb_link_stat_t links[ZB_LINK_STATS];   /* destinations losing answers */
+    zb_relay_stat_t relays[ZB_RELAY_STATS];
+    uint32_t links_version;                /* moves at every change (diagnostics snapshot) */
+    bool parent_annce_pending;             /* restored network: announce our children */
+    uint8_t parent_annce_tsn;
+    uint32_t parent_annce_at_ms, parent_annce_sent_ms;
     uint32_t events_total;
     zb_frag_rx_t frag_rx[ZB_FRAG_RX_SESSIONS];
     zb_frag_tx_t frag_tx;                  /* one fragmented transmission at a time */

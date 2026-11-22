@@ -260,9 +260,50 @@ static int diag_reliability(le_writer_t *w) {
         s->children_moved, s->nwk_counters_stored, s->nwk_counters_restored, s->bcast_seq_skipped,
         s->learned_members, s->addresses_reassigned, s->leaves, s->update_device, s->rejoins, s->tc_rejoins,
         s->interpan_rx, s->interpan_tx, s->store_writes, s->store_failures,
+        /* 22..: answers lost by relays, Parent_annce, children and indirect queues (22 November) */
+        s->reads_unanswered, s->relays_suspected, s->parent_annce_sent, s->parent_annce_rsp_sent,
+        s->parent_annce_children_released, app_coord.children, app_coord.sleepy_children,
+        app_coord.indirect_short, app_coord.indirect_ext, app_coord.indirect_short_peak,
+        app_coord.indirect_ext_peak,
     };
     le_u8(w, (uint8_t)(sizeof values / sizeof values[0]));
     for (unsigned i = 0; i < sizeof values / sizeof values[0]; i++) le_u32(w, values[i]);
+    return w->ok ? (int)w->len : MT_DIAG_BAD_PARAM;
+}
+
+/* Destinations whose reads stay unanswered, and first relays of their routes
+ * (reads through them that needed a re-send); entries not touched for 30
+ * minutes start over on their next use. */
+static int diag_links(le_writer_t *w) {
+    const app_coord_snapshot_t *c = &app_coord;   /* word reads of a snapshot owned by the radio task */
+    uint32_t now = now_ms();
+    uint8_t n = 0;
+    le_u8(w, 1);   /* format */
+    for (unsigned i = 0; i < ZB_LINK_STATS; i++) n += c->links[i].last_ms != 0;
+    le_u8(w, n);
+    for (unsigned i = 0; i < ZB_LINK_STATS; i++) {
+        const zb_link_stat_t *l = &c->links[i];
+        if (!l->last_ms) continue;
+        le_u32(w, now - l->last_ms);
+        le_u16(w, l->dst);
+        le_u16(w, l->via);
+        le_u16(w, l->misses);
+        le_u16(w, l->answers);
+    }
+    n = 0;
+    for (unsigned i = 0; i < ZB_RELAY_STATS; i++) n += c->relays[i].last_ms != 0;
+    le_u8(w, n);
+    for (unsigned i = 0; i < ZB_RELAY_STATS; i++) {
+        const zb_relay_stat_t *r = &c->relays[i];
+        if (!r->last_ms) continue;
+        int32_t left = r->suspect_until_ms ? (int32_t)(r->suspect_until_ms - now) : 0;
+        le_u32(w, now - r->last_ms);
+        le_u16(w, r->addr);
+        le_u16(w, r->misses);
+        le_u16(w, r->answers);
+        le_u16(w, r->late);
+        le_u32(w, left > 0 ? (uint32_t)left : 0u);   /* flagged: ms left */
+    }
     return w->ok ? (int)w->len : MT_DIAG_BAD_PARAM;
 }
 
@@ -358,6 +399,7 @@ static int plat_diag(void *ctx, uint8_t cmd, const uint8_t *in, uint8_t len, uin
     case DIAG_PERF: return len ? MT_DIAG_BAD_PARAM : diag_perf(&w);
     case DIAG_EVENTS: return len ? MT_DIAG_BAD_PARAM : diag_events(&w);
     case DIAG_RELIABILITY: return len ? MT_DIAG_BAD_PARAM : diag_reliability(&w);
+    case DIAG_LINKS: return len ? MT_DIAG_BAD_PARAM : diag_links(&w);
     case DIAG_STORE_FORMAT: {
         int n = diag_radio(cmd, in, len, &w);
         if (n > 0 && out[0] == 0) reset_pending = true;   /* boot on the empty store */

@@ -635,6 +635,7 @@ int main(void) {
         zb_coord_init(&c2, &RADIO, &upper, 0x00124B000000AAAAull, 0x2222u, 1);
         zb_coord_attach_store(&c2, &log);
         CHECK(zb_coord_restore(&c2) && c2.stats.nwk_counters_restored == 1);
+        CHECK(c2.parent_annce_pending);   /* restarted: Parent_annce planned */
         old[2] ^= 0x33;    /* new MAC sequence number: only NWK replay protection can stop it */
         zb_coord_rx(&c2, old, (uint8_t)old_len, 200, -50);
         CHECK(c2.stats.nwk_auth_failures == 1);
@@ -964,6 +965,135 @@ int main(void) {
         tl_fail_left = 0;
         printf("reliability: Touchlink scan request sent inter-PAN, scan response passed up, other inter-PAN frames "
                "dropped, session closed (by the host or after %u s idle)\n", ZNP_INTERPAN_IDLE_MS / 1000u);
+    }
+
+    /* 13. Parent_annce (R21): (a) a router lists children after its restart:
+     *     only those we heard recently are named back (Parent_annce_rsp);
+     *     (b) after our restart we list ours, 9 per frame, 10 to 20 s later;
+     *     (c) an answer to it releases the children named; late answers and
+     *     answers without an announce of ours are ignored. */
+    {
+        drain(0);
+        node_dev_t *heard = &sleeper[5], *silent = &sleeper[6], *taken = &sleeper[7];
+        node_dev_t *ann = &router[1];
+        node_dev_t *kids[3] = {heard, silent, taken};
+        for (unsigned i = 0; i < 3; i++) {
+            nwk_device_t *e = &coord.devices.dev[nwk_devices_find_ext(&coord.devices, kids[i]->ext)];
+            e->relationship = NWK_REL_CHILD;
+            e->last_seen_ms = 0;
+        }
+        nwk_source_route_set(&coord.routes, ann->short_addr, 0, 0);   /* one hop, known route */
+        poll(heard);
+        drain(0);
+        uint8_t aps[8 + 2 + 8 * 3] = {0x00, 0x00, 0x1F, 0x00, 0x00, 0x00, 0x00, 0, 0x5A, 3};
+        const uint64_t listed[3] = {heard->ext, silent->ext, 0x00158D00DEAD0001ull};
+        for (unsigned k = 0; k < 3; k++)
+            for (unsigned i = 0; i < 8; i++) aps[10 + 8 * k + i] = (uint8_t)(listed[k] >> (8 * i));
+        aps[7] = ann->aps++;
+        from_dev(ann, aps, sizeof aps);
+        seen_t s;
+        unsigned rsps = 0;
+        while (take(&s)) {
+            if (!s.ok || s.nwk.type != NWK_TYPE_DATA || s.nwk.dst != ann->short_addr) continue;
+            const uint8_t *a = s.plain + s.nwk.header_len + 14;   /* after the auxiliary security header */
+            if (a[2] != 0x1F || a[3] != 0x80) continue;
+            rsps++;
+            uint64_t named = 0;
+            for (unsigned i = 0; i < 8; i++) named |= (uint64_t)a[11 + i] << (8 * i);
+            CHECK(a[8] == 0x5A && a[9] == 0x00 && a[10] == 1 && named == heard->ext);   /* tsn, SUCCESS, 1 child */
+        }
+        CHECK(rsps == 1 && coord.stats.parent_annce_rsp_sent == 1);
+        CHECK(coord.devices.dev[nwk_devices_find_ext(&coord.devices, heard->ext)].relationship == NWK_REL_CHILD);
+
+        /* an answer without an announce of ours: ignored */
+        uint8_t rsp[8 + 3 + 8] = {0x00, 0x00, 0x1F, 0x80, 0x00, 0x00, 0x00, 0, 0x01, 0x00, 1};
+        for (unsigned i = 0; i < 8; i++) rsp[11 + i] = (uint8_t)(taken->ext >> (8 * i));
+        rsp[7] = ann->aps++;
+        from_dev(ann, rsp, sizeof rsp);
+        drain(0);
+        CHECK(coord.stats.parent_annce_children_released == 0);
+
+        /* our announce after a restart (as zb_coord_restore leaves it) */
+        unsigned children = 0;
+        for (uint16_t k = 0; k < coord.devices.count; k++) {
+            const nwk_device_t *e = &coord.devices.dev[coord.devices.by_ext[k]];
+            children += e->relationship == NWK_REL_CHILD && !(e->capability & NWK_CAP_FFD);
+        }
+        coord.parent_annce_pending = true;
+        coord.parent_annce_at_ms = 0;
+        advance(ZB_PARENT_ANNCE_BASE_MS - 100);
+        CHECK(coord.stats.parent_annce_sent == 0);
+        advance(ZB_PARENT_ANNCE_JITTER_MS + 200);
+        unsigned frames = (children + ZB_PARENT_ANNCE_MAX - 1) / ZB_PARENT_ANNCE_MAX, listed_n = 0, copies = 0;
+        CHECK(children > ZB_PARENT_ANNCE_MAX && coord.stats.parent_annce_sent == frames && !coord.parent_annce_pending);
+        uint8_t seen_tsn[8] = {0};
+        while (take(&s)) {
+            if (!s.ok || s.nwk.type != NWK_TYPE_DATA || s.nwk.dst != 0xFFFC) continue;
+            const uint8_t *a = s.plain + s.nwk.header_len + 14;
+            if (a[2] != 0x1F || a[3] != 0x00) continue;
+            copies++;
+            const uint8_t *p = a + 8;
+            bool fresh = true;
+            for (unsigned i = 0; i < 8; i++) fresh &= seen_tsn[i] != p[0];
+            if (!fresh) continue;
+            seen_tsn[listed_n % 8] = p[0];
+            CHECK(p[1] >= 1 && p[1] <= ZB_PARENT_ANNCE_MAX && s.plen == 8u + 2u + 8u * p[1]);
+            listed_n += p[1];
+        }
+        CHECK(listed_n == children && copies >= frames);
+
+        /* the answer: taken is served by that router now */
+        rsp[7] = ann->aps++;
+        from_dev(ann, rsp, sizeof rsp);
+        drain(0);
+        const nwk_device_t *t = &coord.devices.dev[nwk_devices_find_ext(&coord.devices, taken->ext)];
+        CHECK(t->relationship == NWK_REL_NONE && coord.stats.parent_annce_children_released == 1);
+        const zb_event_t *ev = &coord.events[(coord.events_total - 1u) % ZB_EVENTS];
+        CHECK(ev->kind == ZB_EV_CHILD_MOVED && ev->detail == 1 && ev->from == ann->short_addr);
+        /* a late one: ignored */
+        advance(ZB_PARENT_ANNCE_RSP_MS);
+        for (unsigned i = 0; i < 8; i++) rsp[11 + i] = (uint8_t)(heard->ext >> (8 * i));
+        rsp[7] = ann->aps++;
+        from_dev(ann, rsp, sizeof rsp);
+        drain(0);
+        CHECK(coord.stats.parent_annce_children_released == 1);
+        CHECK(coord.devices.dev[nwk_devices_find_ext(&coord.devices, heard->ext)].relationship == NWK_REL_CHILD);
+        printf("reliability: Parent_annce: %u children announced in %u frames, 1 heard child named back, "
+               "1 released by an answer, late answer ignored\n", children, frames);
+    }
+
+    /* 14. Answers lost behind a relay: reads to router[3] (behind router[2])
+     *     left unanswered are counted for it and for router[2]; reads that
+     *     needed a re-send flag router[2] (diagnostics only). */
+    {
+        drain(0);
+        const uint16_t via3 = router[2].short_addr;
+        nwk_source_route_set(&coord.routes, router[3].short_addr, &via3, 1);
+        uint32_t v0 = coord.links_version, un0 = coord.stats.reads_unanswered;
+        for (unsigned i = 0; i < ZB_RELAY_SUSPECT_LATE; i++) {
+            nwk_source_route_set(&coord.routes, router[3].short_addr, &via3, 1);   /* its Route Record */
+            CHECK(read_to(&router[3], (uint8_t)(0xC0 + i)) == ZB_SEND_OK);
+            for (unsigned t = 0; t < 50; t++) { advance(100); drain(0); }   /* re-sent meanwhile */
+        }
+        for (unsigned t = 0; t < 50; t++) { advance(100); drain(0); }   /* the last one given up */
+        const zb_link_stat_t *l = 0;
+        const zb_relay_stat_t *r = 0;
+        for (unsigned i = 0; i < ZB_LINK_STATS; i++) if (coord.links[i].last_ms && coord.links[i].dst == router[3].short_addr) l = &coord.links[i];
+        for (unsigned i = 0; i < ZB_RELAY_STATS; i++) if (coord.relays[i].last_ms && coord.relays[i].addr == via3) r = &coord.relays[i];
+        CHECK(coord.stats.reads_unanswered == un0 + ZB_RELAY_SUSPECT_LATE && coord.links_version != v0);
+        CHECK(l && l->via == via3 && l->misses >= ZB_RELAY_SUSPECT_LATE && l->answers == 0);   /* + earlier sections */
+        CHECK(r && r->suspect_until_ms && coord.stats.relays_suspected == 1);
+        /* an answer counts for both */
+        nwk_source_route_set(&coord.routes, router[3].short_addr, &via3, 1);
+        CHECK(read_to(&router[3], 0xD0) == ZB_SEND_OK);
+        drain(0);
+        const uint8_t ans[8 + 8] = {0x00, 0x01, 0x00, 0x00, 0x04, 0x01, 0x01, router[3].aps++,
+                                    0x18, 0xD0, 0x01, 0x05, 0x00, 0x00, 0x20, 0x01};
+        uint16_t ra = r->answers;
+        relayed_from(&router[2], router[3].short_addr, ans, sizeof ans);
+        CHECK(l->answers == 1 && r->answers == ra + 1);
+        printf("reliability: %u reads lost behind a relay: counted by destination and relay, relay flagged\n",
+               (unsigned)ZB_RELAY_SUSPECT_LATE);
     }
 
     /* 8. Native CCM* rejections: a flood of forged frames is re-verified in

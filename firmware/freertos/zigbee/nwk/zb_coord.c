@@ -251,6 +251,14 @@ typedef struct {
     const nwk_source_route_t *source;   /* non-NULL: source-routed */
 } hop_t;
 
+static bool relay_suspect(const zb_coord_t *c, uint16_t addr) {
+    for (unsigned i = 0; i < ZB_RELAY_STATS; i++)
+        if (c->relays[i].addr == addr && c->relays[i].suspect_until_ms &&
+            (int32_t)(c->relays[i].suspect_until_ms - c->now_ms) > 0)
+            return true;
+    return false;
+}
+
 static bool disc_pending_for(const zb_coord_t *c, uint16_t dst);
 static bool disc_fresh_for(const zb_coord_t *c, uint16_t dst);
 
@@ -447,6 +455,7 @@ static uint8_t nwk_tx(zb_coord_t *c, uint8_t type, uint16_t dst, uint8_t radius,
             c->recent_tx[idx].used = true;
             c->recent_tx[idx].answered = false;
             c->recent_tx[idx].dst = dst;
+            c->recent_tx[idx].via = hop.mac_dst;
             c->recent_tx[idx].radius = radius;
             c->recent_tx[idx].secured = secured;
             c->recent_tx[idx].retries = 0;
@@ -782,6 +791,73 @@ static void note_answer(zb_coord_t *c, uint16_t dst) {
     c->answered[slot].ms = c->now_ms | 1u;   /* never 0: 0 marks an empty entry */
 }
 
+static zb_link_stat_t *link_stat(zb_coord_t *c, uint16_t dst, bool create) {
+    zb_link_stat_t *e = 0, *victim = &c->links[0];
+    for (unsigned i = 0; i < ZB_LINK_STATS; i++) {
+        if (c->links[i].dst == dst && c->links[i].last_ms) { e = &c->links[i]; break; }
+        if (!c->links[i].last_ms || c->links[i].misses < victim->misses) victim = &c->links[i];
+    }
+    if (!e && create) { e = victim; *e = (zb_link_stat_t){.dst = dst}; }
+    if (e && e->last_ms && c->now_ms - e->last_ms > ZB_LINK_STATS_RESET_MS) e->misses = e->answers = 0;
+    return e;
+}
+
+static zb_relay_stat_t *relay_stat(zb_coord_t *c, uint16_t addr, bool create) {
+    zb_relay_stat_t *e = 0, *victim = 0;
+    for (unsigned i = 0; i < ZB_RELAY_STATS; i++) {
+        zb_relay_stat_t *r = &c->relays[i];
+        if (r->addr == addr && r->last_ms) { e = r; break; }
+        bool idle = !r->last_ms || (int32_t)(r->suspect_until_ms - c->now_ms) <= 0;
+        if (idle && (!victim || !r->last_ms || r->misses < victim->misses)) victim = r;
+    }
+    if (!e && create && victim) { e = victim; *e = (zb_relay_stat_t){.addr = addr}; }
+    if (e && e->last_ms && c->now_ms - e->last_ms > ZB_LINK_STATS_RESET_MS) e->misses = e->answers = e->late = 0;
+    return e;
+}
+
+static bool known_sleepy(zb_coord_t *c, uint16_t addr);
+
+/* A read to dst stayed unanswered after its re-sends (via: first hop used). */
+static void note_unanswered(zb_coord_t *c, uint16_t dst, uint16_t via) {
+    c->stats.reads_unanswered++;
+    zb_link_stat_t *l = link_stat(c, dst, true);
+    l->via = via;
+    l->misses++;
+    l->last_ms = c->now_ms | 1u;
+    c->links_version++;
+    if (via == dst) return;
+    zb_relay_stat_t *r = relay_stat(c, via, true);
+    if (!r) return;
+    r->misses++;
+    r->last_ms = c->now_ms | 1u;
+}
+
+/* A read to dst needed a re-send (no answer within ZB_RECENT_RETRY1_MS): its
+ * relay is suspect when at least 1 read in 3 through it does. */
+static void note_late(zb_coord_t *c, uint16_t dst, uint16_t via) {
+    if (known_sleepy(c, dst)) return;   /* answers when it polls: always late */
+    if (via == dst) return;
+    zb_relay_stat_t *r = relay_stat(c, via, true);
+    if (!r) return;
+    r->late++;
+    r->last_ms = c->now_ms | 1u;
+    if (r->late >= ZB_RELAY_SUSPECT_LATE && 3u * r->late >= r->late + r->answers && !relay_suspect(c, via)) {
+        r->suspect_until_ms = (c->now_ms + ZB_RELAY_SUSPECT_MS) | 1u;
+        r->misses = r->answers = r->late = 0;
+        c->stats.relays_suspected++;
+        c->links_version++;
+    }
+}
+
+/* An answer came from dst: counted for it and for the relay its route uses. */
+static void note_answered(zb_coord_t *c, uint16_t dst, uint16_t via) {
+    zb_link_stat_t *l = link_stat(c, dst, false);
+    if (l) { l->answers++; c->links_version++; }
+    if (via == dst) return;
+    zb_relay_stat_t *r = relay_stat(c, via, false);
+    if (r) { r->answers++; r->last_ms = c->now_ms | 1u; }
+}
+
 static bool answered_recently(const zb_coord_t *c, uint16_t dst) {
     for (unsigned i = 0; i < ZB_ANSWERED; i++)
         if (c->answered[i].ms && c->answered[i].dst == dst && c->now_ms - c->answered[i].ms < ZB_ANSWERED_MS) return true;
@@ -818,6 +894,7 @@ static void recent_service(zb_coord_t *c) {
         if (!c->recent_tx[i].used) continue;
         int32_t age = (int32_t)(c->now_ms - c->recent_tx[i].sent_ms);
         if (age > 4500) {
+            if (c->recent_tx[i].expects_reply && !c->recent_tx[i].answered) note_unanswered(c, c->recent_tx[i].dst, c->recent_tx[i].via);
             c->recent_tx[i].used = false;
             continue;
         }
@@ -833,6 +910,7 @@ static void recent_service(zb_coord_t *c) {
         uint32_t due = r == 0 ? ZB_RECENT_RETRY1_MS : r == 1 ? ZB_RECENT_RETRY2_MS : ZB_RECENT_RETRY3_MS;
         if (r >= 3 || age < (int32_t)due) continue;
         if (!c->retx_tokens) { c->stats.zcl_retx_deferred++; continue; }   /* budget: retried later or left to the host */
+        if (r == 0) note_late(c, dst, c->recent_tx[i].via);
         c->recent_tx[i].retries = (uint8_t)(r + 1);
         c->retx_tokens--;
         c->recent_tx[i].sent_ms = c->now_ms;
@@ -1558,6 +1636,72 @@ static void handle_zdo_request(zb_coord_t *c, const nwk_header_t *h, uint16_t cl
         c->stats.zdo_responses_sent++;
 }
 
+#define ZDO_PARENT_ANNCE 0x001Fu
+#define ZDO_PARENT_ANNCE_RSP 0x801Fu
+
+/* An end-device child of ours, heard recently (a poll, a frame). */
+static bool child_heard(const zb_coord_t *c, const nwk_device_t *d) {
+    return d->ext && d->relationship == NWK_REL_CHILD && !(d->capability & NWK_CAP_FFD) && d->last_seen_ms &&
+           c->now_ms - d->last_seen_ms <= ZB_CHILD_HEARD_MS;
+}
+
+/* Parent_annce: our end-device children, ZB_PARENT_ANNCE_MAX per frame, to
+ * every router. */
+static void send_parent_annce(zb_coord_t *c) {
+    uint8_t p[2 + 8 * ZB_PARENT_ANNCE_MAX];
+    uint8_t n = 0;
+    for (uint16_t s = 0; s <= NWK_MAX_DEVICES; s++) {
+        const nwk_device_t *d = s < NWK_MAX_DEVICES ? &c->devices.dev[s] : 0;
+        if (d && d->ext && d->relationship == NWK_REL_CHILD && !(d->capability & NWK_CAP_FFD)) put64(p + 2 + 8 * n++, d->ext);
+        if (n && (n == ZB_PARENT_ANNCE_MAX || !d)) {
+            p[0] = ++c->parent_annce_tsn;
+            p[1] = n;
+            if (zb_coord_send_aps(c, NWK_BCAST_ROUTERS, 0, 0, ZDO_PARENT_ANNCE, ZDO_PROFILE, p, (uint8_t)(2 + 8 * n), false) ==
+                ZB_SEND_OK)
+                c->stats.parent_annce_sent++;
+            n = 0;
+        }
+    }
+    c->parent_annce_sent_ms = c->now_ms | 1u;
+}
+
+/* A router lists its children after its restart: those we serve actively
+ * are named back to it (Parent_annce_rsp), so that it drops them. */
+static void handle_parent_annce(zb_coord_t *c, const nwk_header_t *h, const uint8_t *p, size_t len) {
+    if (len < 2 || len < 2u + 8u * p[1]) { c->stats.aps_malformed++; return; }
+    uint8_t r[3 + 8 * ZB_PARENT_ANNCE_MAX];
+    uint8_t n = 0;
+    for (unsigned i = 0; i < p[1] && n < ZB_PARENT_ANNCE_MAX; i++) {
+        uint64_t ext = get64(p + 2 + 8 * i);
+        uint16_t s = nwk_devices_find_ext(&c->devices, ext);
+        if (s != NWK_DEVICE_NONE && child_heard(c, &c->devices.dev[s])) put64(r + 3 + 8 * n++, ext);
+    }
+    if (!n || nwk_is_broadcast(h->src)) return;
+    r[0] = p[0];   /* the announce's sequence number */
+    r[1] = ZDO_SUCCESS;
+    r[2] = n;
+    if (zb_coord_send_aps(c, h->src, 0, 0, ZDO_PARENT_ANNCE_RSP, ZDO_PROFILE, r, (uint8_t)(3 + 8 * n), false) == ZB_SEND_OK)
+        c->stats.parent_annce_rsp_sent++;
+}
+
+/* Answer to our Parent_annce: these children are served by that router. */
+static void handle_parent_annce_rsp(zb_coord_t *c, const nwk_header_t *h, const uint8_t *p, size_t len) {
+    if (len < 3 || len < 3u + 8u * p[2]) { c->stats.aps_malformed++; return; }
+    if (!c->parent_annce_sent_ms || c->now_ms - c->parent_annce_sent_ms > ZB_PARENT_ANNCE_RSP_MS || p[1] != ZDO_SUCCESS) return;
+    for (unsigned i = 0; i < p[2]; i++) {
+        uint16_t s = nwk_devices_find_ext(&c->devices, get64(p + 3 + 8 * i));
+        if (s == NWK_DEVICE_NONE) continue;
+        nwk_device_t *d = &c->devices.dev[s];
+        if (d->relationship != NWK_REL_CHILD) continue;
+        d->relationship = NWK_REL_NONE;
+        d->ed_timeout = 0;
+        c->stats.children_moved++;
+        c->stats.parent_annce_children_released++;
+        note_event(c, ZB_EV_CHILD_MOVED, d->short_addr, d->ext, h->src, 1);
+        save_device(c, s);
+    }
+}
+
 static void handle_announce(zb_coord_t *c, const nwk_header_t *h, uint16_t mac_src, uint64_t auth_source,
                             const uint8_t *p, size_t len) {
     if (len < 12) { c->stats.aps_malformed++; return; }
@@ -2153,6 +2297,7 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
          * not passed up again. Entries never re-sent are freed at once. */
         if (e->answered) { answered_twice |= (a.payload[0] & 0x08u) && a.payload[2] == e->answer_cmd; continue; }
         note_answer(c, h.src);
+        note_answered(c, h.src, e->via);
         if (e->retries) { e->answered = true; e->answer_cmd = a.payload[2]; }
         else e->used = false;
     }
@@ -2164,6 +2309,8 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
                             a.payload_len);
             return;
         }
+        if (a.cluster == ZDO_PARENT_ANNCE) { handle_parent_annce(c, &h, a.payload, a.payload_len); return; }
+        if (a.cluster == ZDO_PARENT_ANNCE_RSP) { handle_parent_annce_rsp(c, &h, a.payload, a.payload_len); return; }
         if (a.cluster < 0x8000u) {
             handle_zdo_request(c, &h, a.cluster, a.payload, a.payload_len);
             return;
@@ -2611,6 +2758,7 @@ bool zb_coord_restore(zb_coord_t *c) {
         }
     }
     c->restore_status = ZB_RESTORE_OK;
+    c->parent_annce_pending = true;   /* restarted: announce our children */
     /* Re-write the counters in the current (v2, key-bound) format. */
     if (counters_len == STORE_COUNTERS_V1_LEN) (void)save_counters(c, c->nwk_reserved, c->aps_reserved);
     return true;
@@ -2714,6 +2862,15 @@ void zb_coord_tick(zb_coord_t *c, uint32_t now_ms) {
         c->timers_armed = true;
         c->next_link_status_ms = now_ms + 1000u;
         c->next_mtorr_ms = now_ms + 3000u;
+    }
+    if (c->parent_annce_pending) {
+        if (!c->parent_annce_at_ms) {
+            uint32_t jitter = (uint32_t)((c->ext_addr ^ (c->ext_addr >> 32)) * 2654435761u) % ZB_PARENT_ANNCE_JITTER_MS;
+            c->parent_annce_at_ms = (now_ms + ZB_PARENT_ANNCE_BASE_MS + jitter) | 1u;
+        } else if ((int32_t)(now_ms - c->parent_annce_at_ms) >= 0) {
+            c->parent_annce_pending = false;
+            send_parent_annce(c);
+        }
     }
     if ((int32_t)(now_ms - c->next_link_status_ms) >= 0) {
         c->next_link_status_ms = now_ms + LINK_STATUS_PERIOD_MS;

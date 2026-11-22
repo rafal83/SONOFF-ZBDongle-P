@@ -9,7 +9,7 @@
 | Analyse statique des piles | `tools/stack_analysis.py` sur l'ELF, à chaque build | Marges de 312 à 640 o (radio : 464 o sur 5 120) ; le build échoue sous 256 o |
 | Contrôles statiques d'image | Lien, carte mémoire, symboles requis/interdits, `tools/image.py check`, CCFG identique à 2026111802 | **Réussis** aux deux débits |
 | Pile portable + vrai herdsman | Simulateur TCP (`firmware/freertos/sim/znp_sim.c`) et `ZStackAdapter` herdsman 11.2.1 | **19 étapes réussies** (`tools/znp_sim_acceptance.cjs`, aussi en CI) ; séance Touchlink complète (`tools/znp_sim_touchlink.cjs`) |
-| Matériel | Dongle unique, sauvegarde et restauration automatiques | Démarrage, UART, FreeRTOS, watchdog, radio, arrivée d'un appareil réel, clé de lien unique, persistance après reset ; recette herdsman réussie sur le dongle ; lecture du diagnostic par les éléments NV virtuels avec la couche ZNP de herdsman ; voir [hardware-session-20261118.md](hardware-session-20261118.md) |
+| Matériel | Dongle unique, sauvegarde et restauration automatiques | Démarrage, UART, FreeRTOS, watchdog, radio, arrivée d'un appareil réel, clé de lien unique, persistance après reset ; recette herdsman réussie sur le dongle ; lecture du diagnostic par les éléments NV virtuels avec la couche ZNP de herdsman ; production sous FreeRTOS depuis le 19 novembre, voir [status.md](status.md) |
 | Restauration d'une sauvegarde réseau | Sauvegarde Z2M de production restaurée par herdsman dans le firmware simulé | **Réussie** : voir [restauration.md](restauration.md) |
 | Réseau de production | Migré le 18 novembre au soir | En service depuis ; image courante et mesures dans [status.md](status.md#production) et [benchmarks.md](benchmarks.md) |
 | Recette matérielle à deux routeurs et un endormi | [hardware-campaign.md](hardware-campaign.md) | **À exécuter** sur un réseau d'essai isolé |
@@ -26,8 +26,8 @@ Le parcours dans Chrome a aussi été exercé avec un dongle ROM simulé, aux fo
 
 | Mesure | Valeur | Nature |
 |---|---|---|
-| Flash utilisée | 103 896 octets (image `--hw-aes` 1 Mbaud, 22 novembre) | ELF lié |
-| SRAM statique (pile MSP 2 Kio incluse) | 74 752 / 81 920 octets | ELF lié |
+| Flash utilisée | 106 840 octets (image `--hw-aes` 1 Mbaud, 22 novembre) | ELF lié |
+| SRAM statique (pile MSP 2 Kio incluse) | 75 272 / 81 920 octets | ELF lié |
 | MAC : *beacon request* → émission de la balise | ≈ 1 800 instructions | Émulation |
 | MAC : *data poll* → émission de la trame indirecte | ≈ 860 instructions | Émulation |
 | AES-128 logiciel, un bloc | ≈ 4 700 instructions | Émulation, pas des cycles |
@@ -35,7 +35,7 @@ Le parcours dans Chrome a aussi été exercé avec un dongle ROM simulé, aux fo
 | Analyse d'une balise Zigbee | ≈ 380 instructions | Émulation |
 | Dérivation d'une clé depuis un code d'installation | ≈ 14 800 instructions | Émulation |
 
-Les comparaisons A (Z-Stack d'origine) / B (optimisé installé) / C (FreeRTOS) demandées pour le temps de démarrage, la RAM libre en fonctionnement, la latence radio, la latence ZCL, la charge CPU et la stabilité exigent un firmware C fonctionnel sur matériel ; elles ne sont pas produites. Les données B existantes restent dans `docs/performance.md`.
+Les comparaisons A (Z-Stack d'origine) / B (optimisé installé) / C (FreeRTOS) du temps de démarrage, de la RAM libre en fonctionnement, de la latence radio, de la latence ZCL, de la charge CPU et de la stabilité ne sont pas encore produites sur matériel. Les données B existantes restent dans `docs/performance.md`.
 
 ## Procédure de premier essai sur un dongle de laboratoire
 

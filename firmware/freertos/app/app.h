@@ -85,6 +85,12 @@ typedef struct {
     uint8_t counter_floor_from_store;
     zb_event_t events[ZB_EVENTS];   /* copied when events_total moves */
     uint32_t events_total;
+    zb_link_stat_t links[ZB_LINK_STATS];     /* copied when links_version moves */
+    zb_relay_stat_t relays[ZB_RELAY_STATS];
+    uint32_t links_version;
+    uint16_t children, sleepy_children;      /* end-device children, of them rx-off (every second) */
+    uint8_t indirect_short, indirect_ext;    /* indirect frames queued now (short / IEEE destination) */
+    uint8_t indirect_short_peak, indirect_ext_peak;
 } app_coord_snapshot_t;
 #define COORD_FLAG_NEW_NETWORK 0x01u
 extern app_coord_snapshot_t app_coord;

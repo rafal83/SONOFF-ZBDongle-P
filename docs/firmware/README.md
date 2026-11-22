@@ -6,7 +6,7 @@ Firmware Zigbee natif pour le CC2652P, avec une interface ZNP compatible avec Zi
 - [Sauvegardes et restauration](restauration.md).
 - [État et limites](status.md), [validation](validation.md), [compatibilité ZNP](znp-compat.md).
 - [Architecture](architecture.md), [radio](radio.md), [pile Zigbee](zigbee-stack.md).
-- [Essais matériels datés](hardware-session-20261118.md), [campagne matérielle](hardware-campaign.md), [stabilisation](stabilization-20261119.md).
+- [Campagne matérielle](hardware-campaign.md).
 
 Les essais matériels concernent les images et dates indiquées dans leurs rapports. Ils ne qualifient pas automatiquement chaque nouvelle prérelease.
 

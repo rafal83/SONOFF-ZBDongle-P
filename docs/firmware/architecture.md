@@ -40,7 +40,7 @@ Toute la pile Zigbee et le traitement ZNP tournent dans `radio` ; `host` ne fait
 ## Mémoire
 
 - `configSUPPORT_DYNAMIC_ALLOCATION = 0` : aucun tas FreeRTOS n'est lié ; toutes les tâches, files et mutex sont statiques. Le build refuse `malloc`, `free`, `pvPortMalloc`.
-- Mesures du build (`manifest.json` de l'image) : **103 896 octets de flash** et **74 752 octets de SRAM statique** sur 81 920 pour l'image `--hw-aes` à 1 Mbaud du 22 novembre 2026. Ces chiffres comprennent la pile MSP de 2 Kio et le coordinateur complet : MAC, 200 appareils, sécurité NWK pour 200 pairs, tables de routage.
+- Mesures du build (`manifest.json` de l'image) : **106 840 octets de flash** et **75 272 octets de SRAM statique** sur 81 920 pour l'image `--hw-aes` à 1 Mbaud du 22 novembre 2026. Ces chiffres comprennent la pile MSP de 2 Kio et le coordinateur complet : MAC, 200 appareils, sécurité NWK pour 200 pairs, tables de routage.
 - L'analyse statique des piles (`tools/stack_analysis.py`) est faite à chaque build ; le build échoue si une marge passe sous 256 o. Pile radio : 4 656 o au pire cas sur 5 120.
 
 ## Interruptions
@@ -57,10 +57,12 @@ Chaque ISR mesure sa durée maximale en cycles DWT (exposée par les commandes d
 ## Sûreté de fonctionnement
 
 - **Watchdog à quorum** : alimenté uniquement si `host`, `radio` et `superv` ont pointé depuis l'évaluation précédente ; délai de 2 s. Première échéance : interruption qui consigne le masque des tâches absentes, puis reset ; si l'ISR elle-même est bloquée, la seconde échéance réinitialise le MCU en matériel.
-- **Journal post-mortem** en SRAM non initialisée (`.noinit`), validé par somme FNV-1a : assert, débordement de pile (`configCHECK_FOR_STACK_OVERFLOW=2`), HardFault (PC, LR, xPSR, CFSR, HFSR, MMFAR, BFAR), IRQ inattendue, watchdog, reset demandé. La conservation de la SRAM au travers d'un reset logiciel est attendue sur CC26x2 mais **non vérifiée sur cette carte**.
+- **Journal post-mortem** en SRAM non initialisée (`.noinit`), validé par somme FNV-1a : assert, débordement de pile (`configCHECK_FOR_STACK_OVERFLOW=2`), HardFault (PC, LR, xPSR, CFSR, HFSR, MMFAR, BFAR), IRQ inattendue, watchdog, reset demandé. Sur cette carte, la SRAM ne survit pas à un reset à chaud (constaté sur matériel) : l'enregistrement est donc aussi émis sur l'UART avant le reset.
 - Toutes les attentes matérielles (horloge HF, domaines d'alimentation, doorbell RF) sont bornées et renvoient un code d'étape.
-- **Portes d'horloge par mode CPU** : chaque périphérique est activé en *run*, *sleep* et *deep sleep*. Sans les portes *sleep*, le `WFI` de la tâche idle coupait l'horloge de l'UART (constaté sur matériel, séance r2).
-- **Jalons de démarrage** (AREQ `5F 81`) et **enregistrement de plantage** (AREQ `5F 82`) émis en UART scrutée, indépendamment de FreeRTOS. La SRAM ne conserve pas le journal à travers un reset à chaud (constaté sur matériel).
+- **Portes d'horloge par mode CPU** : chaque périphérique est activé en *run*, *sleep* et *deep sleep*. Sans les portes *sleep*, le `WFI` de la tâche idle coupait l'horloge de l'UART (constaté sur matériel).
+- **Jalons de démarrage** (AREQ `5F 81`) et **enregistrement de plantage** (AREQ `5F 82`) émis en UART scrutée, indépendamment de FreeRTOS.
+- **Accélérateur AES (`--hw-aes`)** : activé seulement après l'autotest de démarrage. Le matériel ne décide jamais seul : le premier bloc de chaque opération est recalculé en logiciel, une opération sur 32 à 95 (tirage pseudo-aléatoire) est entièrement recalculée, et toute trame rejetée par l'accélérateur est revérifiée en logiciel. Chaque attente du moteur et du DMA est bornée à 1 ms, suivie d'une remise à zéro et d'un rechargement de la clé. Le chiffrement en place part d'une copie de l'entrée, si bien qu'une reprise logicielle ne lit jamais une sortie modifiée. Un écart silencieux abandonne l'accélérateur, tout comme 8 fautes consécutives ; le logiciel seul sert alors jusqu'au redémarrage. Compteurs dans `DIAG 0x1B`.
+- **Compteurs de trames sortants** : l'enregistrement de compteurs du store est un plancher chargé au montage, quelle que soit la clé. Une re-formation avec la même clé ne repart donc jamais de zéro. Le formatage de récupération (`DIAG 0x1A WIPE`) relit d'abord en lecture seule les versions valides de cet enregistrement dans les deux bancs (`nv_log_salvage`), puis réécrit le plancher. Sans plancher au montage, les compteurs écrits par l'hôte reçoivent 2^22 de plus. Une coupure pendant un changement de clé laisse des compteurs liés à la nouvelle clé : la restauration est alors refusée (`COUNTERS_OTHER_KEY`) plutôt que de réutiliser un compteur, et `restoreBackup` permet la récupération. Store illisible au démarrage : rien n'est effacé, et aucune trame sécurisée n'est émise. Seule la réécriture d'une ancienne Flash complète échappe à ces gardes : voir [restauration.md](restauration.md).
 
 ## Diagnostic sur l'UART
 
@@ -68,8 +70,8 @@ L'image parle ZNP à l'hôte (zigbee-herdsman, adaptateur `zstack`) : voir [znp-
 
 | Accès | Contenu |
 |---|---|
-| Sous-système privé `0x1F` | `INFO` (version, révision de build, commit source et indicateur de modification, *uptime*, cause du dernier reset, dernier plantage, flash et SRAM), `TASK n`, `COUNTERS` (UART, MT, watchdog), `COORD_STATS`, `MESH_STATS`, `STORE_STATUS`, `PERF`, `EVENTS` (8 derniers événements réseau), `RELIABILITY` ; commandes de laboratoire `RADIO_*`, `COORD_*`, `APS_SEND`, `STORE_FORMAT` |
-| Éléments NV virtuels `0x0FA0` à `0x0FA7`, en lecture seule (`SYS osalNvRead`, `osalNvReadExt`, `osalNvLength`) | Les blocs `INFO`, `COUNTERS`, `COORD_STATS`, `MESH_STATS`, `STORE_STATUS`, `PERF`, `EVENTS` et `RELIABILITY`, par une commande ZNP standard que herdsman sait envoyer : lisibles pendant que Zigbee2MQTT tourne, par sa propre file de requêtes. Toute écriture sur ces identifiants est refusée. |
+| Sous-système privé `0x1F` | `INFO` (version, révision de build, commit source et indicateur de modification, *uptime*, cause du dernier reset, dernier plantage, flash et SRAM), `TASK n`, `COUNTERS` (UART, MT, watchdog), `COORD_STATS`, `MESH_STATS`, `STORE_STATUS`, `PERF`, `EVENTS` (8 derniers événements réseau), `RELIABILITY`, `LINKS` (destinations qui perdent des réponses, premiers relais de leurs routes) ; commandes de laboratoire `RADIO_*`, `COORD_*`, `APS_SEND`, `STORE_FORMAT` |
+| Éléments NV virtuels `0x0FA0` à `0x0FA8`, en lecture seule (`SYS osalNvRead`, `osalNvReadExt`, `osalNvLength`) | Les blocs `INFO`, `COUNTERS`, `COORD_STATS`, `MESH_STATS`, `STORE_STATUS`, `PERF`, `EVENTS`, `RELIABILITY` et `LINKS`, par une commande ZNP standard que herdsman sait envoyer : lisibles pendant que Zigbee2MQTT tourne, par sa propre file de requêtes. Toute écriture sur ces identifiants est refusée. |
 
 Les outils : `tools/freertos_perf.py` (port série libre), `tools/z2m/diag_check.cjs` (même lecture que l'extension, port série libre) et l'extension Zigbee2MQTT [`tools/z2m/coordinator-diag.js`](../../tools/z2m/coordinator-diag.js). Le format exact des blocs est défini dans `app/host_task.c`.
 

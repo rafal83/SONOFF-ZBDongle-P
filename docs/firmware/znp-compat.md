@@ -57,7 +57,7 @@ Toutes les commandes ZNP que herdsman 11.2.1 envoie à un Z-Stack 3.x sont servi
 | Compteur NWK sortant strictement supérieur au dernier utilisé | **Vérifié** : sauvegarde + 2 500, réservé durablement avant le redémarrage |
 | Clés de lien et compteurs APS repris | **Vérifié** : 129 sur 129 (graine + décalage), compteurs non décroissants |
 | Appareils derrière des routeurs joignables | Routage maillé implémenté et testé en simulation (`test_mesh`) ; voisinage, *Link Status* et *many-to-one* observés sur le matériel avec un routeur réel ; **multi-sauts réel non éprouvé** (pas de second appareil) |
-| Essai complet en laboratoire puis retour arrière vers Z-Stack | Fait sur le dongle unique : 7 séances avec restauration octet pour octet (voir [hardware-session-20261118.md](hardware-session-20261118.md)) |
+| Essai complet en laboratoire puis retour arrière vers Z-Stack | Fait sur le dongle unique : 7 séances avec restauration octet pour octet (18 novembre 2026) |
 | PA 20 dBm (`transmit_power: 20` en production) | **Validé sur le matériel** (séance 10, après correction du lien d'overrides TX20) |
 | Image 1 000 000 bauds avec herdsman | **Validée sur le matériel** (séance 10) |
 | Stockage et compteurs actuels pendant une restauration de firmware | Conservés par le [Web Flasher](restauration.md) ; une sauvegarde réseau native doit être traitée séparément |

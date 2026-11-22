@@ -1706,13 +1706,14 @@ int main(int argc, char **argv) {
                     "\"rreq_coalesced\": %u, \"rreq_suppressed\": %u, \"rrep_rx\": %u, \"route_records\": %u, "
                     "\"network_status_rx\": %u, \"route_failures\": %u, \"neighbors_dropped\": %u, \"early_mtorr\": %u, "
                     "\"tx_not_link_failures\": %u, \"zcl_route_rebuilds\": %u, \"bcast_seq_skipped\": %u, "
-                    "\"poll_children\": %u, \"zcl_retx_sleepy_skipped\": %u, \"zcl_retx_deferred\": %u},\n",
+                    "\"poll_children\": %u, \"zcl_retx_sleepy_skipped\": %u, \"zcl_retx_deferred\": %u, "
+                    "\"relays_flagged\": %u},\n",
                 coord.stats.no_route, coord.stats.disc_buffered, coord.stats.disc_sent, coord.stats.disc_expired,
                 coord.stats.rreq_coalesced, coord.stats.rreq_suppressed, coord.stats.rrep_rx, coord.stats.route_records,
                 coord.stats.network_status_rx, coord.stats.route_failures, coord.stats.neighbors_dropped,
                 coord.stats.early_mtorr, coord.stats.tx_not_link_failures, NEW_STAT(coord, zcl_route_rebuilds),
                 NEW_STAT(coord, bcast_seq_skipped), NEW_STAT(coord, poll_children), NEW_STAT(coord, zcl_retx_sleepy_skipped),
-                NEW_STAT(coord, zcl_retx_deferred));
+                NEW_STAT(coord, zcl_retx_deferred), NEW_STAT(coord, relays_suspected));
         fprintf(fp, " \"failures_by_status\": {");
         bool first_s = true;
         for (unsigned s = 0; s < 256; s++)

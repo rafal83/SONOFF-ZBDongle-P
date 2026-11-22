@@ -1,6 +1,6 @@
 # Recette matérielle reproductible : deux routeurs et un appareil endormi
 
-But : qualifier sur le matériel ce qui n'est validé qu'en simulation ([stabilization-20261119.md](stabilization-20261119.md), [status.md](status.md)). La recette se joue sur un **réseau de laboratoire**, puis l'image retenue est qualifiée sur la production dans la durée.
+But : qualifier sur le matériel ce qui n'est validé qu'en simulation ([status.md](status.md)). La recette se joue sur un **réseau de laboratoire**, puis l'image retenue est qualifiée sur la production dans la durée.
 
 **Aucune programmation sans autorisation donnée pour la séance.** Le dongle unique porte la production : pendant la recette, Zigbee2MQTT est arrêté et le réseau de production n'a plus de coordinateur. Les appareils gardent leur appartenance et reprennent au retour de l'image de production. Durée de coupure prévue : environ 2 h pour H1 à H8, hors endurance.
 
