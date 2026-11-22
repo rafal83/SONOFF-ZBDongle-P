@@ -174,29 +174,36 @@ class CoordinatorDiagnostics {
             return;
         }
         await this.mqtt.publish('bridge/coordinator_diag', JSON.stringify(diag), {clientOptions: {retain: true, qos: 0}});
-        if (!this.discovered && this.settings?.get?.().homeassistant?.enabled) await this.discover();
+        if (!this.discovered && this.settings?.get?.().homeassistant?.enabled) await this.discover(diag);
     }
 
-    async discover() {
+    async discover(diag) {
         this.discovered = true;
         const prefix = this.settings.get().homeassistant?.discovery_topic ?? 'homeassistant';
+        const commit = diag.info?.source_commit ? diag.info.source_commit + (diag.info.source_modified ? ' (modifié)' : '') : undefined;
         const device = {identifiers: ['zigbee2mqtt_coordinator_diag'], name: 'Coordinateur Zigbee (diagnostic)',
-            manufacturer: 'ZBDongle-P FreeRTOS'};
+            manufacturer: 'ZBDongle-P FreeRTOS', model: 'CC2652P, coordinateur FreeRTOS',
+            ...(diag.info?.build ? {sw_version: `${diag.info.build}${commit ? ' / ' + commit : ''}`} : {})};
+        /* [id, name, value template, unit, extra discovery fields] */
         const sensors = [
-            ['cpu_load', 'Charge CPU', '{{ value_json.perf.cpu_load_permille / 10 }}', '%'],
-            ['radio_stack_free', 'Pile radio libre', '{{ value_json.perf.radio_stack_free_words * 4 }}', 'B'],
-            ['uptime', 'Uptime', '{{ value_json.info.uptime_s }}', 's'],
-            ['leaves', 'Départs annoncés', '{{ value_json.reliability.leaves }}', null],
-            ['events', 'Événements réseau', '{{ value_json.events.total }}', null],
-            ['store_offset', 'Store : octets écrits', '{{ value_json.store.write_offset }}', 'B'],
-            ['touchlink_recovering', 'Touchlink : récupération radio', '{{ value_json.perf.touchlink_recovering }}', null],
-            ['source_commit', 'Commit du firmware', '{{ value_json.info.source_commit }}', null],
+            ['cpu_load', 'Charge CPU', '{{ value_json.perf.cpu_load_permille / 10 }}', '%', {state_class: 'measurement'}],
+            ['radio_stack_free', 'Pile radio libre', '{{ value_json.perf.radio_stack_free_words * 4 }}', 'B',
+                {device_class: 'data_size', state_class: 'measurement'}],
+            ['uptime', 'Uptime', '{{ value_json.info.uptime_s }}', 's',
+                {device_class: 'duration', state_class: 'measurement', suggested_display_precision: 0}],
+            ['leaves', 'Départs annoncés', '{{ value_json.reliability.leaves }}', null, {state_class: 'total_increasing'}],
+            ['events', 'Événements réseau', '{{ value_json.events.total }}', null, {state_class: 'total_increasing'}],
+            ['store_offset', 'Store : octets écrits', '{{ value_json.store.write_offset }}', 'B',
+                {device_class: 'data_size', state_class: 'measurement'}],
+            ['touchlink_recovering', 'Touchlink : récupération radio', '{{ value_json.perf.touchlink_recovering }}', null, {}],
+            ['source_commit', 'Commit du firmware',
+                "{{ value_json.info.source_commit ~ (' (modifié)' if value_json.info.source_modified else '') }}", null, {}],
         ];
-        for (const [id, name, template, unit] of sensors) {
+        for (const [id, name, template, unit, extra] of sensors) {
             const config = {name, unique_id: `zigbee2mqtt_coordinator_diag_${id}`, state_topic: `${this.base}/bridge/coordinator_diag`,
                 value_template: template, json_attributes_topic: id === 'events' ? `${this.base}/bridge/coordinator_diag` : undefined,
                 json_attributes_template: id === 'events' ? '{{ value_json.events | tojson }}' : undefined, device,
-                entity_category: 'diagnostic', ...(unit ? {unit_of_measurement: unit} : {})};
+                entity_category: 'diagnostic', ...(unit ? {unit_of_measurement: unit} : {}), ...extra};
             await this.mqtt.publish(`sensor/zigbee2mqtt_coordinator_diag/${id}/config`, JSON.stringify(config),
                 {clientOptions: {retain: true, qos: 1}, baseTopic: prefix});
         }
