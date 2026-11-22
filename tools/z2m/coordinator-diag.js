@@ -145,8 +145,15 @@ class CoordinatorDiagnostics {
     }
 
     async start() {
+        const haStatus = this.settings?.get?.().homeassistant?.status_topic ?? 'homeassistant/status';
         this.eventBus.onMQTTMessage(this, (data) => {
-            if (data.topic === `${this.base}/bridge/request/coordinator_diag`) this.publish().catch(() => {});
+            /* A request, or Home Assistant coming back online: read now and
+             * announce the sensors again (entities deleted in HA come back). */
+            const request = data.topic === `${this.base}/bridge/request/coordinator_diag`;
+            if (request || (data.topic === haStatus && String(data.message).trim() === 'online')) {
+                this.discovered = false;
+                this.publish().catch(() => {});
+            }
         });
         this.first = setTimeout(() => this.publish().catch(() => {}), FIRST_READ_S * 1000);
         this.timer = setInterval(() => this.publish().catch(() => {}), READ_PERIOD_S * 1000);
