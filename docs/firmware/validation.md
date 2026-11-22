@@ -2,17 +2,17 @@
 
 ## Niveaux de preuve
 
-| Niveau | Signification | Résultat au 19 novembre 2026 |
+| Niveau | Signification | Résultat au 22 novembre 2026 |
 |---|---|---|
-| Tests unitaires hôte | C11, x86-64, `-Werror`, UBSan en mode trap | **17 programmes réussis** : `mt` 42, `radio_logic` 66, `wd_quorum` 13, `spsc_ring` 7 511, `mac_frame` 7 140, `mac_core` 603 937, `crypto` 29 684, `hal_aes` 3 186, `nwk_aps` 63 309, `nwk_security` 109 565, `nwk_join` 27 161, `join_e2e` 192, `nv_log` 315 340, `mesh` 253, `store_integrity` 62 729, `mesh_scale` 6 776, `sleepy` 2 382 vérifications |
-| Instructions ARM émulées | Modules portables compilés pour Cortex-M4F, exécutés dans Unicorn 2.1.3 | **68 vérifications réussies**, dont la réception et l'envoi ZCL et `AF_DATA_REQUEST` de bout en bout, avec la profondeur de pile de chaque chemin ; voir [status.md](status.md#mesures) |
-| Analyse statique des piles | `tools/stack_analysis.py` sur l'ELF, à chaque build | Marges de 528 à 1 224 o ; le build échoue sous 256 o |
+| Tests unitaires hôte | C11, x86-64, `-Werror`, UBSan en mode trap | **21 programmes réussis** : `mt` 53, `uart_noise` 7, `store_migration` 2,78 M, `radio_logic` 66, `wd_quorum` 13, `spsc_ring` 7 511, `mac_frame` 7 140, `mac_core` 634 369, `crypto` 29 712, `hal_aes` 11 737, `nwk_aps` 63 309, `nwk_security` 109 565, `nwk_join` 10,5 M, `join_e2e` 195, `nv_log` 4,8 M, `mesh` 491, `store_integrity` 62 733, `mesh_scale` 5 605, `sleepy` 2 382, `gp` 55, `reliability` 2 670 contrôles |
+| Instructions ARM émulées | Modules portables compilés pour Cortex-M4F, exécutés dans Unicorn 2.1.3 | **68 vérifications réussies**, dont la réception et l'envoi ZCL et `AF_DATA_REQUEST` de bout en bout, avec la profondeur de pile de chaque chemin ; banc CPU (`tools/bench_freertos.py`) |
+| Analyse statique des piles | `tools/stack_analysis.py` sur l'ELF, à chaque build | Marges de 312 à 640 o (radio : 464 o sur 5 120) ; le build échoue sous 256 o |
 | Contrôles statiques d'image | Lien, carte mémoire, symboles requis/interdits, `tools/image.py check`, CCFG identique à 2026111802 | **Réussis** aux deux débits |
-| Pile portable + vrai herdsman | Simulateur TCP (`firmware/freertos/sim/znp_sim.c`) et `ZStackAdapter` herdsman 11.2.1 | **17 étapes réussies** (`tools/znp_sim_acceptance.cjs`, aussi en CI) |
-| Matériel | Dongle unique de l'utilisateur, sauvegarde et restauration automatiques | Démarrage, UART, FreeRTOS, watchdog, radio, arrivée d'un appareil réel, clé de lien unique, persistance après reset ; **recette herdsman de 17 étapes réussie sur le dongle** ; **appairage et pilotage d'une ampoule via le `Controller` herdsman** ; voir [hardware-session-20261118.md](hardware-session-20261118.md) |
+| Pile portable + vrai herdsman | Simulateur TCP (`firmware/freertos/sim/znp_sim.c`) et `ZStackAdapter` herdsman 11.2.1 | **19 étapes réussies** (`tools/znp_sim_acceptance.cjs`, aussi en CI) ; séance Touchlink complète (`tools/znp_sim_touchlink.cjs`) |
+| Matériel | Dongle unique, sauvegarde et restauration automatiques | Démarrage, UART, FreeRTOS, watchdog, radio, arrivée d'un appareil réel, clé de lien unique, persistance après reset ; recette herdsman réussie sur le dongle ; lecture du diagnostic par les éléments NV virtuels avec la couche ZNP de herdsman ; voir [hardware-session-20261118.md](hardware-session-20261118.md) |
 | Restauration d'une sauvegarde réseau | Sauvegarde Z2M de production restaurée par herdsman dans le firmware simulé | **Réussie** : voir [restauration.md](restauration.md) |
-| Réseau de production | Migré le 18 novembre au soir avec l'accord du propriétaire | Image `969fb13` en service : voir [status.md](status.md#production) |
-| Recette matérielle à deux routeurs et un endormi | [hardware-campaign.md](hardware-campaign.md) | **À exécuter** : séance à autoriser |
+| Réseau de production | Migré le 18 novembre au soir | En service depuis ; image courante et mesures dans [status.md](status.md#production) et [benchmarks.md](benchmarks.md) |
+| Recette matérielle à deux routeurs et un endormi | [hardware-campaign.md](hardware-campaign.md) | **À exécuter** sur un réseau d'essai isolé |
 
 Les tests Python du dépôt passent : 54 tests, dont l'analyseur du store FreeRTOS et la garde de l'action `restore`.
 
@@ -26,8 +26,8 @@ Le parcours dans Chrome a aussi été exercé avec un dongle ROM simulé, aux fo
 
 | Mesure | Valeur | Nature |
 |---|---|---|
-| Flash utilisée | 77 884 octets (image 1 Mbaud) | ELF lié |
-| SRAM statique (pile MSP 2 Kio incluse) | 66 800 / 81 920 octets | ELF lié |
+| Flash utilisée | 103 896 octets (image `--hw-aes` 1 Mbaud, 22 novembre) | ELF lié |
+| SRAM statique (pile MSP 2 Kio incluse) | 74 752 / 81 920 octets | ELF lié |
 | MAC : *beacon request* → émission de la balise | ≈ 1 800 instructions | Émulation |
 | MAC : *data poll* → émission de la trame indirecte | ≈ 860 instructions | Émulation |
 | AES-128 logiciel, un bloc | ≈ 4 700 instructions | Émulation, pas des cycles |

@@ -745,6 +745,9 @@ int main(void) {
         uint32_t accepted0 = ca.stats.associations_accepted;
         zb_coord_rx(&ca, mpdu, (uint8_t)n, 200, -50);
         CHECK(ca.stats.associations_accepted == accepted0 + 1);
+        const uint8_t d_ext_le[8] = {0x01, 0x00, 0xFA, 0x00, 0x00, 0x8D, 0x15, 0x00};
+        const zb_event_t *ev = &ca.events[(ca.events_total - 1u) % ZB_EVENTS];   /* diagnostics journal */
+        CHECK(ev->kind == ZB_EV_ASSOCIATION && ev->detail == 0x8E && !memcmp(ev->ext, d_ext_le, 8));
         air_head = air_tail;
         zb_coord_init(&cb, &RADIO, &upper, 0x00124B000000CCCCull, 0x6666u, 1);   /* reboot */
         zb_coord_attach_store(&cb, &log);
@@ -772,6 +775,9 @@ int main(void) {
         n = build_from(&rt, rt.short_addr, rt.short_addr, NWK_TYPE_DATA, upd, sizeof upd, mpdu);
         zb_coord_rx(&cb, mpdu, (uint8_t)n, 200, -50);
         CHECK(cb.stats.update_device == upd0 + 1);
+        ev = &cb.events[(cb.events_total - 1u) % ZB_EVENTS];
+        CHECK(ev->kind == ZB_EV_UPDATE_DEVICE && ev->detail == 1 && ev->from == rt.short_addr &&
+              ev->short_addr == d.short_addr && !memcmp(ev->ext, d_ext_le, 8));
         air_head = air_tail;
         zb_coord_init(&cc, &RADIO, &upper, 0x00124B000000CCCCull, 0x7777u, 1);   /* reboot */
         zb_coord_attach_store(&cc, &log);
@@ -782,7 +788,19 @@ int main(void) {
         zb_coord_rx(&cc, mpdu, (uint8_t)n, 200, -50);
         CHECK(cc.stats.nwk_auth_failures == 0);
         air_head = air_tail;
-        printf("reliability: re-pairing (direct association, Update Device fresh join) clears the persisted floor\n");
+        /* the router announces it leaves (NWK Leave, no rejoin): journal = leave (reporter) then removal */
+        const uint8_t leave[2] = {0x04, 0x00};
+        uint32_t total0 = cc.events_total;
+        n = build_from(&rt, rt.short_addr, rt.short_addr, NWK_TYPE_COMMAND, leave, sizeof leave, mpdu);
+        zb_coord_rx(&cc, mpdu, (uint8_t)n, 200, -50);
+        CHECK(cc.events_total == total0 + 2);
+        const zb_event_t *e1 = &cc.events[total0 % ZB_EVENTS], *e2 = &cc.events[(total0 + 1u) % ZB_EVENTS];
+        CHECK(e1->kind == ZB_EV_LEAVE && e1->short_addr == rt.short_addr && e1->from == rt.short_addr && e1->detail == 0);
+        CHECK(e2->kind == ZB_EV_REMOVED && e2->short_addr == rt.short_addr);
+        CHECK(nwk_devices_find_ext(&cc.devices, rt.ext) == NWK_DEVICE_NONE);
+        air_head = air_tail;
+        printf("reliability: re-pairing (direct association, Update Device fresh join) clears the persisted floor; "
+               "journal of association, Update Device and leave\n");
     }
 
     /* 12. Touchlink through ZNP, as herdsman drives it: interPanCtl (channel,
@@ -858,6 +876,50 @@ int main(void) {
         CHECK(znp_c1 != 0x82);                                               /* no session: not passed up */
         znp_handle(&zt, 0x24, 0x02, ext, sizeof ext);
         CHECK(znp_c1 == 0x02 && znp_last[0] == 0x02 && air_tail == air_head);   /* refused, nothing sent */
+        /* a message longer than one ZNP frame (reassembled APS): announced by
+         * AF_INCOMING_MSG_EXT (total length, no data), read by AF_DATA_RETRIEVE
+         * blocks, freed by a zero length (herdsman's dataRetrieveAll) */
+        {
+            uint8_t big[400];
+            for (unsigned i = 0; i < sizeof big; i++) big[i] = (uint8_t)(i ^ 0x5A);
+            nwk_header_t bn = {0};
+            bn.src = 0x4321; bn.dst = 0x0000;
+            aps_header_t ba = {0};
+            ba.cluster = 0x0702; ba.src_endpoint = 3; ba.dst_endpoint = 12; ba.profile = 0x0104;   /* registered */
+            znp_c1 = 0;
+            zc.upper.aps_data(zc.upper.ctx, &bn, &ba, big, sizeof big, 150);
+            CHECK(znp_c0 == 0x44 && znp_c1 == 0x82);
+            CHECK(znp_last[2] == 0x02 && znp_last[3] == 0x07 && znp_last[4] == 0x02);   /* cluster, 16-bit source */
+            CHECK(znp_last[5] == 0x21 && znp_last[6] == 0x43 && znp_last[13] == 3 && znp_last[16] == 12);
+            uint32_t ts = (uint32_t)znp_last[20] | (uint32_t)znp_last[21] << 8 | (uint32_t)znp_last[22] << 16 |
+                          (uint32_t)znp_last[23] << 24;
+            CHECK(znp_last[25] == (400 & 0xFF) && znp_last[26] == (400 >> 8));          /* total length, no data */
+            uint8_t got[400];
+            for (unsigned index = 0; index < sizeof got; index += 240) {
+                unsigned chunk = sizeof got - index < 240 ? sizeof got - index : 240;
+                uint8_t q[7] = {(uint8_t)ts, (uint8_t)(ts >> 8), (uint8_t)(ts >> 16), (uint8_t)(ts >> 24),
+                                (uint8_t)index, (uint8_t)(index >> 8), (uint8_t)chunk};
+                znp_handle(&zt, 0x24, 0x12, q, sizeof q);
+                CHECK(znp_c0 == 0x64 && znp_c1 == 0x12 && znp_last[0] == 0 && znp_last[1] == chunk);
+                memcpy(got + index, znp_last + 2, chunk);
+            }
+            CHECK(!memcmp(got, big, sizeof big));
+            uint8_t past[7] = {(uint8_t)ts, (uint8_t)(ts >> 8), (uint8_t)(ts >> 16), (uint8_t)(ts >> 24), 0x80, 0x01, 32};
+            znp_handle(&zt, 0x24, 0x12, past, sizeof past);                          /* beyond the end */
+            CHECK(znp_last[0] == 0x02);
+            uint8_t wrong[7] = {(uint8_t)(ts + 1), (uint8_t)(ts >> 8), (uint8_t)(ts >> 16), (uint8_t)(ts >> 24), 0, 0, 8};
+            znp_handle(&zt, 0x24, 0x12, wrong, sizeof wrong);                        /* other timestamp */
+            CHECK(znp_last[0] == 0x02);
+            /* a second long message while the first is not freed: refused */
+            uint32_t dropped0 = zt.stats.af_rx_huge_dropped;
+            zc.upper.aps_data(zc.upper.ctx, &bn, &ba, big, 300, 150);
+            CHECK(zt.stats.af_rx_huge_dropped == dropped0 + 1);
+            uint8_t fin[7] = {(uint8_t)ts, (uint8_t)(ts >> 8), (uint8_t)(ts >> 16), (uint8_t)(ts >> 24), 0, 0, 0};
+            znp_handle(&zt, 0x24, 0x12, fin, sizeof fin);                            /* freed */
+            CHECK(znp_last[0] == 0 && !zt.huge.used);
+            znp_handle(&zt, 0x24, 0x12, past, sizeof past);
+            CHECK(znp_last[0] == 0x02);
+        }
         /* a session the host abandons (no restoreChannelInterPAN) ends by itself */
         req[0] = 0x01; req[1] = 11;
         znp_handle(&zt, 0x24, 0x10, req, 2);

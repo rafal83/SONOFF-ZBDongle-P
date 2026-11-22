@@ -83,6 +83,8 @@ typedef struct {
     uint8_t store_status, restore_status;   /* nv_log_mount_status_t, ZB_RESTORE_* */
     uint8_t permit, channel, restored;
     uint8_t counter_floor_from_store;
+    zb_event_t events[ZB_EVENTS];   /* copied when events_total moves */
+    uint32_t events_total;
 } app_coord_snapshot_t;
 #define COORD_FLAG_NEW_NETWORK 0x01u
 extern app_coord_snapshot_t app_coord;

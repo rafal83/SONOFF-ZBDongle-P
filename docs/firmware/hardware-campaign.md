@@ -2,7 +2,7 @@
 
 But : qualifier sur le matériel ce qui n'est validé qu'en simulation ([stabilization-20261119.md](stabilization-20261119.md), [status.md](status.md)). La recette se joue sur un **réseau de laboratoire**, puis l'image retenue est qualifiée sur la production dans la durée.
 
-**Rien ne se programme sans l'accord explicite du propriétaire, donné pour cette séance.** Le dongle unique porte la production : pendant la recette, Zigbee2MQTT est arrêté et le réseau de production n'a plus de coordinateur. Les appareils gardent leur appartenance et reprennent au retour de l'image de production. Durée de coupure prévue : environ 2 h pour H1 à H8, hors endurance.
+**Aucune programmation sans autorisation donnée pour la séance.** Le dongle unique porte la production : pendant la recette, Zigbee2MQTT est arrêté et le réseau de production n'a plus de coordinateur. Les appareils gardent leur appartenance et reprennent au retour de l'image de production. Durée de coupure prévue : environ 2 h pour H1 à H8, hors endurance.
 
 ## Matériel et topologie
 
@@ -46,7 +46,7 @@ Remettre ensuite R1, R2 et S à zéro avant de les rendre au réseau de producti
 
 ## Qualification prolongée sur la production
 
-Après la recette, avec l'accord du propriétaire, l'image retenue remplace celle de production : Z2M arrêté, programmation, Z2M redémarré, `resumed` attendu. Suivi :
+Après la recette, l'image retenue remplace celle de production : Z2M arrêté, programmation, Z2M redémarré, `resumed` attendu. Suivi :
 
 - **chaque jour** : erreurs et avertissements du journal Z2M (hors analyse DIAG), appareils entendus, disponibilité ;
 - **chaque semaine**, Z2M arrêté 5 minutes : `freertos_perf.py` (perf, maillage, store) et sauvegarde fraîche (`production_nv_snapshot.cjs`) ;

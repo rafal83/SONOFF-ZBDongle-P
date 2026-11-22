@@ -82,6 +82,28 @@
  * re-send, 119 with 4 re-sends/s, 122 unbounded). */
 #define ZB_RETX_TOKEN_MS 1000u
 #define ZB_RETX_BURST 8u
+
+/* Last network events (diagnostics, DIAG_EVENTS): who left, who reported
+ * it, re-joins, associations... answers "why did this device disappear"
+ * without a host-side log. */
+#define ZB_EVENTS 8u
+enum {
+    ZB_EV_LEAVE = 1,          /* NWK Leave heard; detail: options (0x20 rejoin), from: MAC source */
+    ZB_EV_UPDATE_DEVICE,      /* APS Update Device; detail: status (2 = left), from: the router */
+    ZB_EV_REJOIN,             /* Rejoin Request to us; detail: 1 secured, 0 Trust Center rejoin */
+    ZB_EV_ASSOCIATION,        /* association accepted; detail: MAC capability */
+    ZB_EV_ADDRESS_CONFLICT,   /* address claimed by another IEEE */
+    ZB_EV_CHILD_AGED,         /* child silent beyond its End Device Timeout */
+    ZB_EV_CHILD_MOVED,        /* child heard through a router; from: that router */
+    ZB_EV_REMOVED,            /* device removed from the Trust Center table */
+    ZB_EV_MEMBER_LEARNED,     /* unknown network member learnt from its secured frame */
+};
+typedef struct {
+    uint32_t ms;
+    uint8_t ext[8];                  /* IEEE, little endian (0: unknown) */
+    uint16_t short_addr, from;
+    uint8_t kind, detail;
+} zb_event_t;
 /* End Device Timeout index of children that never sent a request (Zigbee
  * nwkEndDeviceTimeoutDefault, also Z-Stack's): 8 = 256 minutes. */
 #define ZB_ED_TIMEOUT_DEFAULT 8u
@@ -104,7 +126,10 @@
 #define ZB_STATUS_NWK_NO_ROUTE 0xCDu
 #define ZB_STATUS_BUFFER_FULL 0x11u    /* ZStatus: local transmit queue full (the host retries) */
 /* APS fragmentation (Zigbee 2.2.8.4.5), window of one block. */
-#define ZB_FRAG_MAX 230u             /* whole message (what one ZNP frame can carry) */
+#define ZB_FRAG_MAX 230u             /* whole message sent (what one ZNP frame from the host can carry) */
+/* Whole message received: longer than one ZNP frame, handed to the host as
+ * Z-Stack does (AF_INCOMING_MSG_EXT, then AF_DATA_RETRIEVE by blocks). */
+#define ZB_FRAG_RX_MAX 512u
 #define ZB_FRAG_BLOCK 64u            /* APS payload per block: fits along a source route */
 #define ZB_FRAG_MAX_BLOCKS 8u
 #define ZB_FRAG_RX_SESSIONS 2u
@@ -123,7 +148,7 @@ typedef struct {
     uint16_t src, cluster, profile, len;
     uint8_t counter, total, next, dst_ep, src_ep, lqi;
     uint32_t due_ms;
-    uint8_t data[ZB_FRAG_MAX];
+    uint8_t data[ZB_FRAG_RX_MAX];
 } zb_frag_rx_t;
 typedef struct {
     bool used, waiting;
@@ -306,6 +331,8 @@ typedef struct {
     uint8_t retx_tokens;
     uint32_t retx_refill_ms;
     bool sending_ack, retrying_recent;
+    zb_event_t events[ZB_EVENTS];          /* ring, events_total % ZB_EVENTS is the next slot */
+    uint32_t events_total;
     zb_frag_rx_t frag_rx[ZB_FRAG_RX_SESSIONS];
     zb_frag_tx_t frag_tx;                  /* one fragmented transmission at a time */
     int16_t forced_handle;           /* >= 0: MAC handle imposed on the next frame */

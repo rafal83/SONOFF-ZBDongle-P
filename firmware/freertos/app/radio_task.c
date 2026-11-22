@@ -37,7 +37,7 @@
 #define EVT_REQUEST 0x2u
 #define EVT_ZNP 0x4u
 #define ZNP_DEFAULT_TX_DBM 5
-#define ZNP_REVISION 20261118u
+#define ZNP_REVISION 20261122u
 #define TX_WAIT_MS 50u
 #define COORD_TICK_MS 10u
 
@@ -402,6 +402,10 @@ static void snapshot(void) {
     app_coord.neighbors = nb;
     app_coord.store_status = (uint8_t)app_store.mount_status;
     app_coord.restore_status = coord.restore_status;
+    if (app_coord.events_total != coord.events_total) {
+        for (unsigned i = 0; i < ZB_EVENTS; i++) app_coord.events[i] = coord.events[i];
+        app_coord.events_total = coord.events_total;
+    }
 }
 
 

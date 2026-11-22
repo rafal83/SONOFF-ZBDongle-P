@@ -1022,7 +1022,36 @@ static void data_confirm(znp_t *z, uint8_t status, uint8_t ep, uint8_t transid) 
 static void incoming(znp_t *z, uint16_t group, uint16_t cluster, uint16_t src, uint8_t src_ep, uint8_t dst_ep,
                      bool broadcast, uint8_t lqi, const uint8_t *data, size_t len) {
     uint8_t out[250];
-    if (len > sizeof out - 17u) { z->stats.af_rx_dropped++; return; }
+    if (len > ZNP_INCOMING_MAX) {
+        /* Longer than one frame: kept, announced by AF_INCOMING_MSG_EXT with the
+         * total length and no data; herdsman reads it with AF_DATA_RETRIEVE. */
+        uint32_t now = z->coord->now_ms;
+        if (len > sizeof z->huge.data || (z->huge.used && now - z->huge.timestamp < ZNP_HUGE_HOLD_MS)) {
+            z->stats.af_rx_huge_dropped++;
+            return;
+        }
+        z->huge.used = true;
+        z->huge.len = (uint16_t)len;
+        z->huge.timestamp = now;
+        copy(z->huge.data, data, len);
+        size_t k = 0;
+        put16(out + k, group); k += 2;
+        put16(out + k, cluster); k += 2;
+        out[k++] = 0x02;                              /* 16-bit source address */
+        put64(out + k, src); k += 8;
+        out[k++] = src_ep;
+        put16(out + k, z->coord->mac.pan_id); k += 2;
+        out[k++] = dst_ep;
+        out[k++] = broadcast ? 1 : 0;
+        out[k++] = lqi;
+        out[k++] = 0;                                 /* securityuse */
+        put32(out + k, now); k += 4;                  /* timestamp: the AF_DATA_RETRIEVE key */
+        out[k++] = 0;                                 /* transseq */
+        put16(out + k, (uint16_t)len); k += 2;        /* no data: retrieved by blocks */
+        z->stats.af_rx_huge++;
+        areq(z, S_AF, 0x82, out, k);
+        return;
+    }
     size_t k = 0;
     put16(out + k, group); k += 2;
     put16(out + k, cluster); k += 2;
@@ -1151,6 +1180,30 @@ static void handle_af(znp_t *z, uint8_t cmd, const uint8_t *in, uint8_t n) {
                      af_send(z, z->coord->devices.dev[slot].short_addr, false, in[9], in[12], get16(in + 13), in[15], in[16], in + 20, get16(in + 18));
         } else status = 0x02;
         srsp_status(z, S_AF, cmd, status);
+        return;
+    }
+    case 0x12: {   /* dataRetrieve(timestamp u32, index u16, length u8): block of the long message */
+        if (n != 7) break;
+        uint32_t ts = get32(in);
+        uint16_t index = get16(in + 4);
+        uint8_t length = in[6], out[2 + 240];
+        out[1] = 0;
+        if (!z->huge.used || ts != z->huge.timestamp || length > 240u) {
+            out[0] = 0x02;                            /* afStatus_INVALID_PARAMETER */
+            srsp(z, S_AF, cmd, out, 2);
+            return;
+        }
+        if (!length) {                                /* the host is done: freed */
+            z->huge.used = false;
+            out[0] = ST_SUCCESS;
+            srsp(z, S_AF, cmd, out, 2);
+            return;
+        }
+        if ((uint32_t)index + length > z->huge.len) { out[0] = 0x02; srsp(z, S_AF, cmd, out, 2); return; }
+        out[0] = ST_SUCCESS;
+        out[1] = length;
+        copy(out + 2, z->huge.data + index, length);
+        srsp(z, S_AF, cmd, out, 2u + length);
         return;
     }
     case 0x10: {   /* interPanCtl(cmd, data): 0 back to the network, 1 channel, 2 endpoint, 3 check */

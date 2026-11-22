@@ -93,7 +93,9 @@ def decode_info(p):
             "crash_detail": f[10], "crash_cfsr": hex(f[11]), "crash_where": f[12].rstrip(b"\0").decode(errors="replace"),
             "boots_with_valid_record": f[13], "cpu_load_permille": f[14], "cpu_peak_permille": f[15],
             "tasks": f[16], "init_status": f[17], "sram_static": f[18], "flash_used": f[19],
-            "freertos": f"{f[20]}.{f[21]}.{f[22]}", "uart_baud": f[23]}
+            "freertos": f"{f[20]}.{f[21]}.{f[22]}", "uart_baud": f[23],
+            **({"source_commit": f"{struct.unpack_from('<I', p, 74)[0]:08x}", "source_modified": bool(p[78])}
+               if len(p) >= 79 else {})}
 
 
 COUNTER_NAMES = ["uart_rx_bytes", "uart_tx_bytes", "uart_rx_overflow", "uart_hw_overrun", "uart_framing",

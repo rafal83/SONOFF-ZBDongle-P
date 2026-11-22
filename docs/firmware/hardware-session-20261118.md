@@ -1,6 +1,6 @@
 # Essais matériels du 18 novembre 2026
 
-Dongle : le seul ZBDongle-P disponible, coordinateur de production (IEEE `0x00124b00256c52ef`, COM8, série USB `C8C5…6278`). Zigbee2MQTT arrêté par l'utilisateur pendant les trois séances. Outil : `tools/freertos_lab_session.py`.
+Dongle : le seul ZBDongle-P disponible, coordinateur de production (IEEE `0x00124b00256c52ef`, COM8, série USB `C8C5…6278`). Zigbee2MQTT arrêté pendant les trois séances. Outil : `tools/freertos_lab_session.py`.
 
 Chaque séance : deux captures complètes identiques de la Flash, programmation de la seule zone `0x00000–0x4FFFF`, essais, nouvelle capture prouvant que NV et CCFG n'ont pas changé, réécriture de l'application d'origine, relecture complète égale à la sauvegarde, puis vérification que Z-Stack 2026111802 répond à 1 Mbaud avec la bonne IEEE. **Les trois restaurations ont réussi.** Aucune émission radio, aucune écriture NV. Rapports et sauvegardes : `private/freertos-lab-20261118*/` (hors Git).
 
@@ -36,7 +36,7 @@ La cause de reset lue après `SYS_RESET_REQ` vaut 7 (*warm reset*). La table de 
 
 ## Séance 4 — émission et première arrivée d'un équipement réel
 
-Autorisée explicitement par l'utilisateur (émission comprise). Image avec le coordinateur de laboratoire. Tous les essais de base repassent (ping médian 3,67 ms, 40 alimentations du watchdog en 10 s, 0 manque ; l'enregistrement de plantage est bien émis sur l'UART avant un reset).
+Séance avec émission radio. Image avec le coordinateur de laboratoire. Tous les essais de base repassent (ping médian 3,67 ms, 40 alimentations du watchdog en 10 s, 0 manque ; l'enregistrement de plantage est bien émis sur l'UART avant un reset).
 
 | Essai | Résultat |
 |---|---|
@@ -62,7 +62,7 @@ Image avec clé de lien unique, données APS, ACK APS et serveur ZDO (commit `bd
 | *Device Announce* | 3, authentifiées |
 | **Clé de lien unique** (*Request Key* → *Transport Key* TC → *Verify Key* → *Confirm Key*) | **Établie à 4,8 s**, hachage de vérification correct, aucun échec |
 | ZDO | 1 requête de l'appareil vers le coordinateur, 1 réponse envoyée |
-| **4 *Toggle* ZCL envoyés par l'hôte** | **4 acceptés, 4 ACK APS reçus, 4 *Default Response* ZCL (commande 0x0B) remontées** ; **bascule de l'appareil confirmée visuellement par l'utilisateur** |
+| **4 *Toggle* ZCL envoyés par l'hôte** | **4 acceptés, 4 ACK APS reçus, 4 *Default Response* ZCL (commande 0x0B) remontées** ; **bascule de l'appareil confirmée visuellement** |
 | ACK APS envoyés par le coordinateur | 5 |
 | Trafic NWK reçu | 43 trames, toutes authentifiées ; 0 rejeu APS, 0 échec APS |
 | Radio | 19 émissions : 16 acquittées du premier coup, 3 sans ACK récupérées par les retransmissions MAC (3) ; 0 canal occupé, 0 erreur |
@@ -75,7 +75,7 @@ Journal `nv_log` en Flash (`0x48000–0x4FFFF`, la NV de production n'est pas to
 
 ## Séance 8 — recette ZNP avec le vrai herdsman (dongle laissé sous FreeRTOS)
 
-À partir de cette séance, le dongle reste sous FreeRTOS à la demande de l'utilisateur (le réseau de production est hors ligne ; sa sauvegarde reste restaurable). La NV Z-Stack et le CCFG ont été vérifiés identiques à la sauvegarde de production avant chaque programmation.
+À partir de cette séance, le dongle reste sous FreeRTOS (le réseau de production est hors ligne ; sa sauvegarde reste restaurable). La NV Z-Stack et le CCFG ont été vérifiés identiques à la sauvegarde de production avant chaque programmation.
 
 - **Firmware ZNP, 115200 bauds** : le dongle répond produit 1, révision 20261118, capacités SYS/AF/ZDO/UTIL/APP_CNF.
 - **`tools/znp_sim_acceptance.cjs --serial COM8`** (vrai `ZStackAdapter` herdsman 11.2.1) : **17 étapes réussies**. Dans l'ordre : formation (`reset`) ; sauvegarde (≈ 6 s, tables de 200 entrées) ; reset MCU réel puis `resumed` ; boucle AF ; `restoreBackup` avec 2 appareils (clé dérivée de la graine, clé explicite) restitués à l'identique ; `resumed`.
@@ -92,7 +92,7 @@ Journal `nv_log` en Flash (`0x48000–0x4FFFF`, la NV de production n'est pas to
 
 ## Séance 10 — routage, PA 20 dBm et 1 Mbaud (soir)
 
-Le dongle était revenu sous Z-Stack de production. Avec l'accord de l'utilisateur, une nouvelle capture double a été faite dans la même session ROM (`private/production-backup-20261118-evening`), puis l'image FreeRTOS a été programmée.
+Le dongle était revenu sous Z-Stack de production. Une nouvelle capture double a été faite dans la même session ROM (`private/production-backup-20261118-evening`), puis l'image FreeRTOS a été programmée.
 
 | Essai | Résultat |
 |---|---|
@@ -109,4 +109,4 @@ Endurance (plusieurs jours), appareils endormis réels, plusieurs appareils simu
 
 ## Fin de journée
 
-À la demande de l'utilisateur, le dongle a été remis sous **Z-Stack de production 2026111802** depuis `private/production-backup-20261118-night`, relu octet pour octet. Les développements suivants n'ont été exécutés qu'en simulation : intégrité du store et des compteurs, réparation du maillage, appareils endormis, mesures et accélérateur AES. Voir [status.md](status.md).
+Le dongle a été remis sous **Z-Stack de production 2026111802** depuis `private/production-backup-20261118-night`, relu octet pour octet. Les développements suivants n'ont été exécutés qu'en simulation : intégrité du store et des compteurs, réparation du maillage, appareils endormis, mesures et accélérateur AES. Voir [status.md](status.md).

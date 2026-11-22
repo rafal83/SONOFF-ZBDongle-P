@@ -47,7 +47,7 @@ static unsigned joined_events, left_events, last_left_rejoin;
 static uint16_t joined_short;
 static uint64_t joined_ext, left_ext;
 static unsigned aps_up;
-static uint8_t last_aps[256];
+static uint8_t last_aps[512];
 static size_t last_aps_len;
 static void up_joined(void *ctx, uint16_t s, uint64_t e, uint8_t cap) { (void)ctx; (void)cap; joined_events++; joined_short = s; joined_ext = e; }
 static void up_aps(void *ctx, const nwk_header_t *n, const aps_header_t *a, const uint8_t *p, size_t len, uint8_t lqi) {
@@ -318,6 +318,30 @@ int main(void) {
         }
         CHECK(aps_up == up0 + 1 && coord.stats.frag_rx_ok == rx0 + 1);
         CHECK(last_aps_len == sizeof msg && !memcmp(last_aps, msg, sizeof msg));
+
+        /* R -> coordinator: 400 bytes in 7 blocks, longer than one ZNP frame
+         * (handed to the host by AF_INCOMING_MSG_EXT + AF_DATA_RETRIEVE). */
+        uint8_t big_rx[400];
+        for (unsigned i = 0; i < sizeof big_rx; i++) big_rx[i] = (uint8_t)(i * 7u + 3u);
+        up0 = aps_up;
+        rx0 = coord.stats.frag_rx_ok;
+        for (unsigned blk = 0; blk < 7; blk++) {
+            unsigned len = blk < 6 ? 64u : 16u;
+            aps_header_t a = {0};
+            a.type = APS_TYPE_DATA; a.delivery = APS_DELIVERY_UNICAST; a.ack_request = true;
+            a.extended = true; a.fragmentation = blk ? APS_FRAG_NEXT : APS_FRAG_FIRST;
+            a.block_number = (uint8_t)(blk ? blk : 7u);
+            a.dst_endpoint = 1; a.src_endpoint = 1; a.cluster = 0x0006; a.profile = 0x0104; a.counter = 0x78;
+            uint8_t fr[128];
+            size_t hl = aps_build(&a, fr, sizeof fr);
+            CHECK(hl);
+            memcpy(fr + hl, big_rx + 64u * blk, len);
+            nwk_header_t h = hdr(NWK_TYPE_DATA, r.short_addr, 0x0000, seq++);
+            hop_send(&r, &h, fr, hl + len, 0x0000, true);
+            while (rx_frame(&r, &m)) {}
+        }
+        CHECK(aps_up == up0 + 1 && coord.stats.frag_rx_ok == rx0 + 1);
+        CHECK(last_aps_len == sizeof big_rx && !memcmp(last_aps, big_rx, sizeof big_rx));
     }
 
 

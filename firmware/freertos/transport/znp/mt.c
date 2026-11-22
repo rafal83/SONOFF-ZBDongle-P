@@ -50,6 +50,41 @@ static bool sys_request(const mt_platform_t *p, const npi_frame *req, npi_frame 
     return true;
 }
 
+bool mt_diag_nv(const mt_platform_t *p, const npi_frame *req, npi_frame *rsp) {
+    static const uint8_t cmds[] = MT_DIAG_NV_CMDS;
+    if (req->cmd0 != (MT_TYPE_SREQ | MT_SUBSYS_SYS) || req->length < 2 || !p->diag) return false;
+    uint8_t c = req->cmd1;
+    if (!((c == MT_SYS_OSAL_NV_READ && req->length == 3) || (c == MT_SYS_OSAL_NV_READ_EXT && req->length == 4) ||
+          (c == MT_SYS_OSAL_NV_LENGTH && req->length == 2)))
+        return false;
+    uint16_t id = (uint16_t)(req->payload[0] | req->payload[1] << 8);
+    if (id < MT_DIAG_NV_FIRST || id >= MT_DIAG_NV_FIRST + sizeof cmds) return false;
+    /* The block is built in place, after the 2-byte status/length header. */
+    int n = p->diag(p->context, cmds[id - MT_DIAG_NV_FIRST], 0, 0, rsp->payload + 2, NPI_MAX_PAYLOAD - 2u);
+    rsp->cmd0 = MT_TYPE_SRSP | MT_SUBSYS_SYS;
+    rsp->cmd1 = c;
+    if (c == MT_SYS_OSAL_NV_LENGTH) {
+        uint16_t len = n > 0 ? (uint16_t)n : 0;
+        rsp->payload[0] = (uint8_t)len;
+        rsp->payload[1] = (uint8_t)(len >> 8);
+        rsp->length = 2;
+        return true;
+    }
+    uint16_t offset = c == MT_SYS_OSAL_NV_READ ? req->payload[2] : (uint16_t)(req->payload[2] | req->payload[3] << 8);
+    if (n <= 0 || offset >= n) {
+        rsp->payload[0] = MT_NV_OPER_FAILED;
+        rsp->payload[1] = 0;
+        rsp->length = 2;
+        return true;
+    }
+    uint16_t chunk = (uint16_t)(n - offset);
+    for (uint16_t i = 0; i < chunk; i++) rsp->payload[2 + i] = rsp->payload[2 + offset + i];
+    rsp->payload[0] = 0;   /* success */
+    rsp->payload[1] = (uint8_t)chunk;
+    rsp->length = (uint8_t)(2u + chunk);
+    return true;
+}
+
 bool mt_dispatch(const mt_platform_t *p, const npi_frame *req, npi_frame *rsp) {
     uint8_t type = req->cmd0 & 0xE0u;
     uint8_t subsystem = req->cmd0 & 0x1Fu;

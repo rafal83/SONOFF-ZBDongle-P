@@ -199,6 +199,17 @@ def elf_report(elf):
     return sections, symbols, sizes
 
 
+def git_identity():
+    """(first 32 bits of HEAD, firmware sources modified?) for DIAG_INFO; (0, False) without Git."""
+    try:
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True)
+        status = subprocess.run(["git", "status", "--porcelain", "--", "firmware"], cwd=ROOT, capture_output=True,
+                                text=True, check=True)
+        return int(head.stdout.strip()[:8], 16), bool(status.stdout.strip())
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return 0, False
+
+
 def arm_flags(baud, revision):
     return ["-std=c11", "-Os", "-g", "-target", "thumb-freestanding-eabihf", "-mcpu=cortex_m4+vfp4d16sp",
             "-mfloat-abi=hard", "-ffreestanding", "-fno-stack-protector", "-ffunction-sections",
@@ -246,7 +257,9 @@ def firmware(exe, baud, hw_aes=False):
     obj_dir = out / "obj"
     obj_dir.mkdir(parents=True, exist_ok=True)
     revision = int(datetime.date.today().strftime("%Y%m%d"))
-    flags = arm_flags(baud, revision) + [f"-DFRT_HW_AES={1 if hw_aes else 0}"]
+    commit, dirty = git_identity()
+    flags = arm_flags(baud, revision) + [f"-DFRT_HW_AES={1 if hw_aes else 0}",
+                                         f"-DFRT_GIT_COMMIT=0x{commit:08x}u", f"-DFRT_GIT_DIRTY={1 if dirty else 0}u"]
     own = PORTABLE + MCU_SOURCES
     objects = compile_arm(exe, flags, own + [KERNEL / s for s in KERNEL_SOURCES] + TI_SOURCES, obj_dir)
     elf = out / "sonoff-freertos-diag.elf"
@@ -310,6 +323,7 @@ def firmware(exe, baud, hw_aes=False):
     biggest = sorted(sizes.items(), key=lambda kv: -kv[1])[:15]
     manifest = {
         "target": "SONOFF ZBDongle-P CC2652P - FreeRTOS Zigbee coordinator (ZNP), laboratory release",
+        "source_commit": f"{commit:08x}", "source_modified": dirty,  # also in DIAG_INFO
         "validation": {
             "compiled_and_linked": True,
             "static_image_checks": True,

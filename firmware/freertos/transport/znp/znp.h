@@ -71,6 +71,9 @@ typedef struct {
     uint8_t interpan_channel;          /* Touchlink (interPanCtl): channel the radio is on, 0: none */
     uint8_t interpan_ep;               /* endpoint inter-PAN frames are delivered to, 0: none */
     uint32_t interpan_last_ms;         /* last Touchlink activity (interPanCtl, inter-PAN frame) */
+    /* Received message longer than one ZNP frame, announced by AF_INCOMING_MSG_EXT
+     * and read by the host with AF_DATA_RETRIEVE (length 0 frees it). */
+    struct { bool used; uint16_t len; uint32_t timestamp; uint8_t data[ZB_FRAG_RX_MAX]; } huge;
     /* The radio could not be put back on the network channel at the end of a
      * Touchlink session: attempt number (0: radio fine) and next try. */
     uint8_t radio_recover;
@@ -97,6 +100,7 @@ typedef struct {
         uint32_t zdo_tx, zdo_rx, nv_writes, nv_failures;
         uint32_t restore_margins;   /* host counters raised by ZNP_RESTORE_COUNTER_MARGIN */
         uint32_t af_rx_group_any;   /* group frames delivered to endpoint 1 without membership */
+        uint32_t af_rx_huge, af_rx_huge_dropped;   /* messages longer than one frame (AF_DATA_RETRIEVE) */
     } stats;
 } znp_t;
 
@@ -122,6 +126,10 @@ typedef struct {
  * for more than ~13 s. */
 #define ZNP_RECOVER_RETRIES 6u
 #define ZNP_RECOVER_FIRST_MS 100u
+/* A long message not read (nor freed) by the host within this delay may be
+ * replaced by the next one. */
+#define ZNP_HUGE_HOLD_MS 30000u
+#define ZNP_INCOMING_MAX 233u   /* data of one AF_INCOMING_MSG (250-byte frame, 17-byte header) */
 
 /* Boot: (re)initialize the coordinator, apply the startup options, restore
  * the stored network, then emit SYS_RESET_IND with `reset_reason`. */

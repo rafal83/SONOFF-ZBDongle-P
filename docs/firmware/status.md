@@ -4,21 +4,21 @@ Quatre niveaux, jamais confondus :
 
 - **Implémenté** : le code existe, compile sans avertissement (`-Werror`) pour l'hôte et pour le Cortex-M4F.
 - **Testé en simulation** : exercé par les tests hôtes (C11, UBSan), l'émulation ARM (Unicorn), le simulateur ZNP avec le vrai herdsman 11.2.1, ou la répétition de migration. Aucune radio réelle n'intervient.
-- **Validé sur matériel** : essai dédié sur le ZBDongle-P de l'utilisateur, résultat consigné dans [hardware-session-20261118.md](hardware-session-20261118.md) (séances 1 à 10).
+- **Validé sur matériel** : essai dédié sur le ZBDongle-P de production, résultat consigné dans [hardware-session-20261118.md](hardware-session-20261118.md) (séances 1 à 10).
 - **Observé en production** : constaté dans le journal de Zigbee2MQTT sur le réseau réel, sans mesure dédiée.
 
 ## Production
 
-Le réseau de production (Z2M 2.14.3, herdsman 11.2.0, 1 000 000 bauds) a été **migré sur FreeRTOS le 18 novembre au soir** par `restoreBackup`, avec l'accord du propriétaire. Il a tourné le 19 novembre au matin sur l'image du commit `969fb13` : redémarrage de Z2M à 07:54 (stratégie `resumed`), puis **40 appareils entendus en 66 minutes et aucune erreur ni avertissement** dans le journal.
+Le réseau de production (Z2M 2.14.3, herdsman 11.2.0, 1 000 000 bauds) a été **migré sur FreeRTOS le 18 novembre au soir** par `restoreBackup`. Il a tourné le 19 novembre au matin sur l'image du commit `969fb13` : redémarrage de Z2M à 07:54 (stratégie `resumed`), puis **40 appareils entendus en 66 minutes et aucune erreur ni avertissement** dans le journal.
 
 Défauts vus en production dans la nuit, avant `969fb13` :
 
 | Défaut | Cause | Correction | Sur le dongle |
 |---|---|---|---|
 | Commandes Z2M en `NWK_NO_ROUTE`, états non remontés (lumière commandée par un bouton) | Commandes NWK sans IEEE source, ignorées par les routeurs réels ; *Link Status* trop long au-delà de 25 voisins, jamais émis | `969fb13` | **Oui** (image actuelle) |
-| Sauvegarde Z2M en échec à l'arrêt (lecture des TCLK sans réponse) | Files ZNP qui refusaient au lieu d'attendre | `0d5987e` | **Non** : à programmer, avec accord |
+| Sauvegarde Z2M en échec à l'arrêt (lecture des TCLK sans réponse) | Files ZNP qui refusaient au lieu d'attendre | `0d5987e` | **Oui** (image `1c92c11`, 19 novembre) |
 
-**Le 19 novembre à 09:27**, avec l'accord du propriétaire, la production est passée sur l'image **`--hw-aes` du commit `1c92c11`** (SHA-256 `068b1e5f…`), store conservé. Elle inclut `0d5987e` et les corrections de [stabilization-20261119.md](stabilization-20261119.md). L'image logicielle du même commit avait été programmée à 09:20 : Z2M l'avait reprise (`resumed`) et avait écrit sa sauvegarde à l'arrêt, ce qui n'arrivait plus avec `969fb13`. Z2M a repris l'image `--hw-aes` à 09:29 (`resumed`, 75 appareils, aucune erreur).
+**Le 19 novembre à 09:27**, la production est passée sur l'image **`--hw-aes` du commit `1c92c11`** (SHA-256 `068b1e5f…`), store conservé. Elle inclut `0d5987e` et les corrections de [stabilization-20261119.md](stabilization-20261119.md). L'image logicielle du même commit avait été programmée à 09:20 : Z2M l'avait reprise (`resumed`) et avait écrit sa sauvegarde à l'arrêt, ce qui n'arrivait plus avec `969fb13`. Z2M a repris l'image `--hw-aes` à 09:29 (`resumed`, 75 appareils, aucune erreur).
 
 Relevés `DIAG` sur le dongle, avant le redémarrage de Z2M :
 
@@ -33,13 +33,24 @@ Relevés `DIAG` sur le dongle, avant le redémarrage de Z2M :
 
 Ces piles sont relevées avant tout trafic radio : les valeurs sous charge restent à relever, Z2M arrêté.
 
-**Le 20 novembre en fin d'après-midi**, avec l'accord explicite du propriétaire, la production est passée sur l'image **`--hw-aes` à 1 Mbaud du commit `666f804`** (SHA-256 `cf7814a2…`), store de disposition 2 (2 × 56 Kio) conservé.
+**Le 20 novembre en fin d'après-midi**, la production est passée sur l'image **`--hw-aes` à 1 Mbaud du commit `666f804`** (SHA-256 `cf7814a2…`), store de disposition 2 (2 × 56 Kio) conservé.
 Cette version intègre :
 - Le moteur CCM\* natif allégé (1 119 cycles DWT en moyenne en trafic réel, ~40,6 µs par trame de 40 octets contre 1,56 ms en logiciel).
 - La priorité absolue aux routes explicites (`nwk_source_route` et `nwk_table_route`) sur les voisins directs dans `next_hop()`, résolvant les liens radio asymétriques.
 - La découverte de route avec temporisation d'attente (`disc_fresh_for`) pour laisser arriver les réponses multi-sauts.
 - L'extension de `recent_tx` à 32 trames avec réémissions graduées et suppression du backoff `0xcd` sur les retours internes.
 - La priorisation des `APS ACK` en tête de file directe MAC.
+
+**Images suivantes (store conservé à chaque fois, capture complète avant chaque programmation dans `private/flash-*`) :**
+
+| Date | Image | Contenu principal |
+|---|---|---|
+| 21 novembre, 07:24 | `d5f5fa1` | Touchlink, index compact des appareils, compteurs NWK entrants persistés |
+| 21 novembre, 09:50 | `25538e6` | Planchers anti-rejeu v2 (empreinte IEEE de 32 bits), sécurité Touchlink, réponses de réassociation hors limite indirecte |
+| 21 novembre, 10:30 | `62a7194` | Récupération radio bornée en fin de séance Touchlink, compteurs Touchlink dans le DIAG |
+| 22 novembre, 08:30 | `62a7194` et modifications suivantes (image `a783dd45`) | Diagnostic lisible par éléments NV virtuels (extension Zigbee2MQTT), journal des événements réseau, compteurs de fiabilité, commit source dans `DIAG_INFO`, révision ZNP 20261122 |
+
+Le 22 novembre, la lecture du diagnostic après redémarrage a restauré 32 planchers anti-rejeu au format v2 : première confirmation sur le matériel de cette persistance.
 
 **Résultats mesurés sur le réseau réel (banc de production, 20 novembre) :**
 - Rafales simultanées sur tous les routeurs joignables : **100 % de réussite (8 rafales sur 8 à 28/28, soit 224 / 224, 0 échec)**.
@@ -49,7 +60,7 @@ Cette version intègre :
 
 Diagnostic du « retard d'une lumière » (journal Z2M en debug, 19 novembre) :
 - Le firmware répondait `NWK_NO_ROUTE` à la première commande après plusieurs minutes d'inactivité, puis herdsman réessayait 2 s plus tard. C'est corrigé par `7c24ecc`.
-- **Cause principale, hors firmware** : Z2M avait reconfiguré une lumière le 19 novembre à 06:59 avec un intervalle minimal de *reporting* de 60 s (on/off et niveau). Ses changements faits au bouton remontaient donc jusqu'à une minute plus tard ; des changements rapprochés étaient fusionnés. Après reconfiguration du *reporting* par l'utilisateur, la synchronisation fonctionne.
+- **Cause principale, hors firmware** : Z2M avait reconfiguré une lumière le 19 novembre à 06:59 avec un intervalle minimal de *reporting* de 60 s (on/off et niveau). Ses changements faits au bouton remontaient donc jusqu'à une minute plus tard ; des changements rapprochés étaient fusionnés. Après reconfiguration du *reporting*, la synchronisation fonctionne.
 - Deux routeurs ne répondent pas, avec `NWK_NO_ROUTE` après la découverte : ils ne sont plus entendus depuis le 19 septembre et le 2 novembre, soit bien avant la migration.
 
 Ne jamais réécrire une ancienne capture complète après exploitation du réseau : voir [sauvegardes et restauration](restauration.md).

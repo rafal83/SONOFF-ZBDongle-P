@@ -595,7 +595,18 @@ static void send_rejoin_response(zb_coord_t *c, uint16_t slot, uint8_t status, b
 
 /* Two devices claim `addr` (Zigbee PRO 3.6.1.9): announce the conflict;
  * a child of ours that holds it gets a new address from us. */
+static void note_event(zb_coord_t *c, uint8_t kind, uint16_t short_addr, uint64_t ext, uint16_t from, uint8_t detail) {
+    zb_event_t *e = &c->events[c->events_total++ % ZB_EVENTS];
+    e->ms = c->now_ms;
+    put64(e->ext, ext);
+    e->short_addr = short_addr;
+    e->from = from;
+    e->kind = kind;
+    e->detail = detail;
+}
+
 static void address_conflict(zb_coord_t *c, uint16_t addr, uint64_t claimant) {
+    note_event(c, ZB_EV_ADDRESS_CONFLICT, addr, claimant, 0xFFFF, 0);
     c->stats.address_conflicts++;
     send_network_status(c, NWK_BCAST_RX_ON, 0x0D, addr);
     nwk_routes_forget(&c->routes, addr);
@@ -979,7 +990,7 @@ static void frag_rx(zb_coord_t *c, const nwk_header_t *h, const aps_header_t *a,
                                 .profile = a->profile};
         }
         if (s->next == 0) {
-            if (a->payload_len > ZB_FRAG_MAX) { s->used = false; c->stats.frag_rx_dropped++; return; }
+            if (a->payload_len > ZB_FRAG_RX_MAX) { s->used = false; c->stats.frag_rx_dropped++; return; }
             for (size_t k = 0; k < a->payload_len; k++) s->data[k] = a->payload[k];
             s->len = (uint16_t)a->payload_len;
             s->next = 1;
@@ -987,7 +998,7 @@ static void frag_rx(zb_coord_t *c, const nwk_header_t *h, const aps_header_t *a,
     } else {
         if (!s) return;   /* subsequent block of an unknown message: no ACK */
         if (a->block_number == s->next) {
-            if (s->len + a->payload_len > ZB_FRAG_MAX) { s->used = false; c->stats.frag_rx_dropped++; return; }
+            if (s->len + a->payload_len > ZB_FRAG_RX_MAX) { s->used = false; c->stats.frag_rx_dropped++; return; }
             for (size_t k = 0; k < a->payload_len; k++) s->data[s->len + k] = a->payload[k];
             s->len = (uint16_t)(s->len + a->payload_len);
             s->next++;
@@ -1155,6 +1166,7 @@ static void on_assoc(void *ctx, uint64_t device, uint8_t capability, uint8_t lqi
     if (mac_association_response(&c->mac, device, short_addr, status) != MAC_STATUS_SUCCESS) return;
     if (status != NWK_ASSOC_SUCCESS) { c->stats.associations_denied++; return; }
     c->stats.associations_accepted++;
+    note_event(c, ZB_EV_ASSOCIATION, short_addr, device, 0xFFFF, capability);
     save_device(c, nwk_devices_find_ext(&c->devices, device));
     nwkctr_forget(c, nwk_devices_find_ext(&c->devices, device));   /* a joiner starts its counters over */
     for (unsigned i = 0; i < ZB_AWAITING_KEY; i++) if (c->awaiting_key[i] == device) return;
@@ -1633,6 +1645,7 @@ static void handle_update_device(zb_coord_t *c, uint16_t parent, const uint8_t *
     uint16_t short_addr = get16(p + 9);
     uint8_t status = p[11];
     c->stats.update_device++;
+    note_event(c, ZB_EV_UPDATE_DEVICE, short_addr, ext, parent, status);
     if (!ext || short_addr >= 0xFFF8u || short_addr == 0x0000) return;
     if (status == 2) { device_gone(c, short_addr, ext, false); return; }
     uint16_t slot = nwk_devices_find_ext(&c->devices, ext);
@@ -1731,6 +1744,7 @@ static void handle_rejoin(zb_coord_t *c, const mac_frame_t *f, const nwk_header_
     d->last_seen_ms = c->now_ms;
     save_device(c, slot);
     send_rejoin_response(c, slot, 0x00, secured);
+    note_event(c, ZB_EV_REJOIN, want, ext, want, secured ? 1u : 0u);
     if (secured) c->stats.rejoins++;
     else { c->stats.tc_rejoins++; send_transport_key(c, slot); }
 }
@@ -1849,6 +1863,7 @@ static void handle_nwk_command(zb_coord_t *c, const mac_frame_t *f, const nwk_he
         uint64_t ext = h->has_src_ieee ? h->src_ieee : 0;
         uint16_t slot = ext ? nwk_devices_find_ext(&c->devices, ext) : nwk_devices_find_short(&c->devices, h->src);
         if (slot != NWK_DEVICE_NONE) ext = c->devices.dev[slot].ext;
+        note_event(c, ZB_EV_LEAVE, h->src, ext, f->src_mode == MAC_ADDR_SHORT ? f->src_short : 0xFFFF, p[1]);
         device_gone(c, h->src, ext, (p[1] & 0x20u) != 0);
         return;
     }
@@ -2019,6 +2034,7 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
         c->devices.dev[dev].authorized = true;
         save_device(c, dev);
         c->stats.learned_members++;
+        note_event(c, ZB_EV_MEMBER_LEARNED, f->src_short, aux_source, f->src_short, 0);
     }
     c->devices.dev[dev].last_seen_ms = c->now_ms;
     if (h.payload[13] == c->key_seq) {
@@ -2038,6 +2054,7 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
             c->devices.dev[o].relationship = NWK_REL_NONE;
             c->devices.dev[o].ed_timeout = 0;
             c->stats.children_moved++;
+            note_event(c, ZB_EV_CHILD_MOVED, h.src, c->devices.dev[o].ext, f->src_short, 0);
             save_device(c, o);
         }
     }
@@ -2248,6 +2265,7 @@ void zb_coord_forget(zb_coord_t *c) {
 bool zb_coord_remove_device(zb_coord_t *c, uint64_t ext) {
     uint16_t slot = nwk_devices_find_ext(&c->devices, ext);
     if (slot == NWK_DEVICE_NONE) return false;
+    note_event(c, ZB_EV_REMOVED, c->devices.dev[slot].short_addr, ext, 0xFFFF, 0);
     nwkctr_forget(c, slot);
     (void)nwk_devices_remove(&c->devices, ext);
     if (c->store) (void)nv_log_delete(c->store, (uint16_t)(STORE_ID_DEVICE0 + slot));
@@ -2635,6 +2653,7 @@ static void child_aging(zb_coord_t *c) {
         d->relationship = NWK_REL_NONE;
         d->ed_timeout = 0;
         c->stats.children_aged++;
+        note_event(c, ZB_EV_CHILD_AGED, d->short_addr, d->ext, 0xFFFF, idx);
         save_device(c, s);
     }
 }

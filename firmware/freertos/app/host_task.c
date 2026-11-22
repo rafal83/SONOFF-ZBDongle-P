@@ -17,6 +17,14 @@
 #ifndef FRT_BUILD_REVISION
 #define FRT_BUILD_REVISION 0u
 #endif
+/* Source commit of the image (first 32 bits of its Git hash) and whether the
+ * firmware sources differed from it (tools/build_freertos.py). */
+#ifndef FRT_GIT_COMMIT
+#define FRT_GIT_COMMIT 0u
+#endif
+#ifndef FRT_GIT_DIRTY
+#define FRT_GIT_DIRTY 0u
+#endif
 #define TASK_STATUS_MAX 8u
 
 extern uint32_t _flash_used, _sram_used;
@@ -81,6 +89,8 @@ static int diag_info(le_writer_t *w) {
     le_u8(w, tskKERNEL_VERSION_MINOR);
     le_u8(w, tskKERNEL_VERSION_BUILD);
     le_u32(w, BOARD_UART_BAUD);
+    le_u32(w, FRT_GIT_COMMIT);   /* appended: older decoders ignore it */
+    le_u8(w, FRT_GIT_DIRTY);
     return w->ok ? (int)w->len : MT_DIAG_BAD_PARAM;
 }
 
@@ -220,6 +230,42 @@ static int diag_perf(le_writer_t *w) {
     return w->ok ? (int)w->len : MT_DIAG_BAD_PARAM;
 }
 
+/* Last network events, newest first: age (ms), kind, detail, short
+ * address, reporter (MAC source / router), IEEE. */
+static int diag_events(le_writer_t *w) {
+    const app_coord_snapshot_t *c = &app_coord;   /* word reads of a snapshot owned by the radio task */
+    uint32_t total = c->events_total, now = now_ms();
+    uint8_t n = total < ZB_EVENTS ? (uint8_t)total : (uint8_t)ZB_EVENTS;
+    le_u8(w, 1);   /* format */
+    le_u32(w, total);
+    le_u8(w, n);
+    for (uint8_t i = 0; i < n; i++) {
+        const zb_event_t *e = &c->events[(total - 1u - i) % ZB_EVENTS];
+        le_u32(w, now - e->ms);
+        le_u8(w, e->kind);
+        le_u8(w, e->detail);
+        le_u16(w, e->short_addr);
+        le_u16(w, e->from);
+        le_bytes(w, e->ext, 8);
+    }
+    return w->ok ? (int)w->len : MT_DIAG_BAD_PARAM;
+}
+
+/* Reliability counters of the coordinator (count-prefixed u32, new ones appended). */
+static int diag_reliability(le_writer_t *w) {
+    const zb_coord_stats_t *s = &app_coord.coord;
+    const uint32_t values[] = {
+        s->net_status_retries, s->zcl_retx_deferred, s->zcl_route_rebuilds, s->zcl_answers_dropped,
+        s->zcl_retx_sleepy_skipped, s->capabilities_learnt, s->poll_children, s->children_aged,
+        s->children_moved, s->nwk_counters_stored, s->nwk_counters_restored, s->bcast_seq_skipped,
+        s->learned_members, s->addresses_reassigned, s->leaves, s->update_device, s->rejoins, s->tc_rejoins,
+        s->interpan_rx, s->interpan_tx, s->store_writes, s->store_failures,
+    };
+    le_u8(w, (uint8_t)(sizeof values / sizeof values[0]));
+    for (unsigned i = 0; i < sizeof values / sizeof values[0]; i++) le_u32(w, values[i]);
+    return w->ok ? (int)w->len : MT_DIAG_BAD_PARAM;
+}
+
 static int diag_store_status(le_writer_t *w) {
     const nv_log_t *s = &app_store;   /* word reads of a structure owned by the radio task */
     le_u8(w, 2);                      /* format (2: + counter floors) */
@@ -310,6 +356,8 @@ static int plat_diag(void *ctx, uint8_t cmd, const uint8_t *in, uint8_t len, uin
     case DIAG_MESH_STATS: return len ? MT_DIAG_BAD_PARAM : diag_mesh_stats(&w);
     case DIAG_STORE_STATUS: return len ? MT_DIAG_BAD_PARAM : diag_store_status(&w);
     case DIAG_PERF: return len ? MT_DIAG_BAD_PARAM : diag_perf(&w);
+    case DIAG_EVENTS: return len ? MT_DIAG_BAD_PARAM : diag_events(&w);
+    case DIAG_RELIABILITY: return len ? MT_DIAG_BAD_PARAM : diag_reliability(&w);
     case DIAG_STORE_FORMAT: {
         int n = diag_radio(cmd, in, len, &w);
         if (n > 0 && out[0] == 0) reset_pending = true;   /* boot on the empty store */
@@ -344,6 +392,11 @@ static void on_frame(void *context, const npi_frame *request) {
      * task, which owns the coordinator. */
     if ((request->cmd0 & 0x1Fu) == MT_SUBSYS_FRT_DIAG) {
         if (mt_dispatch(&platform, request, &response)) (void)npi_tx_enqueue(&txq, &response);
+        return;
+    }
+    /* The same diagnostics as read-only NV items (Zigbee2MQTT extension). */
+    if (mt_diag_nv(&platform, request, &response)) {
+        (void)npi_tx_enqueue(&txq, &response);
         return;
     }
     /* herdsman does not handle MT RPC errors (it waits 6 s for the SRSP):

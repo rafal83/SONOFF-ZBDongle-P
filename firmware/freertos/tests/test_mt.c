@@ -20,6 +20,7 @@ static int diag(void *ctx, uint8_t cmd, const uint8_t *in, uint8_t len, uint8_t 
     diag_calls++;
     if (cmd == 0x00) { out[0] = 0xAB; return 1; }
     if (cmd == 0x01) return len == 1 ? (out[0] = in[0], 1) : MT_DIAG_BAD_PARAM;
+    if (cmd == DIAG_PERF) { for (unsigned i = 0; i < 225u && i < cap; i++) out[i] = (uint8_t)i; return 225; }
     return MT_DIAG_UNKNOWN;
 }
 static const mt_platform_t P = {0, ieee, reset, diag, 20261118u};
@@ -99,6 +100,40 @@ int main(void) {
     CHECK(mt_reset_reason(4, false) == 0 && mt_reset_reason(2, false) == 0);
     CHECK(mt_reset_reason(7, false) == 1 && mt_reset_reason(7, true) == 2);
     CHECK(parser.bad_fcs == 0 && parser.accepted == (uint32_t)(responses + 4)); /* 4 AREQ without reply */
+
+    /* Diagnostics as read-only NV items (SYS osalNvRead / ReadExt / Length). */
+    {
+        npi_frame req = {.cmd0 = 0x21, .cmd1 = MT_SYS_OSAL_NV_READ, .length = 3}, rsp;
+        req.payload[0] = 0xA0; req.payload[1] = 0x0F; req.payload[2] = 0;          /* 0x0FA0: DIAG_INFO */
+        CHECK(mt_diag_nv(&P, &req, &rsp) && rsp.cmd0 == 0x61 && rsp.cmd1 == 0x08 && rsp.length == 3 &&
+              rsp.payload[0] == 0 && rsp.payload[1] == 1 && rsp.payload[2] == 0xAB);
+        req.payload[0] = 0xA5;                                                       /* 0x0FA5: DIAG_PERF */
+        CHECK(mt_diag_nv(&P, &req, &rsp) && rsp.length == 227 && rsp.payload[1] == 225 && rsp.payload[2] == 0 &&
+              rsp.payload[226] == 224);
+        req.payload[2] = 200;                                                        /* offset */
+        CHECK(mt_diag_nv(&P, &req, &rsp) && rsp.payload[0] == 0 && rsp.payload[1] == 25 && rsp.payload[2] == 200);
+        req.payload[2] = 225;                                                        /* past the end */
+        CHECK(mt_diag_nv(&P, &req, &rsp) && rsp.length == 2 && rsp.payload[0] == MT_NV_OPER_FAILED);
+        npi_frame ext = {.cmd0 = 0x21, .cmd1 = MT_SYS_OSAL_NV_READ_EXT, .length = 4};
+        ext.payload[0] = 0xA5; ext.payload[1] = 0x0F; ext.payload[2] = 10; ext.payload[3] = 0;
+        CHECK(mt_diag_nv(&P, &ext, &rsp) && rsp.cmd1 == 0x1C && rsp.payload[1] == 215 && rsp.payload[2] == 10);
+        npi_frame len = {.cmd0 = 0x21, .cmd1 = MT_SYS_OSAL_NV_LENGTH, .length = 2};
+        len.payload[0] = 0xA5; len.payload[1] = 0x0F;
+        CHECK(mt_diag_nv(&P, &len, &rsp) && rsp.length == 2 && rsp.payload[0] == 225 && rsp.payload[1] == 0);
+        len.payload[0] = 0xA7;                                                       /* block the platform lacks */
+        CHECK(mt_diag_nv(&P, &len, &rsp) && rsp.payload[0] == 0 && rsp.payload[1] == 0);
+        /* not ours: other items, other commands, writes (the ZNP layer refuses those) */
+        len.payload[0] = 0xA8;
+        CHECK(!mt_diag_nv(&P, &len, &rsp));
+        req.payload[0] = 0x21; req.payload[1] = 0x00; req.payload[2] = 0;           /* a real NV item */
+        CHECK(!mt_diag_nv(&P, &req, &rsp));
+        npi_frame wr = {.cmd0 = 0x21, .cmd1 = 0x09, .length = 5};
+        wr.payload[0] = 0xA0; wr.payload[1] = 0x0F;
+        CHECK(!mt_diag_nv(&P, &wr, &rsp));
+        npi_frame other = {.cmd0 = 0x24, .cmd1 = 0x08, .length = 3};                /* AF subsystem */
+        other.payload[0] = 0xA0; other.payload[1] = 0x0F;
+        CHECK(!mt_diag_nv(&P, &other, &rsp));
+    }
     PASS("mt");
     return 0;
 }
