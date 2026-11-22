@@ -11,7 +11,7 @@ Quatre niveaux, jamais confondus :
 
 Le réseau de production (Zigbee2MQTT 2.14.3, herdsman 11.2.0, 1 000 000 bauds, environ 130 appareils dont 28 routeurs) tourne sous FreeRTOS depuis le 18 novembre 2026. Il a été migré par `restoreBackup`, sans réappairage.
 
-Image en service : `--hw-aes` à 1 Mbaud, SHA-256 `8ee183be…`, sources du commit `5194d96` (diagnostic par éléments NV virtuels, messages reçus longs), révision ZNP 20261122. Elle a été programmée le 22 novembre à 08:51. Le store (disposition 2, 2 × 56 Kio) est conservé à chaque programmation, avec une capture complète prise avant dans `private/flash-*`.
+Image en service : `--hw-aes` à 1 Mbaud, SHA-256 `dbdbb396…`, sources du commit `b43f17e` (*Parent_annce*, liens qui perdent des réponses, capteurs Home Assistant), révision ZNP 20261122. Elle a été programmée le 22 novembre au matin. Son diagnostic indique le commit `d2a3dd9c` : c'est le hash de ce même commit avant la réécriture de l'historique du 22 novembre (messages de commit modifiés, contenu identique). Le store (disposition 2, 2 × 56 Kio) est conservé à chaque programmation, avec une capture complète prise avant dans `private/flash-*`.
 
 **Mesures sur le dongle :**
 

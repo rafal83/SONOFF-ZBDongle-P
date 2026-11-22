@@ -18,8 +18,8 @@ Valeurs au **21 novembre 2026**. Ce résumé est tenu à jour avec [le détail, 
 
 | | Firmware FreeRTOS | Z-Stack Koenkk 20250321 | ZeroStack (SMLIGHT) |
 |---|---|---|---|
-| Rafale sur tous les routeurs : réponses des routeurs joignables | **100 %** (666f804 : 8 rafales sur 8 à 28 / 28) ; d5f5fa1 : 100 % au 1er passage, 90,6 à 97,3 % sur les passages enchaînés | **100 %** (28 / 28) | non mesuré (binaire fermé) |
-| Lecture isolée, médiane | **34,4 ms** (666f804, p95 à 60,4 ms) ; 39 à 51 ms (d5f5fa1) | 51 ms | non mesuré |
+| Rafale sur tous les routeurs : réponses des routeurs joignables | **100 %** (9e523a4 : 8 rafales sur 8 à 28 / 28) ; ffd4fa0 : 100 % au 1er passage, 90,6 à 97,3 % sur les passages enchaînés | **100 %** (28 / 28) | non mesuré (binaire fermé) |
+| Lecture isolée, médiane | **34,4 ms** (9e523a4, p95 à 60,4 ms) ; 39 à 51 ms (ffd4fa0) | 51 ms | non mesuré |
 
 **CPU :** mesuré sur le dongle ou dans l'émulateur. Les chiffres de ZeroStack et du « Z-Stack stock » sont ceux publiés par SMLIGHT ; ils n'ont pas été reproduits.
 

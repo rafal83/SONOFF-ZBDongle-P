@@ -19,16 +19,16 @@ Banc en lecture seule `tools/znp_prod_bench.cjs`, dongle de production sur COM8,
 
 | Image | Conditions | Lecture isolée, médiane / p95 | Rafales réussies | Part des routeurs joignables |
 |---|---|---|---|---|
-| Commit d5f5fa1, 21 novembre vers 7 h 30 : 1er passage, juste après le flash | 29 routeurs dont 1 adresse périmée (`0x2ebd` : ce routeur a changé d'adresse depuis la copie de la base utilisée, datée de la veille), 20 dBm, réessais herdsman, délai 10 s | 51,3 ms / 362 ms | 224 / 232 | 100 % (8 rafales sur 8 à 28 / 28) |
-| Commit d5f5fa1, passages suivants (3, enchaînés) | idem | 39,0 à 46,1 ms / 94 à 106 ms | 203, 215 et 218 / 232 | 90,6 %, 96,0 % et 97,3 % |
-| Essai écarté, 21 novembre vers 9 h 15 : d5f5fa1 + réémissions ZCL en direct vers les voisins | **dongle déplacé dans la maison : non comparable** ; base fraîche, 29 routeurs | 51 à 57 ms / 183 à 519 ms | 193, 198 et 192 / 232 | 83 à 85 % ; MAC sans ACK ×2 à ×3 : changement retiré, d5f5fa1 reflashé |
-| **Commit 666f804** (priorité routes, recent_tx 32, reroutage) | 28 routeurs joignables, 20 dBm, réessais herdsman, délai 10 s | **34,4 ms / 60,4 ms** | **224 / 224** | **100 %** (8 rafales sur 8 à 28 / 28) |
-| Commit 2f787a6 (reroutage Network Status, CCM\* optimisé) | 29 routeurs, 20 dBm, réessais herdsman, délai 10 s | 68 ms / 168 ms | 223 / 232 | 96,1 % (3 rafales sur 8 à 29 / 29) |
-| Commit 1e7b645 (store 2 × 56 Kio, CCM\* natif allégé) | idem | 65 ms / 221 ms | 221 / 232 | 95,3 % (2 rafales sur 8 à 29 / 29) |
-| Commit 72bc038 (CCM\* natif) | idem | 78 ms / 226 ms | 207 / 232 | 89,2 % |
-| Commit 57f17bc | 32 routeurs dont 4 morts, 20 dBm, réessais, 10 s | 66 ms / 218 ms | 209 / 256 | 93,3 % (209 / 224) |
-| Commit 975a2b0 (file MAC de 32) | 32 routeurs dont 4 morts, 5 dBm, sans réessai, 4 s | 74 ms / 125 ms | 103 / 160 | 73,6 % |
-| Commit 4a9e55f (AES matériel par blocs) | idem | 43 ms / 87 ms | 71 / 160 | 50,7 % |
+| Commit ffd4fa0, 21 novembre vers 7 h 30 : 1er passage, juste après le flash | 29 routeurs dont 1 adresse périmée (`0x2ebd` : ce routeur a changé d'adresse depuis la copie de la base utilisée, datée de la veille), 20 dBm, réessais herdsman, délai 10 s | 51,3 ms / 362 ms | 224 / 232 | 100 % (8 rafales sur 8 à 28 / 28) |
+| Commit ffd4fa0, passages suivants (3, enchaînés) | idem | 39,0 à 46,1 ms / 94 à 106 ms | 203, 215 et 218 / 232 | 90,6 %, 96,0 % et 97,3 % |
+| Essai écarté, 21 novembre vers 9 h 15 : ffd4fa0 + réémissions ZCL en direct vers les voisins | **dongle déplacé dans la maison : non comparable** ; base fraîche, 29 routeurs | 51 à 57 ms / 183 à 519 ms | 193, 198 et 192 / 232 | 83 à 85 % ; MAC sans ACK ×2 à ×3 : changement retiré, ffd4fa0 reflashé |
+| **Commit 9e523a4** (priorité routes, recent_tx 32, reroutage) | 28 routeurs joignables, 20 dBm, réessais herdsman, délai 10 s | **34,4 ms / 60,4 ms** | **224 / 224** | **100 %** (8 rafales sur 8 à 28 / 28) |
+| Commit a351549 (reroutage Network Status, CCM\* optimisé) | 29 routeurs, 20 dBm, réessais herdsman, délai 10 s | 68 ms / 168 ms | 223 / 232 | 96,1 % (3 rafales sur 8 à 29 / 29) |
+| Commit 0e96866 (store 2 × 56 Kio, CCM\* natif allégé) | idem | 65 ms / 221 ms | 221 / 232 | 95,3 % (2 rafales sur 8 à 29 / 29) |
+| Commit 9bbe52d (CCM\* natif) | idem | 78 ms / 226 ms | 207 / 232 | 89,2 % |
+| Commit 4f547e6 | 32 routeurs dont 4 morts, 20 dBm, réessais, 10 s | 66 ms / 218 ms | 209 / 256 | 93,3 % (209 / 224) |
+| Commit d57c7a6 (file MAC de 32) | 32 routeurs dont 4 morts, 5 dBm, sans réessai, 4 s | 74 ms / 125 ms | 103 / 160 | 73,6 % |
+| Commit b12e6d9 (AES matériel par blocs) | idem | 43 ms / 87 ms | 71 / 160 | 50,7 % |
 | Commit ed08b88 (AES logiciel) | idem | 74 ms / 95 ms | 68 / 160 | 48,6 % |
 | **Z-Stack Koenkk 20250321** | 32 routeurs dont 4 morts, 115 200 bauds, **sans réessai, 4 s** | **51 ms / 127 ms** | 140 / 160 | **100 %** (28 / 28 à chaque rafale) |
 
@@ -40,22 +40,22 @@ Lecture :
   - Découverte de route avec temporisation d'attente (`disc_fresh_for`) pour laisser aux réponses multi-sauts le temps d'arriver avant repli.
   - Table `recent_tx` portée à 32 trames et réservée aux données applicatives avec réémission graduée en cas d'absence de réponse ZCL.
   - Priorisation des `APS ACK` en tête de file MAC directe (`direct_q`).
-- **d5f5fa1 (21 novembre) est en retrait sur les rafales enchaînées :** 100 % au premier passage, puis 90,6 à 97,3 %. Les échecs sont des réponses jamais reçues, surtout sur les derniers routeurs de chaque rafale (`0x68d`, `0x5459`, `0x25a4`, `0x1331`, `0x5e32`) ; ces routeurs répondent en lecture isolée. Les réémissions par rafale sont du même ordre qu'avec 666f804 (6 à 18 contre 3 à 24). Les compteurs du dongle ne montrent rien d'anormal : 0 perte de file ZNP, 0 faute AES, pic CPU 35 %, 416 mots de pile radio libres. **Analyse (21 novembre après-midi) : la cause est radio, pas le firmware.**
+- **ffd4fa0 (21 novembre) est en retrait sur les rafales enchaînées :** 100 % au premier passage, puis 90,6 à 97,3 %. Les échecs sont des réponses jamais reçues, surtout sur les derniers routeurs de chaque rafale (`0x68d`, `0x5459`, `0x25a4`, `0x1331`, `0x5e32`) ; ces routeurs répondent en lecture isolée. Les réémissions par rafale sont du même ordre qu'avec 9e523a4 (6 à 18 contre 3 à 24). Les compteurs du dongle ne montrent rien d'anormal : 0 perte de file ZNP, 0 faute AES, pic CPU 35 %, 416 mots de pile radio libres. **Analyse (21 novembre après-midi) : la cause est radio, pas le firmware.**
   - **Au niveau MAC, les deux versions se valent :** 15 à 22 % de trames sans ACK, 84 à 106 réémissions par passage.
   - **Aucune réponse arrivée n'est jetée par le coordinateur :** 0 échec d'authentification NWK (aucune trame refusée comme rejeu), autant de doublons APS (14 à 22) et de trames remontées (262 à 318). Les réponses manquantes n'arrivent jamais.
   - **Les échecs suivent les relais :** sur 24 rafales, les routeurs joints via un moteur de volet échouent 9,2 % du temps, contre 2,7 % pour les autres. Quatre des cinq routeurs les plus touchés passent par le même volet ; ils sont aussi en fin de liste.
   - **Les deux mécanismes du firmware soupçonnés sont mis hors de cause en simulation** (suite `bursts`, section 5) : un budget de réémissions de 32 au lieu de 8, ou une route reconstruite à chaque deuxième lecture manquée, donnent les mêmes échecs au premier essai à ±1 près, pour trois relais défaillants sur quatre.
-  - **L'écart avec 666f804** s'explique par des routes qui ne passaient pas par ce volet la veille.
+  - **L'écart avec 9e523a4** s'explique par des routes qui ne passaient pas par ce volet la veille.
 - **La lecture isolée varie avec l'état du réseau,** de 43 à 78 ms selon la session. L'écart avec Koenkk (51 ms) est du même ordre que cette variation. Une comparaison serrée exige des sessions entrelacées.
 - **La durée d'une rafale n'est pas comparable :** le délai d'attente est de 10 s pour le firmware FreeRTOS et de 4 s pour Koenkk.
 
-**Par Zigbee2MQTT, en production (d5f5fa1, 21 novembre, 3 minutes après le démarrage) :** 5 rafales de lectures `get` (`state`, `position` ou `brightness`) envoyées en même temps aux 28 routeurs par MQTT, à 20 s d'intervalle. **Aucun échec dans le journal de Zigbee2MQTT pour ces 140 lectures.** 138 réponses sont publiées en moins de 12 s ; les 2 autres (deux routeurs) arrivent un peu plus tard. Médiane de 0,8 à 1,3 s par rafale, et 5 s pendant les reconfigurations de démarrage lancées par Zigbee2MQTT : la file de herdsman, qui garde 16 requêtes en vol, domine. Les seules erreurs du journal sur cette période concernent des lectures d'attributs Tuya et une reconfiguration lancées par Zigbee2MQTT, surtout vers des boutons endormis.
+**Par Zigbee2MQTT, en production (ffd4fa0, 21 novembre, 3 minutes après le démarrage) :** 5 rafales de lectures `get` (`state`, `position` ou `brightness`) envoyées en même temps aux 28 routeurs par MQTT, à 20 s d'intervalle. **Aucun échec dans le journal de Zigbee2MQTT pour ces 140 lectures.** 138 réponses sont publiées en moins de 12 s ; les 2 autres (deux routeurs) arrivent un peu plus tard. Médiane de 0,8 à 1,3 s par rafale, et 5 s pendant les reconfigurations de démarrage lancées par Zigbee2MQTT : la file de herdsman, qui garde 16 requêtes en vol, domine. Les seules erreurs du journal sur cette période concernent des lectures d'attributs Tuya et une reconfiguration lancées par Zigbee2MQTT, surtout vers des boutons endormis.
 
 **Lectures en rafale par Zigbee2MQTT, image corrigée (`238aee53`, 21 novembre, 30 s après le démarrage) :** même protocole. 22 à 27 routeurs sur 28 publient en moins de 12 s, médiane de 0,6 à 2,0 s par rafale. **Aucun échec journalisé sur les 140 lectures** : les autres réponses arrivent plus tard. Non comparable au matin : le dongle est à un autre emplacement et le réseau sortait d'environ 50 minutes sans coordinateur, donc les routes se reconstruisaient. Six minutes plus tard, réseau stabilisé : 26 à 27 sur 28 en moins de 12 s, médiane de 0,9 à 1,1 s, toujours aucun échec journalisé. Le routeur qui manque le plus souvent (`0x3db6`, joint via des moteurs de volets) répond à chaque fois environ 14 s après la requête : la première tentative est perdue, et la reprise de herdsman passe.
 
-**Lectures en rafale par Zigbee2MQTT, commit `62a7194` (21 novembre, 10 h 31, 15 s après le démarrage) :** même protocole. Première série : 21, 28, 26, 28 puis **2** sur 28 en moins de 12 s. Lors de la rafale effondrée, Zigbee2MQTT n'a journalisé **aucun échec** et 21 routeurs n'ont rien publié en 70 s. Pourtant, juste après, trois lectures isolées vers des routeurs restés muets ont répondu en 0,1 à 1,3 s. Ces requêtes n'ont donc vraisemblablement jamais été exécutées par Zigbee2MQTT ; la cause n'est pas établie. Deuxième série, 2 minutes plus tard : 24 à 28 sur 28 par rafale, médiane de 0,9 à 1,7 s, aucun échec journalisé. L'effondrement ne s'est pas reproduit.
+**Lectures en rafale par Zigbee2MQTT, commit `2f8a9f2` (21 novembre, 10 h 31, 15 s après le démarrage) :** même protocole. Première série : 21, 28, 26, 28 puis **2** sur 28 en moins de 12 s. Lors de la rafale effondrée, Zigbee2MQTT n'a journalisé **aucun échec** et 21 routeurs n'ont rien publié en 70 s. Pourtant, juste après, trois lectures isolées vers des routeurs restés muets ont répondu en 0,1 à 1,3 s. Ces requêtes n'ont donc vraisemblablement jamais été exécutées par Zigbee2MQTT ; la cause n'est pas établie. Deuxième série, 2 minutes plus tard : 24 à 28 sur 28 par rafale, médiane de 0,9 à 1,7 s, aucun échec journalisé. L'effondrement ne s'est pas reproduit.
 
-**Commandes en rafale par Zigbee2MQTT (d5f5fa1, 21 novembre) :** les 13 lumières à un seul canal sont inversées toutes ensemble, puis remises dans leur état d'origine, 2 cycles, soit 52 commandes. **2 échecs** (délai de 10 s dépassé), tous deux au premier cycle, sur deux routeurs (`0x3db6` et `0x68d`) : ce sont aussi les routeurs les plus souvent en échec au banc. Les remises en état du premier cycle ont attendu jusqu'à 13 s derrière ces délais. Médiane de 0,3 à 1,5 s par rafale. **À la fin, toutes les lumières sont dans leur état d'origine.**
+**Commandes en rafale par Zigbee2MQTT (ffd4fa0, 21 novembre) :** les 13 lumières à un seul canal sont inversées toutes ensemble, puis remises dans leur état d'origine, 2 cycles, soit 52 commandes. **2 échecs** (délai de 10 s dépassé), tous deux au premier cycle, sur deux routeurs (`0x3db6` et `0x68d`) : ce sont aussi les routeurs les plus souvent en échec au banc. Les remises en état du premier cycle ont attendu jusqu'à 13 s derrière ces délais. Médiane de 0,3 à 1,5 s par rafale. **À la fin, toutes les lumières sont dans leur état d'origine.**
 
 Données brutes : `private/perf-20261120-prod-117e5ba/bench-*/bench.json` et `private/perf-20261121-d5f5fa1*/bench.json`, hors Git. Rafales MQTT : `private/z2m-burst-20261121/`.
 
@@ -67,10 +67,10 @@ Cycles DWT pour une trame de 22 octets d'en-tête authentifié et 40 octets de c
 |---|---|---|
 | AES logiciel | 74 769 | 1,56 ms |
 | Moteur AES par blocs (DMA) et contrôle logiciel | 21 609 | 0,45 ms |
-| CCM\* natif, 72bc038 : la mesure incluait un contrôle logiciel | 8 984 | 0,19 ms |
-| CCM\* natif, 1e7b645 : banc de 16 trames, hors contrôle logiciel | 3 171 | 66 µs |
-| **CCM\* natif, 2f787a6** (en production) : banc de 16 trames, hors contrôle logiciel | **1 950** | **40,6 µs** |
-| **CCM\* natif, 2f787a6 en trafic réel**, contrôles logiciels amortis | **≈ 1 650** | ≈ 34 µs |
+| CCM\* natif, 9bbe52d : la mesure incluait un contrôle logiciel | 8 984 | 0,19 ms |
+| CCM\* natif, 0e96866 : banc de 16 trames, hors contrôle logiciel | 3 171 | 66 µs |
+| **CCM\* natif, a351549** (en production) : banc de 16 trames, hors contrôle logiciel | **1 950** | **40,6 µs** |
+| **CCM\* natif, a351549 en trafic réel**, contrôles logiciels amortis | **≈ 1 650** | ≈ 34 µs |
 | ZeroStack (publié par SMLIGHT) | 3 824 à 3 968 | ≈ 80 µs |
 | Z-Stack « stock » selon SMLIGHT (« NV vieillie ») | 532 182 | 11,1 ms |
 
@@ -78,11 +78,11 @@ Cycles DWT pour une trame de 22 octets d'en-tête authentifié et 40 octets de c
 - la copie des données pendant le traitement de l'en-tête ;
 - l'effacement des tampons par mots.
 
-**Trafic réel**, après un banc de production de 2 077 opérations natives sous 2f787a6 :
+**Trafic réel**, après un banc de production de 2 077 opérations natives sous a351549 :
 
 | Mesure | Valeur |
 |---|---|
-| Temps moyen passé dans le moteur | 1 119 cycles (contre 1 734 sous 1e7b645) |
+| Temps moyen passé dans le moteur | 1 119 cycles (contre 1 734 sous 0e96866) |
 | — préparation (clé en cache, registres IV directs) | 546 cycles (-36 %) |
 | — en-tête authentifié (AAD, mots 32-bit) | 164 cycles |
 | — données | 235 cycles |
@@ -146,7 +146,7 @@ Ce qui dépasse désormais ZeroStack :
 | Table anti-doublon des broadcasts | 32 | 30 (`MAX_BCAST`) | 40 |
 | Réessais MAC | 3 par tour, 3 tours (file de 32 trames) | 7 | non publié |
 | Store non volatil | **2 × 56 Kio** (disposition 2) | NV Z-Stack (géométrie non comparée ici) | non publié |
-| Flash occupée | 102 032 o (image `--hw-aes` 1 Mbaud de l'arbre de travail du 21 novembre, non flashée ; 96 516 o en AES logiciel ; en production, 25538e6 : 101 776 o) | 178 669 o (20240710) | non publié |
+| Flash occupée | 102 032 o (image `--hw-aes` 1 Mbaud de l'arbre de travail du 21 novembre, non flashée ; 96 516 o en AES logiciel ; en production, 316ec3c : 101 776 o) | 178 669 o (20240710) | non publié |
 | SRAM | 73 328 o statiques sur 81 920 (8 592 libres), piles et MSP comprises, **sans tas** | 42 228 o statiques + tas dynamique de 33 371 o | 88 Ko de SRAM sur CC2652P, sans précision |
 
 ## 5. Débit soutenu et appareils endormis : SIMULATION
@@ -162,7 +162,7 @@ Ce qui est modélisé :
 - **Routeurs :** 28 au total, 16 à 1 saut, 9 à 2 sauts et 3 à 3 sauts. Chacun a sa file, ses réessais MAC et NWK et sa sécurité refaite à chaque saut. Il envoie un Route Record après chaque Many-to-One, renvoie ses broadcasts deux fois et répond aux lectures en 2 à 10 ms. Il garde les trames de ses enfants endormis.
 - **Appareils endormis :** *poll* toutes les 2 s, avec attente de la trame annoncée et *polls* rapides ensuite. Après une perte de parent, ils se réassocient par le coordinateur.
 
-Médiane de 3 graines × 30 s par point. « Avant » = sources du commit `3cda4b6` ; « après » = arbre de travail du 21 novembre (d5f5fa1 et les corrections de sécurité, Touchlink et MAC de l'après-midi : identique à d5f5fa1 sur tous les scénarios sauf « parent perdu », 98,25 → 98,5 % et 6,2 → 4,8 s). Les deux tournent sur la même version du simulateur. Résultats bruts : `summary.json` et `runs/` dans le dossier `--out`.
+Médiane de 3 graines × 30 s par point. « Avant » = sources du commit `cd6f3ae` ; « après » = arbre de travail du 21 novembre (ffd4fa0 et les corrections de sécurité, Touchlink et MAC de l'après-midi : identique à ffd4fa0 sur tous les scénarios sauf « parent perdu », 98,25 → 98,5 % et 6,2 → 4,8 s). Les deux tournent sur la même version du simulateur. Résultats bruts : `summary.json` et `runs/` dans le dossier `--out`.
 
 Le 21 novembre, le modèle de *source match* est passé de 8 entrées IEEE fixes au nombre d'entrées du firmware. Avec 8 entrées, au-delà de 8 appareils en attente d'une réponse de réassociation, le simulateur n'annonçait plus la trame alors que le firmware l'aurait fait : le scénario « parent perdu » de l'après tombait à 96,5 %. Les chiffres des endormis publiés avant cette date ne sont pas comparables.
 
