@@ -21,6 +21,12 @@ const NV_FIRST = 0x0FA0;
 const SYS = 1;                 /* MT subsystem SYS */
 const READ_PERIOD_S = 300;
 const FIRST_READ_S = 30;
+/* Radio quality (frames without ACK, channel access failures): over the
+ * last RADIO_WINDOW_S, never counting the first RADIO_WARMUP_S after a
+ * restart of the dongle (routes being rebuilt, offline routers tried). */
+const RADIO_WARMUP_S = 600;
+const RADIO_WINDOW_S = 1800;
+const RADIO_MIN_FRAMES = 20;
 
 const PERF_NAMES = ['aes_sw_block_cycles', 'ccm_sw_frame_cycles', 'ccm_hw_frame_cycles', 'hw_aes_state',
     'znp_last_cycles', 'znp_max_cycles', 'rx_last_cycles', 'rx_max_cycles', 'tick_max_cycles',
@@ -165,6 +171,7 @@ class CoordinatorDiagnostics {
         this.logger = logger;
         this.timer = null;
         this.base = settings?.get?.().mqtt?.base_topic ?? 'zigbee2mqtt';
+        this.samples = [];   /* MAC transmit counters of the last reads (radio quality window) */
     }
 
     znp() {
@@ -191,6 +198,25 @@ class CoordinatorDiagnostics {
         clearTimeout(this.first);
         clearInterval(this.timer);
         this.eventBus.removeListeners(this);
+    }
+
+    /* Shares of the frames sent between the oldest read of the window taken
+     * after the warm-up and this one; null (unknown in Home Assistant) until
+     * such a read exists. Without one (Zigbee2MQTT just restarted), a dongle
+     * up for an hour or more gives its counts since boot. */
+    radioQuality(diag) {
+        const c = diag.coordinator ?? {}, up = diag.info?.uptime_s ?? 0;
+        const s = {up, frames: c.tx_frames ?? 0, no_ack: c.tx_no_ack ?? 0, busy: c.tx_busy ?? 0, retries: c.tx_retries ?? 0};
+        const last = this.samples.at(-1);
+        if (last && (up < last.up || s.frames < last.frames)) this.samples = [];   /* the dongle restarted */
+        this.samples.push(s);
+        while (this.samples.length > 1 && up - this.samples[0].up > RADIO_WINDOW_S) this.samples.shift();
+        let base = this.samples.find((x) => x !== s && x.up >= RADIO_WARMUP_S);
+        if (!base && up >= 3600) base = {up: 0, frames: 0, no_ack: 0, busy: 0, retries: 0};
+        const frames = base ? s.frames - base.frames : 0;
+        const pct = (k) => (base && frames >= RADIO_MIN_FRAMES ? Math.round(1000 * (s[k] - base[k]) / frames) / 10 : null);
+        return {window_s: base ? up - base.up : 0, frames, no_ack_pct: pct('no_ack'), channel_busy_pct: pct('busy'),
+            retries_per_100: pct('retries')};
     }
 
     /* NWK address -> friendly name (Zigbee2MQTT 2.x devicesIterator). */
@@ -231,9 +257,7 @@ class CoordinatorDiagnostics {
         }
         diag.links ??= {destinations: [], relays: [], flagged_now: 0};   /* image without the block */
         this.annotate(diag);
-        const c = diag.coordinator ?? {}, pct = (v) => (c.tx_frames ? Math.round(1000 * v / c.tx_frames) / 10 : 0);
-        /* shares of the frames sent since the last restart of the dongle */
-        diag.radio = {no_ack_pct: pct(c.tx_no_ack), channel_busy_pct: pct(c.tx_busy), retries_per_100: pct(c.tx_retries)};
+        diag.radio = this.radioQuality(diag);
         await this.mqtt.publish('bridge/coordinator_diag', JSON.stringify(diag), {clientOptions: {retain: true, qos: 0}});
         if (!this.discovered && this.settings?.get?.().homeassistant?.enabled) await this.discover(diag);
     }
@@ -273,8 +297,8 @@ class CoordinatorDiagnostics {
                     '{{ {"short": value_json.reliability.indirect_short, "ieee": value_json.reliability.indirect_ext, ' +
                     '"short_peak": value_json.reliability.indirect_short_peak, "ieee_peak": value_json.reliability.indirect_ext_peak} | tojson }}'}],
             /* 3. radio */
-            ['no_ack', 'Trames sans ACK', '{{ value_json.radio.no_ack_pct }}', '%', {state_class: 'measurement'}],
-            ['channel_busy', 'Échecs d’accès au canal', '{{ value_json.radio.channel_busy_pct }}', '%', {state_class: 'measurement'}],
+            ['no_ack', 'Trames sans ACK (30 min)', '{{ value_json.radio.no_ack_pct }}', '%', {state_class: 'measurement'}],
+            ['channel_busy', 'Échecs d’accès au canal (30 min)', '{{ value_json.radio.channel_busy_pct }}', '%', {state_class: 'measurement'}],
             /* 4. security */
             ['nwk_auth_failures', 'Échecs d’authentification NWK', '{{ value_json.coordinator.nwk_auth_failures }}', null, total],
             ['aps_auth_failures', 'Échecs d’authentification APS', '{{ value_json.coordinator.aps_auth_failures }}', null, total],
