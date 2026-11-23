@@ -41,7 +41,7 @@ L'hôte le pilote par ZNP ([znp-compat.md](znp-compat.md)). Depuis le 18 novembr
 - Un appareil qui interroge le coordinateur avec son adresse courte devient son enfant.
 - Vieillissement des enfants selon l'*End Device Timeout* demandé (256 min par défaut).
 - Enfant entendu via un routeur : il n'est plus traité comme enfant direct. `assocRemove` et `assocAdd` sont servis.
-- *Parent_annce* (Zigbee R21, ZDO `0x001F` / `0x801F`). Après une restauration du réseau, le coordinateur liste ses enfants terminaux aux routeurs, 9 par trame, 10 à 20 s après le démarrage. Un routeur qui sert l'un d'eux répond, et l'enfant cesse d'être le nôtre. Dans les 60 s qui suivent l'annonce, une telle réponse libère l'enfant ; plus tard, elle est ignorée. À l'inverse, quand un routeur redémarré liste ses enfants, ceux que le coordinateur a entendus dans les 5 dernières minutes lui sont renvoyés (*Parent_annce_rsp*).
+- *Parent_annce* (Zigbee R21, ZDO `0x001F` / `0x801F`). Après une restauration du réseau, le coordinateur liste ses enfants terminaux aux routeurs, 9 par trame, 10 à 20 s après le démarrage. Un routeur qui sert l'un d'eux répond, et l'enfant cesse d'être le nôtre. Une réponse ne libère un enfant que si elle porte le TSN d'une des trames de cette annonce, arrive dans les 60 s qui suivent et nomme un enfant que l'annonce listait. Une réponse étrangère, périmée ou nommant un enfant arrivé depuis est ignorée et comptée. À l'inverse, quand un routeur redémarré liste ses enfants, ceux que le coordinateur a entendus dans les 5 dernières minutes lui sont renvoyés (*Parent_annce_rsp*).
 
 **APS et ZCL**
 - Doublons filtrés, groupes, chiffrement APS sur demande de l'hôte.

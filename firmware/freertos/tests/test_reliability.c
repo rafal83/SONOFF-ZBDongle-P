@@ -1042,7 +1042,32 @@ int main(void) {
         }
         CHECK(listed_n == children && copies >= frames);
 
-        /* the answer: taken is served by that router now */
+        /* answers whose TSN is not one of our announce frames: ignored */
+        uint32_t ign0 = coord.stats.parent_annce_rsp_ignored;
+        const uint8_t bad_tsn[2] = {(uint8_t)(coord.parent_annce_tsn_first - 1u),
+                                    (uint8_t)(coord.parent_annce_tsn_first + coord.parent_annce_frames)};
+        CHECK(coord.parent_annce_frames == frames);
+        for (unsigned k = 0; k < 2; k++) {
+            rsp[8] = bad_tsn[k];
+            rsp[7] = ann->aps++;
+            from_dev(ann, rsp, sizeof rsp);
+            drain(0);
+        }
+        CHECK(coord.stats.parent_annce_children_released == 0 && coord.stats.parent_annce_rsp_ignored == ign0 + 2);
+        /* a child that joined after the announce, named in a matching answer: kept */
+        node_dev_t *late = &sleeper[8];
+        nwk_device_t *le = &coord.devices.dev[nwk_devices_find_ext(&coord.devices, late->ext)];
+        le->relationship = NWK_REL_CHILD;
+        le->parent_annced = false;
+        uint8_t rsp2[8 + 3 + 8] = {0x00, 0x00, 0x1F, 0x80, 0x00, 0x00, 0x00, 0, (uint8_t)(coord.parent_annce_tsn_first + 1u), 0x00, 1};
+        for (unsigned i = 0; i < 8; i++) rsp2[11 + i] = (uint8_t)(late->ext >> (8 * i));
+        rsp2[7] = ann->aps++;
+        from_dev(ann, rsp2, sizeof rsp2);
+        drain(0);
+        CHECK(le->relationship == NWK_REL_CHILD && coord.stats.parent_annce_children_released == 0);
+
+        /* the answer to our first frame: taken is served by that router now */
+        rsp[8] = coord.parent_annce_tsn_first;
         rsp[7] = ann->aps++;
         from_dev(ann, rsp, sizeof rsp);
         drain(0);
@@ -1059,7 +1084,8 @@ int main(void) {
         CHECK(coord.stats.parent_annce_children_released == 1);
         CHECK(coord.devices.dev[nwk_devices_find_ext(&coord.devices, heard->ext)].relationship == NWK_REL_CHILD);
         printf("reliability: Parent_annce: %u children announced in %u frames, 1 heard child named back, "
-               "1 released by an answer, late answer ignored\n", children, frames);
+               "answers with other TSNs ignored, child joined since kept, 1 released, late answer ignored\n",
+               children, frames);
     }
 
     /* 14. Answers lost behind a relay: reads to router[3] (behind router[2])

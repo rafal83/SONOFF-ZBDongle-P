@@ -264,7 +264,7 @@ static int diag_reliability(le_writer_t *w) {
         s->reads_unanswered, s->relays_suspected, s->parent_annce_sent, s->parent_annce_rsp_sent,
         s->parent_annce_children_released, app_coord.children, app_coord.sleepy_children,
         app_coord.indirect_short, app_coord.indirect_ext, app_coord.indirect_short_peak,
-        app_coord.indirect_ext_peak,
+        app_coord.indirect_ext_peak, s->parent_annce_rsp_ignored,
     };
     le_u8(w, (uint8_t)(sizeof values / sizeof values[0]));
     for (unsigned i = 0; i < sizeof values / sizeof values[0]; i++) le_u32(w, values[i]);

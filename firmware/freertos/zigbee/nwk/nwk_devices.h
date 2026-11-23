@@ -41,6 +41,7 @@ typedef struct {
     uint8_t lqi;                /* last link quality heard from it (one hop) */
     bool capability_guessed;    /* imported from a backup: capability not known yet */
     uint8_t ed_timeout;         /* child: End Device Timeout index requested + 1, 0 = none (default) */
+    bool parent_annced;         /* child listed in our last Parent_annce (RAM only, fits the padding) */
 } nwk_device_t;
 
 typedef struct {

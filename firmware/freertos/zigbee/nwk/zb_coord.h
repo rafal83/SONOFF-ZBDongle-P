@@ -280,6 +280,7 @@ typedef struct {
     uint32_t reads_unanswered;        /* ZCL reads still unanswered after every re-send */
     uint32_t relays_suspected;        /* relays flagged as losing frames (ZB_RELAY_*) */
     uint32_t parent_annce_sent, parent_annce_rsp_sent, parent_annce_children_released;
+    uint32_t parent_annce_rsp_ignored;   /* answers not matching our last announce (TSN, window, status) */
     uint32_t children_aged;           /* children silent beyond their End Device Timeout */
     uint32_t children_moved;          /* children heard through a router: no longer ours */
     uint32_t nwk_counters_stored, nwk_counters_restored;   /* incoming NWK counter floors (store) */
@@ -369,6 +370,7 @@ typedef struct {
     uint32_t links_version;                /* moves at every change (diagnostics snapshot) */
     bool parent_annce_pending;             /* restored network: announce our children */
     uint8_t parent_annce_tsn;
+    uint8_t parent_annce_tsn_first, parent_annce_frames;   /* TSNs of our last announce: first .. first + frames - 1 */
     uint32_t parent_annce_at_ms, parent_annce_sent_ms;
     uint32_t events_total;
     zb_frag_rx_t frag_rx[ZB_FRAG_RX_SESSIONS];

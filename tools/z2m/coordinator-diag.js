@@ -68,7 +68,7 @@ const RELIABILITY_NAMES = ['zcl_resends', 'zcl_resends_deferred', 'zcl_route_reb
     'leaves', 'update_device', 'rejoins', 'tc_rejoins', 'interpan_rx', 'interpan_tx', 'store_writes',
     'store_failures', 'reads_unanswered', 'relays_flagged', 'parent_annce_sent', 'parent_annce_rsp_sent',
     'parent_annce_children_released', 'children', 'sleepy_children', 'indirect_short', 'indirect_ext',
-    'indirect_short_peak', 'indirect_ext_peak'];
+    'indirect_short_peak', 'indirect_ext_peak', 'parent_annce_rsp_ignored'];
 const EVENT_KINDS = {1: 'leave', 2: 'update_device', 3: 'rejoin', 4: 'association', 5: 'address_conflict',
     6: 'child_aged', 7: 'child_moved', 8: 'removed', 9: 'member_learned', 10: 'aps_auth_failure'};
 const APS_KEY_ID = ['link key', 'network key', 'key-transport key', 'key-load key'];

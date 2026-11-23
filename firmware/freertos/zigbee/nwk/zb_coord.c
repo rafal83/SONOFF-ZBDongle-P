@@ -1692,12 +1692,18 @@ static bool child_heard(const zb_coord_t *c, const nwk_device_t *d) {
 static void send_parent_annce(zb_coord_t *c) {
     uint8_t p[2 + 8 * ZB_PARENT_ANNCE_MAX];
     uint8_t n = 0;
+    c->parent_annce_tsn_first = (uint8_t)(c->parent_annce_tsn + 1u);
+    c->parent_annce_frames = 0;
     for (uint16_t s = 0; s <= NWK_MAX_DEVICES; s++) {
-        const nwk_device_t *d = s < NWK_MAX_DEVICES ? &c->devices.dev[s] : 0;
-        if (d && d->ext && d->relationship == NWK_REL_CHILD && !(d->capability & NWK_CAP_FFD)) put64(p + 2 + 8 * n++, d->ext);
+        nwk_device_t *d = s < NWK_MAX_DEVICES ? &c->devices.dev[s] : 0;
+        if (d) {
+            d->parent_annced = d->ext && d->relationship == NWK_REL_CHILD && !(d->capability & NWK_CAP_FFD);
+            if (d->parent_annced) put64(p + 2 + 8 * n++, d->ext);
+        }
         if (n && (n == ZB_PARENT_ANNCE_MAX || !d)) {
             p[0] = ++c->parent_annce_tsn;
             p[1] = n;
+            c->parent_annce_frames++;
             if (zb_coord_send_aps(c, NWK_BCAST_ROUTERS, 0, 0, ZDO_PARENT_ANNCE, ZDO_PROFILE, p, (uint8_t)(2 + 8 * n), false) ==
                 ZB_SEND_OK)
                 c->stats.parent_annce_sent++;
@@ -1726,15 +1732,24 @@ static void handle_parent_annce(zb_coord_t *c, const nwk_header_t *h, const uint
         c->stats.parent_annce_rsp_sent++;
 }
 
-/* Answer to our Parent_annce: these children are served by that router. */
+/* Answer to our Parent_annce: these children are served by that router.
+ * Only an answer to one of the frames of our last announce (its TSN, within
+ * ZB_PARENT_ANNCE_RSP_MS) counts, and only for children that announce
+ * listed: a stray or stale answer, or one naming a child that joined us
+ * since, releases nothing. */
 static void handle_parent_annce_rsp(zb_coord_t *c, const nwk_header_t *h, const uint8_t *p, size_t len) {
     if (len < 3 || len < 3u + 8u * p[2]) { c->stats.aps_malformed++; return; }
-    if (!c->parent_annce_sent_ms || c->now_ms - c->parent_annce_sent_ms > ZB_PARENT_ANNCE_RSP_MS || p[1] != ZDO_SUCCESS) return;
+    if (!c->parent_annce_sent_ms || c->now_ms - c->parent_annce_sent_ms > ZB_PARENT_ANNCE_RSP_MS || p[1] != ZDO_SUCCESS ||
+        (uint8_t)(p[0] - c->parent_annce_tsn_first) >= c->parent_annce_frames) {
+        c->stats.parent_annce_rsp_ignored++;
+        return;
+    }
     for (unsigned i = 0; i < p[2]; i++) {
         uint16_t s = nwk_devices_find_ext(&c->devices, get64(p + 3 + 8 * i));
         if (s == NWK_DEVICE_NONE) continue;
         nwk_device_t *d = &c->devices.dev[s];
-        if (d->relationship != NWK_REL_CHILD) continue;
+        if (d->relationship != NWK_REL_CHILD || !d->parent_annced) continue;
+        d->parent_annced = false;
         d->relationship = NWK_REL_NONE;
         d->ed_timeout = 0;
         c->stats.children_moved++;
