@@ -72,9 +72,24 @@ int main(void) {
         CHECK(plen == sizeof msg && !memcmp(buf + off, msg, sizeof msg) && got.key_id == key_id);
         if (key_id == 1) CHECK(got.key_seq == 3);
     }
-    nwk_aux_t short_nonce = {.key_id = 0, .extended_nonce = false};
-    const uint8_t h2[2] = {0x01, 0x00};
-    CHECK(aps_seal(NWK_KEY, h2, 2, &short_nonce, h2, 2, frame, sizeof frame) == 0);
+    /* Without the extended nonce: the sender's IEEE is in the nonce only; the
+     * receiver must supply it (aps_open_from), a wrong one fails the MIC. */
+    {
+        nwk_aux_t short_nonce = {.key_id = 0, .extended_nonce = false, .frame_counter = 9, .source = 0x00124B0000ABCDEFull};
+        const uint8_t h2[2] = {0x01, 0x00}, body[3] = {0x05, 0x06, 0x07};
+        size_t m = aps_seal(NWK_KEY, h2, 2, &short_nonce, body, sizeof body, frame, sizeof frame);
+        CHECK(m == 2u + 5u + sizeof body + 4u);
+        uint8_t buf[64];
+        size_t off, plen;
+        nwk_aux_t got;
+        memcpy(buf, frame, m);
+        CHECK(!aps_open(NWK_KEY, buf, m, 2, &got, &off, &plen));                              /* IEEE unknown */
+        memcpy(buf, frame, m);
+        CHECK(!aps_open_from(NWK_KEY, buf, m, 2, 0x00124B0000ABCDEEull, &got, &off, &plen));   /* wrong IEEE */
+        memcpy(buf, frame, m);
+        CHECK(aps_open_from(NWK_KEY, buf, m, 2, 0x00124B0000ABCDEFull, &got, &off, &plen));
+        CHECK(plen == sizeof body && !memcmp(buf + off, body, sizeof body) && got.source == 0x00124B0000ABCDEFull);
+    }
 
     /* Device table and stochastic addressing. */
     nwk_devices_init(&table, 0xC0FFEEu);

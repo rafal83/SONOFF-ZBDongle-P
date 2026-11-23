@@ -23,4 +23,9 @@ size_t aps_seal(const uint8_t key[16], const uint8_t *aps_header, size_t header_
  * frame + *payload_offset. On failure the payload bytes are wiped. */
 bool aps_open(const uint8_t key[16], uint8_t *frame, size_t len, size_t header_len,
               nwk_aux_t *aux, size_t *payload_offset, size_t *payload_len);
+/* Same, for frames that may omit the sender's IEEE from the auxiliary header
+ * (no extended nonce, allowed by Zigbee PRO): `sender` (0: unknown) is then
+ * used for the nonce and copied into aux->source. */
+bool aps_open_from(const uint8_t key[16], uint8_t *frame, size_t len, size_t header_len, uint64_t sender,
+                   nwk_aux_t *aux, size_t *payload_offset, size_t *payload_len);
 #endif

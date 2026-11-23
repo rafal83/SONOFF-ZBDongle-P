@@ -20,6 +20,7 @@
 #include "frt_test.h"
 #include "zb_ccm_backend.h"
 #include "zb_coord.h"
+#include "aps_security.h"
 #include "znp.h"
 #include "nv_log.h"
 
@@ -1273,6 +1274,34 @@ int main(void) {
         CHECK(nwk_neighbor_link_status(&rt, 0x3001, 200, 0x0000, e + 3, 0, true));   /* 10 min later: reported */
         CHECK(!nwk_neighbor_link_status(&rt, 0x3001, 200, 0x0000, e + 3, 5, false)); /* a fragment proves nothing */
         printf("reliability: router dropping us from a full list not taken for a restart; real restart reported once per 10 min\n");
+    }
+
+    /* 16a. APS-secured data without the extended nonce (the sender's IEEE
+     *      not in the auxiliary header): the IEEE comes from the NWK source,
+     *      the frame is authenticated and passed up. */
+    {
+        drain(0);
+        node_dev_t *d = &router[2];
+        uint16_t slot = nwk_devices_find_ext(&coord.devices, d->ext);
+        nwk_device_t *e = &coord.devices.dev[slot];
+        bool was_unique = e->unique_key;
+        uint8_t key[16];
+        for (unsigned i = 0; i < 16; i++) key[i] = (uint8_t)(0x40 + i);
+        memcpy(e->link_key, key, 16);
+        e->unique_key = true;
+        const uint8_t hdr8[8] = {0x00, 0x01, 0x06, 0x00, 0x04, 0x01, 0x01, d->aps++};
+        const uint8_t zcl[3] = {0x18, 0x42, 0x0A};
+        nwk_aux_t aux = {.key_id = APS_KEY_DATA, .extended_nonce = false, .frame_counter = 77, .source = d->ext};
+        uint8_t aps[64];
+        size_t n = aps_seal(key, hdr8, sizeof hdr8, &aux, zcl, sizeof zcl, aps, sizeof aps);
+        CHECK(n == sizeof hdr8 + 5 + sizeof zcl + 4);   /* no IEEE in the auxiliary header */
+        uint32_t up0 = coord.stats.aps_data_up, f0 = coord.stats.aps_auth_failures;
+        from_dev(d, aps, n);
+        CHECK(coord.stats.aps_data_up == up0 + 1 && coord.stats.aps_auth_failures == f0 && up_last_tsn == 0x42);
+        e->unique_key = was_unique;
+        e->aps_in_seen = false;
+        drain(0);
+        printf("reliability: APS-secured frame without the extended nonce authenticated (IEEE from the NWK source)\n");
     }
 
     /* 16. APS authentication failure: counted, and its source in the events

@@ -1933,6 +1933,7 @@ static void send_aps_ack(zb_coord_t *c, const nwk_header_t *h, const aps_header_
     ack.cluster = a->cluster;
     ack.profile = a->profile;
     ack.counter = a->counter;
+    ack.ack_format = a->type == APS_TYPE_COMMAND;   /* command ACK: no endpoints, cluster or profile */
     if (a->extended && a->fragmentation != APS_FRAG_NONE) {
         /* Window of one block: acknowledge this block (first one = 0). */
         ack.extended = true;
@@ -2352,15 +2353,23 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
             aps_auth_failure(c, &h, aps_mac_src, 0, 0x40);
             return;
         }
-        if (aa.key_id != APS_KEY_DATA || !aa.extended_nonce) {
+        if (aa.key_id != APS_KEY_DATA) {
             aps_auth_failure(c, &h, aps_mac_src, aa.extended_nonce ? aa.source : 0, (uint8_t)(0x40 | (aa.key_id & 3u)));
             return;
         }
-        uint16_t sdev = nwk_devices_find_ext(&c->devices, aa.source);
-        aps_key = sdev == NWK_DEVICE_NONE ? 0 : link_key_for(c, aa.source);
+        /* Without the extended nonce (allowed by Zigbee PRO, sent by some
+         * devices: production, 23 November) the sender's IEEE comes from
+         * its NWK address, as Z-Stack does. */
+        uint64_t aps_src = aa.source;
+        if (!aa.extended_nonce) {
+            uint16_t s = nwk_devices_find_short(&c->devices, h.src);
+            aps_src = s == NWK_DEVICE_NONE ? 0 : c->devices.dev[s].ext;
+        }
+        uint16_t sdev = aps_src ? nwk_devices_find_ext(&c->devices, aps_src) : NWK_DEVICE_NONE;
+        aps_key = sdev == NWK_DEVICE_NONE ? 0 : link_key_for(c, aps_src);
         size_t off = 0, plen = 0;
-        if (!aps_key || !aps_open(aps_key, aps_bytes, payload_len, a.header_len, &aa, &off, &plen)) {
-            aps_auth_failure(c, &h, aps_mac_src, aa.source, (uint8_t)((aps_key ? 0x20 : 0x10) | (aa.key_id & 3u)));
+        if (!aps_key || !aps_open_from(aps_key, aps_bytes, payload_len, a.header_len, aps_src, &aa, &off, &plen)) {
+            aps_auth_failure(c, &h, aps_mac_src, aps_src, (uint8_t)((aps_key ? 0x20 : 0x10) | (aa.key_id & 3u)));
             return;
         }
         nwk_device_t *sd = &c->devices.dev[sdev];
@@ -2386,6 +2395,15 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
     }
     if (a.type == APS_TYPE_COMMAND) {
         if (a.payload_len < 1) return;
+        /* A command asking for an APS ACK gets one: without it the sender
+         * repeats it (production: every Update Device handled twice, each
+         * time a Transport Key tunnelled). Repeats are then dropped. */
+        if (a.ack_request && !nwk_is_broadcast(h.dst) && a.delivery == APS_DELIVERY_UNICAST)
+            send_aps_ack(c, &h, &a, a.security ? aps_key : 0);
+        if (!aps_fresh(c, h.src, a.counter, 0xFF00u | a.payload[0], a.payload, a.payload_len)) {
+            c->stats.aps_duplicates++;
+            return;
+        }
         uint64_t sender = aux_source;
         if (a.payload[0] == APS_CMD_REQUEST_KEY && a.security)
             handle_request_key(c, h.src, sender, a.payload, a.payload_len);

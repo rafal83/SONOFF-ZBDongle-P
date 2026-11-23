@@ -13,9 +13,8 @@ size_t aps_seal(const uint8_t key[16], const uint8_t *hdr, size_t hdr_len, const
                 const uint8_t *payload, size_t len, uint8_t *out, size_t cap) {
     if (!key || !hdr || !aux || !out || hdr_len < 2 || hdr_len > APS_MAX_FRAME || aux->key_id > 3 ||
         (len && !payload)) return 0;
-    /* The nonce needs the sender address: only extended-nonce frames are
-     * supported here (always the case for Trust Center commands). */
-    if (!aux->extended_nonce) return 0;
+    /* Without the extended nonce, aux->source is still the sender's IEEE (in
+     * the nonce), just not transmitted. */
     nwk_aux_t on_air = *aux;
     on_air.level = 0;
     uint8_t aux_bytes[14];
@@ -42,10 +41,18 @@ size_t aps_seal(const uint8_t key[16], const uint8_t *hdr, size_t hdr_len, const
 
 bool aps_open(const uint8_t key[16], uint8_t *frame, size_t len, size_t hdr_len, nwk_aux_t *aux,
               size_t *payload_offset, size_t *payload_len) {
+    return aps_open_from(key, frame, len, hdr_len, 0, aux, payload_offset, payload_len);
+}
+
+bool aps_open_from(const uint8_t key[16], uint8_t *frame, size_t len, size_t hdr_len, uint64_t sender,
+                   nwk_aux_t *aux, size_t *payload_offset, size_t *payload_len) {
     if (!key || !frame || !aux || hdr_len < 2 || hdr_len >= len || len > APS_MAX_FRAME || !(frame[0] & 0x20u))
         return false;
-    if (nwk_aux_parse(frame + hdr_len, len - hdr_len, aux) != NWK_OK || aux->level != 0 || !aux->extended_nonce)
-        return false;
+    if (nwk_aux_parse(frame + hdr_len, len - hdr_len, aux) != NWK_OK || aux->level != 0) return false;
+    if (!aux->extended_nonce) {
+        if (!sender) return false;
+        aux->source = sender;   /* the nonce's address, known from the NWK source */
+    }
     size_t offset = hdr_len + aux->len;
     if (len < offset + 4u) return false;
     size_t plen = len - offset - 4u;

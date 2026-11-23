@@ -424,6 +424,24 @@ int main(void) {
         CHECK(aps_open(ktk, inner, inner_len, ia.header_len, &iaux, &off, &plen));
         CHECK(plen == 35 && inner[off] == APS_CMD_TRANSPORT_KEY && !memcmp(inner + off + 2, key, 16));
         node_set_key(&ed, inner + off + 2);
+        /* R repeats it, re-secured, now asking for an APS ACK: acknowledged
+         * (command format), not handled twice (no second Transport Key). */
+        const uint8_t ahdr2[2] = {0x41, ahdr[1]};
+        nwk_aux_t aux2 = {.key_id = APS_KEY_DATA, .extended_nonce = true, .frame_counter = r.aps_fc++, .source = r.ext};
+        size_t n2 = aps_seal(r.tclk, ahdr2, 2, &aux2, ud, sizeof ud, aps, sizeof aps);
+        CHECK(n2);
+        uint32_t dup0 = coord.stats.aps_duplicates;
+        nwk_header_t h2 = hdr(NWK_TYPE_DATA, r.short_addr, 0x0000, 6);
+        hop_send(&r, &h2, aps, n2, 0x0000, true);
+        CHECK(coord.stats.update_device == 1 && coord.stats.tunnels_sent == 1 && coord.stats.aps_duplicates == dup0 + 1);
+        bool acked = false;
+        while (rx_frame(&r, &m)) {
+            aps_header_t k;
+            if (m.nwk.dst == r.short_addr && aps_parse(m.payload, m.len, &k) == APS_OK && k.type == APS_TYPE_ACK &&
+                k.ack_format && k.counter == ahdr[1])
+                acked = true;
+        }
+        CHECK(acked);
     }
     /* Relayed announce (security source = R): accepted; a duplicate relayed
      * by R2 is suppressed by the broadcast transaction table. */
