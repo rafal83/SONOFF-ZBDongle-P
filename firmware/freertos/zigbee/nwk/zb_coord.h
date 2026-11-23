@@ -103,6 +103,8 @@
 #define ZB_PARENT_ANNCE_MAX 9u             /* children per frame (8-byte IEEE each) */
 #define ZB_PARENT_ANNCE_RSP_MS 60000u      /* answers accepted this long after ours */
 #define ZB_CHILD_HEARD_MS 300000u          /* a child we claim was heard this recently */
+#define ZB_PARENT_ANNCE_RETRY_MS 5000u     /* a frame the MAC refused (saturation): announce again */
+#define ZB_PARENT_ANNCE_ATTEMPTS 3u
 #define ZB_LINK_STATS 8u
 #define ZB_RELAY_STATS 8u
 #define ZB_RELAY_SUSPECT_LATE 6u            /* reads that needed a re-send, at least 1 in 3 */
@@ -162,6 +164,16 @@ typedef struct {
 #define ZB_FRAG_RX_SESSIONS 2u
 #define ZB_FRAG_WAIT_MS 3000u        /* block ACK / next block timeout */
 #define ZB_FRAG_RETRIES 3u
+/* A delivered message stays known this long: a block repeated because our
+ * ACK of it was lost (the last one above all) is acknowledged again, never
+ * delivered twice (sender: apsAckWaitDuration x apscMaxFrameRetries). */
+#define ZB_FRAG_DONE_MS 10000u
+/* Incoming counter floor whose write failed: the frames stay accepted (the
+ * anti-replay state in RAM is exact), the write is retried at the next
+ * frame of that device, at most once per ZB_FLOOR_RETRY_MS over all
+ * devices. Until it succeeds, a reboot widens that device's replay window
+ * beyond 1024 (back to its last durable floor). */
+#define ZB_FLOOR_RETRY_MS 1000u
 #define ZB_UNFRAG_MAX 82u            /* larger unicasts are fragmented */
 #define ZB_STATUS_APS_NO_ACK 0xB7u
 /* Channel change: the coordinator switches after the broadcast had time to
@@ -171,7 +183,7 @@ typedef struct {
  * Switch Key broadcast went out (its first transmission uses the old key). */
 #define ZB_KEY_SWITCH_MS 2000u
 typedef struct {
-    bool used;
+    bool used, done;    /* done: delivered, kept to acknowledge repeated blocks */
     uint16_t src, cluster, profile, len;
     uint8_t counter, total, next, dst_ep, src_ep, lqi;
     uint32_t due_ms;
@@ -268,6 +280,8 @@ typedef struct {
     uint32_t rreq_suppressed;    /* Route Request not sent: destination in discovery backoff */
     uint32_t bcast_dup_unopened; /* broadcast copies recognised before decryption */
     uint32_t frag_rx_ok, frag_rx_dropped, frag_tx_ok, frag_tx_failed, frag_tx_retries;
+    uint32_t frag_rx_reacked;         /* blocks of a delivered message acknowledged again (lost ACK) */
+    uint32_t floor_store_failures;    /* incoming NWK/APS counter floor writes that failed (retried) */
     uint32_t channel_changes, key_updates, key_switches, gpdf_rx;
     uint32_t net_status_retries; /* local unicast frames re-held/retried on Network Status */
     uint32_t zcl_retx_sleepy_skipped; /* no ZCL re-send to a device known to sleep */
@@ -281,6 +295,7 @@ typedef struct {
     uint32_t relays_suspected;        /* relays flagged as losing frames (ZB_RELAY_*) */
     uint32_t parent_annce_sent, parent_annce_rsp_sent, parent_annce_children_released;
     uint32_t parent_annce_rsp_ignored;   /* answers not matching our last announce (TSN, window, status) */
+    uint32_t parent_annce_send_failures; /* announce frames refused by the MAC (saturation), retried */
     uint32_t children_aged;           /* children silent beyond their End Device Timeout */
     uint32_t children_moved;          /* children heard through a router: no longer ours */
     uint32_t nwk_counters_stored, nwk_counters_restored;   /* incoming NWK counter floors (store) */
@@ -371,7 +386,9 @@ typedef struct {
     bool parent_annce_pending;             /* restored network: announce our children */
     uint8_t parent_annce_tsn;
     uint8_t parent_annce_tsn_first, parent_annce_frames;   /* TSNs of our last announce: first .. first + frames - 1 */
+    uint8_t parent_annce_attempts;
     uint32_t parent_annce_at_ms, parent_annce_sent_ms;
+    uint32_t floor_retry_ms;               /* earliest retry of a failed floor write (0: none due) */
     uint32_t events_total;
     zb_frag_rx_t frag_rx[ZB_FRAG_RX_SESSIONS];
     zb_frag_tx_t frag_tx;                  /* one fragmented transmission at a time */

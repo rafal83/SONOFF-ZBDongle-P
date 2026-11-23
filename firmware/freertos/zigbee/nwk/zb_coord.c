@@ -140,8 +140,8 @@ static void save_network(zb_coord_t *c) {
     wipe(b, sizeof b);
 }
 
-static void save_device(zb_coord_t *c, uint16_t slot) {
-    if (!c->store || slot >= NWK_MAX_DEVICES) return;
+static bool save_device(zb_coord_t *c, uint16_t slot) {
+    if (!c->store || slot >= NWK_MAX_DEVICES) return true;
     const nwk_device_t *d = &c->devices.dev[slot];
     uint8_t b[33];
     le_writer_t w = le_writer(b, sizeof b);
@@ -152,8 +152,9 @@ static void save_device(zb_coord_t *c, uint16_t slot) {
                         (d->capability_guessed ? 0x40u : 0u) | (d->aps_in_seen ? 0x80u : 0u)));
     if (d->unique_key) { le_bytes(&w, d->link_key, 16); le_u8(&w, d->tclk_shift); }
     if (d->aps_in_seen) le_u32(&w, d->aps_in_counter);   /* last authenticated incoming APS counter */
-    (void)store_put(c, (uint16_t)(STORE_ID_DEVICE0 + slot), b, (uint16_t)w.len);
+    bool ok = store_put(c, (uint16_t)(STORE_ID_DEVICE0 + slot), b, (uint16_t)w.len);
     wipe(b, sizeof b);
+    return ok;
 }
 
 /* 32-bit tag of an IEEE address (splitmix64 finalizer: every input bit
@@ -166,16 +167,29 @@ static uint32_t ext_tag(uint64_t ext) {
     return (uint32_t)((x ^ (x >> 31)) >> 32);
 }
 
+/* Outcome of an incoming counter floor write: a failure leaves the floor
+ * pending (frames still accepted), retried at the next frame of the device
+ * once ZB_FLOOR_RETRY_MS has passed (see zb_coord.h). */
+static bool floor_retry_due(const zb_coord_t *c) {
+    return !c->floor_retry_ms || (int32_t)(c->now_ms - c->floor_retry_ms) >= 0;
+}
+static void floor_written(zb_coord_t *c, nwk_device_t *d, uint8_t which, bool ok) {
+    if (ok) { d->floor_pending &= (uint8_t)~which; return; }
+    d->floor_pending |= which;
+    c->stats.floor_store_failures++;
+    c->floor_retry_ms = (c->now_ms + ZB_FLOOR_RETRY_MS) | 1u;
+}
+
 /* Incoming NWK frame counter of the device in `slot` made durable (0 clears
  * the entry). After a reboot, frames at or below it are refused as replays:
  * the replay window is bounded by 1024, as for the APS counters (before,
  * any frame captured before the reboot could be replayed once). */
-static void nwkctr_store(zb_coord_t *c, uint16_t slot, uint8_t key_seq, uint32_t counter) {
-    if (!c->store || slot >= NWK_MAX_DEVICES) return;
+static bool nwkctr_store(zb_coord_t *c, uint16_t slot, uint8_t key_seq, uint32_t counter) {
+    if (!c->store || slot >= NWK_MAX_DEVICES) return true;
     uint8_t b[NWKCTR_LEN];
     uint16_t len = 0, id = (uint16_t)(STORE_ID_NWKCTR0 + slot / NWKCTR_PER_RECORD);
     if (!nv_log_read(c->store, id, b, sizeof b, &len) || len != NWKCTR_LEN || b[0] != NWKCTR_VERSION || b[1] != key_seq) {
-        if (!counter) return;   /* nothing to clear */
+        if (!counter) return true;   /* nothing to clear */
         memset(b, 0, sizeof b);
         b[0] = NWKCTR_VERSION;
         b[1] = key_seq;
@@ -186,7 +200,9 @@ static void nwkctr_store(zb_coord_t *c, uint16_t slot, uint8_t key_seq, uint32_t
         e[i] = (uint8_t)(tag >> (8u * i));
         e[4 + i] = (uint8_t)(counter >> (8u * i));
     }
-    if (store_put(c, id, b, NWKCTR_LEN)) c->stats.nwk_counters_stored++;
+    if (!store_put(c, id, b, NWKCTR_LEN)) return false;
+    c->stats.nwk_counters_stored++;
+    return true;
 }
 
 /* A device that (re)joined from scratch restarts its NWK frame counter: its
@@ -197,7 +213,8 @@ static void nwkctr_forget(zb_coord_t *c, uint16_t slot) {
     uint8_t a[8];
     put64(a, c->devices.dev[slot].ext);
     (void)core_security_unregister(&c->security, a);
-    nwkctr_store(c, slot, c->key_seq, 0);
+    /* not cleared: the next frame writes the new counter over it */
+    floor_written(c, &c->devices.dev[slot], NWK_FLOOR_NWK, nwkctr_store(c, slot, c->key_seq, 0));
 }
 
 /* NWK outgoing counter window: durable before any frame uses it. */
@@ -1095,11 +1112,21 @@ static void frag_rx(zb_coord_t *c, const nwk_header_t *h, const aps_header_t *a,
     zb_frag_rx_t *s = 0;
     for (unsigned i = 0; i < ZB_FRAG_RX_SESSIONS; i++)
         if (c->frag_rx[i].used && c->frag_rx[i].src == h->src && c->frag_rx[i].counter == a->counter) s = &c->frag_rx[i];
+    if (s && s->done) {
+        /* Already delivered: the sender repeats a block whose ACK it did not
+         * get. Acknowledged again, not delivered. */
+        if (a->block_number < s->total || a->fragmentation == APS_FRAG_FIRST) {
+            c->stats.frag_rx_reacked++;
+            if (a->ack_request) send_aps_ack(c, h, a, key);
+        }
+        return;
+    }
     if (a->fragmentation == APS_FRAG_FIRST) {
         if (a->block_number == 0 || a->block_number > ZB_FRAG_MAX_BLOCKS) { c->stats.frag_rx_dropped++; return; }
         if (!s) {
             for (unsigned i = 0; i < ZB_FRAG_RX_SESSIONS && !s; i++) if (!c->frag_rx[i].used) s = &c->frag_rx[i];
-            if (!s) {   /* replace the oldest session */
+            for (unsigned i = 0; i < ZB_FRAG_RX_SESSIONS && !s; i++) if (c->frag_rx[i].done) s = &c->frag_rx[i];
+            if (!s) {   /* replace the oldest session in progress */
                 s = &c->frag_rx[0];
                 for (unsigned i = 1; i < ZB_FRAG_RX_SESSIONS; i++)
                     if ((int32_t)(c->frag_rx[i].due_ms - s->due_ms) < 0) s = &c->frag_rx[i];
@@ -1134,7 +1161,8 @@ static void frag_rx(zb_coord_t *c, const nwk_header_t *h, const aps_header_t *a,
     aps_header_t whole = *a;
     whole.extended = false;
     whole.fragmentation = APS_FRAG_NONE;
-    s->used = false;
+    s->done = true;   /* kept ZB_FRAG_DONE_MS: our ACK of the last block may be lost */
+    s->due_ms = c->now_ms + ZB_FRAG_DONE_MS;
     if (!aps_fresh(c, h->src, s->counter, a->cluster, s->data, s->len)) { c->stats.aps_duplicates++; return; }
     c->stats.frag_rx_ok++;
     if (c->upper.aps_data) {
@@ -1158,7 +1186,7 @@ static void frag_service(zb_coord_t *c) {
     for (unsigned i = 0; i < ZB_FRAG_RX_SESSIONS; i++)
         if (c->frag_rx[i].used && (int32_t)(c->now_ms - c->frag_rx[i].due_ms) >= 0) {
             c->frag_rx[i].used = false;
-            c->stats.frag_rx_dropped++;
+            if (!c->frag_rx[i].done) c->stats.frag_rx_dropped++;   /* incomplete */
         }
 }
 
@@ -1692,6 +1720,7 @@ static bool child_heard(const zb_coord_t *c, const nwk_device_t *d) {
 static void send_parent_annce(zb_coord_t *c) {
     uint8_t p[2 + 8 * ZB_PARENT_ANNCE_MAX];
     uint8_t n = 0;
+    bool failed = false;
     c->parent_annce_tsn_first = (uint8_t)(c->parent_annce_tsn + 1u);
     c->parent_annce_frames = 0;
     for (uint16_t s = 0; s <= NWK_MAX_DEVICES; s++) {
@@ -1708,12 +1737,24 @@ static void send_parent_annce(zb_coord_t *c) {
             p[1] = n;
             c->parent_annce_frames++;
             if (zb_coord_send_aps(c, NWK_BCAST_ROUTERS, 0, 0, ZDO_PARENT_ANNCE, ZDO_PROFILE, p, (uint8_t)(2 + 8 * n), false) ==
-                ZB_SEND_OK)
+                ZB_SEND_OK) {
                 c->stats.parent_annce_sent++;
+            } else {
+                /* Not sent (MAC saturated): its children are not announced, an
+                 * answer carrying its TSN releases none of them. */
+                for (uint16_t k = 0; k < NWK_MAX_DEVICES; k++)
+                    if (c->devices.dev[k].parent_annce_frame == c->parent_annce_frames) c->devices.dev[k].parent_annce_frame = 0;
+                c->stats.parent_annce_send_failures++;
+                failed = true;
+            }
             n = 0;
         }
     }
     c->parent_annce_sent_ms = c->now_ms | 1u;
+    if (failed && ++c->parent_annce_attempts < ZB_PARENT_ANNCE_ATTEMPTS) {   /* the whole announce again, new TSNs */
+        c->parent_annce_pending = true;
+        c->parent_annce_at_ms = (c->now_ms + ZB_PARENT_ANNCE_RETRY_MS) | 1u;
+    }
 }
 
 /* A router lists its children after its restart: those we serve actively
@@ -2245,8 +2286,10 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
     if (h.payload[13] == c->key_seq) {
         uint32_t nwk_now = (uint32_t)h.payload[1] | (uint32_t)h.payload[2] << 8 | (uint32_t)h.payload[3] << 16 |
                            (uint32_t)h.payload[4] << 24;
-        if (!nwk_had || (nwk_prev >> NWKCTR_STEP_SHIFT) != (nwk_now >> NWKCTR_STEP_SHIFT))
-            nwkctr_store(c, dev, h.payload[13], nwk_now);
+        nwk_device_t *nd = &c->devices.dev[dev];
+        bool step = !nwk_had || (nwk_prev >> NWKCTR_STEP_SHIFT) != (nwk_now >> NWKCTR_STEP_SHIFT);
+        if (step || ((nd->floor_pending & NWK_FLOOR_NWK) && floor_retry_due(c)))
+            floor_written(c, nd, NWK_FLOOR_NWK, nwkctr_store(c, dev, h.payload[13], nwk_now));
     }
     disc_heard(c, h.src);
     if (f->src_mode == MAC_ADDR_SHORT) disc_heard(c, f->src_short);
@@ -2327,7 +2370,8 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
         sd->aps_in_seen = true;
         /* Durable every 1024 counter values: after a reboot, replays are
          * refused below the stored value (window bounded by 1024). */
-        if (persist) save_device(c, sdev);
+        if (persist || ((sd->floor_pending & NWK_FLOOR_APS) && floor_retry_due(c)))
+            floor_written(c, sd, NWK_FLOOR_APS, save_device(c, sdev));
         a.payload = aps_bytes + off;
         a.payload_len = plen;
     }
@@ -2827,6 +2871,7 @@ bool zb_coord_restore(zb_coord_t *c) {
     }
     c->restore_status = ZB_RESTORE_OK;
     c->parent_annce_pending = true;   /* restarted: announce our children */
+    c->parent_annce_attempts = 0;
     /* Re-write the counters in the current (v2, key-bound) format. */
     if (counters_len == STORE_COUNTERS_V1_LEN) (void)save_counters(c, c->nwk_reserved, c->aps_reserved);
     return true;

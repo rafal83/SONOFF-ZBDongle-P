@@ -289,15 +289,18 @@ int main(void) {
         CHECK(got_len == sizeof big && !memcmp(got, big, sizeof big));
         CHECK(coord.stats.frag_tx_ok == ok0 + 1 && coord.stats.frag_tx_retries >= 1 && !coord.frag_tx.used);
 
-        /* R -> coordinator: 150 bytes in 3 blocks, block 1 received twice:
-         * every block acknowledged, the message delivered once, intact. */
+        /* R -> coordinator: 150 bytes in 3 blocks, block 1 received twice,
+         * then the last block again (our ACK of it lost): every block
+         * acknowledged, the repeated last one too, the message delivered
+         * once, intact. */
         uint8_t msg[150];
         for (unsigned i = 0; i < sizeof msg; i++) msg[i] = (uint8_t)(255 - i);
         unsigned up0 = aps_up;
         uint32_t rx0 = coord.stats.frag_rx_ok;
         const unsigned sizes[3] = {64, 64, 22};
-        unsigned order[4] = {0, 1, 1, 2}, off[3] = {0, 64, 128};
-        for (unsigned k = 0; k < 4; k++) {
+        unsigned order[5] = {0, 1, 1, 2, 2}, off[3] = {0, 64, 128};
+        uint32_t re0 = coord.stats.frag_rx_reacked;
+        for (unsigned k = 0; k < 5; k++) {
             unsigned blk = order[k];
             aps_header_t a = {0};
             a.type = APS_TYPE_DATA; a.delivery = APS_DELIVERY_UNICAST; a.ack_request = true;
@@ -316,7 +319,7 @@ int main(void) {
                 found = m.nwk.dst == r.short_addr && aps_parse(m.payload, m.len, &ack) == APS_OK && ack.type == APS_TYPE_ACK;
             CHECK(found && ack.counter == 0x77 && ack.extended && ack.block_number == blk && (ack.ack_bitfield & 1));
         }
-        CHECK(aps_up == up0 + 1 && coord.stats.frag_rx_ok == rx0 + 1);
+        CHECK(aps_up == up0 + 1 && coord.stats.frag_rx_ok == rx0 + 1 && coord.stats.frag_rx_reacked == re0 + 1);
         CHECK(last_aps_len == sizeof msg && !memcmp(last_aps, msg, sizeof msg));
 
         /* R -> coordinator: 400 bytes in 7 blocks, longer than one ZNP frame

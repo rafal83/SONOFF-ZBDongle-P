@@ -265,6 +265,9 @@ static int diag_reliability(le_writer_t *w) {
         s->parent_annce_children_released, app_coord.children, app_coord.sleepy_children,
         app_coord.indirect_short, app_coord.indirect_ext, app_coord.indirect_short_peak,
         app_coord.indirect_ext_peak, s->parent_annce_rsp_ignored,
+        /* 34..: lost APS ACKs, counter floors, Parent_annce under saturation, long messages (23 November) */
+        s->frag_rx_reacked, s->floor_store_failures, app_coord.floors_pending, s->parent_annce_send_failures,
+        app_coord.af_rx_huge, app_coord.af_rx_huge_dropped,
     };
     le_u8(w, (uint8_t)(sizeof values / sizeof values[0]));
     for (unsigned i = 0; i < sizeof values / sizeof values[0]; i++) le_u32(w, values[i]);

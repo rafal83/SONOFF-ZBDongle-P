@@ -78,6 +78,11 @@ Ne jamais réécrire une ancienne capture complète après exploitation du rése
 | Liens qui perdent des réponses (`DIAG 0x1E`, NV `0x0FA8`) : 8 destinations et 8 premiers relais, relais signalé quand au moins une lecture sur trois passée par lui a dû être réémise ; routeurs seulement (un appareil sur pile répond à son réveil) ; routage inchangé | Oui | `test_reliability`, banc (résultats identiques à la référence ; relais signalé dans les scénarios « relais à pertes » et « routeur congestionné ») | Non |
 | Diagnostic dans Home Assistant : dernier redémarrage et plantage, voisins, enfants directs et endormis, file indirecte, trames sans ACK et échecs d'accès au canal (% sur les 30 dernières minutes, rien pendant les 10 minutes qui suivent un redémarrage du dongle), échecs d'authentification, rejeux, rejoins Trust Center, lectures sans réponse et relais signalés (avec les noms des appareils en attributs) | Oui | Maquette de l'extension sur des blocs lus du dongle | Non |
 | Échecs d'authentification APS : source, clé et raison dans le journal des événements (une fois par source et par 30 minutes) | Oui | `test_reliability` | Non |
+| Fragmentation APS en réception : un bloc renvoyé après la perte de notre ACK, dernier compris, est acquitté de nouveau pendant 10 s, sans seconde remise | Oui | `test_mesh` (dernier bloc reçu deux fois : 2 ACK, 1 message) | Non |
+| Écriture d'un plancher de compteurs entrants refusée par la Flash : trames acceptées, échec compté, plancher en attente, écrit à la trame suivante après 1 s | Oui | `test_reliability` (Flash qui refuse, puis revient ; rejeu refusé après redémarrage) | Non |
+| ZNP : deux messages longs en attente à la fois, clés distinctes, un troisième refusé et compté | Oui | `test_reliability` (deux messages dans la même milliseconde, lectures entrelacées) | Non |
+| *Parent_annce* sous saturation MAC : trame refusée sans enfant marqué, annonce renvoyée 5 s plus tard (3 essais) | Oui | `test_reliability` (MAC pleine : aucune libération, renvoi après vidage) | Non |
+| Historique sur plusieurs jours : une ligne par lecture de l'extension (`coordinator-diag-history.jsonl`, 10 jours), bilan horaire par `tools/z2m/prod_report.py` | Oui | Maquette de l'extension | Mesure de 24 à 72 h en cours |
 
 ## Mesures
 

@@ -41,11 +41,12 @@ L'hôte le pilote par ZNP ([znp-compat.md](znp-compat.md)). Depuis le 18 novembr
 - Un appareil qui interroge le coordinateur avec son adresse courte devient son enfant.
 - Vieillissement des enfants selon l'*End Device Timeout* demandé (256 min par défaut).
 - Enfant entendu via un routeur : il n'est plus traité comme enfant direct. `assocRemove` et `assocAdd` sont servis.
-- *Parent_annce* (Zigbee R21, ZDO `0x001F` / `0x801F`). Après une restauration du réseau, le coordinateur liste ses enfants terminaux aux routeurs, 9 par trame, 10 à 20 s après le démarrage. Un routeur qui sert l'un d'eux répond, et l'enfant cesse d'être le nôtre. Une réponse ne libère un enfant que si elle porte le TSN d'une des trames de cette annonce, arrive dans les 60 s qui suivent, et seulement pour les enfants listés dans la trame de ce TSN. Une réponse étrangère ou périmée est ignorée et comptée ; un enfant d'une autre trame ou arrivé depuis reste le nôtre. À l'inverse, quand un routeur redémarré liste ses enfants, ceux que le coordinateur a entendus dans les 5 dernières minutes lui sont renvoyés (*Parent_annce_rsp*).
+- *Parent_annce* (Zigbee R21, ZDO `0x001F` / `0x801F`). Après une restauration du réseau, le coordinateur liste ses enfants terminaux aux routeurs, 9 par trame, 10 à 20 s après le démarrage. Un routeur qui sert l'un d'eux répond, et l'enfant cesse d'être le nôtre. Une réponse ne libère un enfant que si elle porte le TSN d'une des trames de cette annonce, arrive dans les 60 s qui suivent, et seulement pour les enfants listés dans la trame de ce TSN. Une réponse étrangère ou périmée est ignorée et comptée ; un enfant d'une autre trame ou arrivé depuis reste le nôtre. Si la MAC refuse une trame de l'annonce (saturation), ses enfants ne sont pas marqués et l'annonce entière repart 5 s plus tard, avec de nouveaux TSN (3 essais au plus). À l'inverse, quand un routeur redémarré liste ses enfants, ceux que le coordinateur a entendus dans les 5 dernières minutes lui sont renvoyés (*Parent_annce_rsp*).
 
 **APS et ZCL**
 - Doublons filtrés, groupes, chiffrement APS sur demande de l'hôte.
 - Fragmentation : envoi jusqu'à 230 octets, réception jusqu'à 512 octets (fenêtre d'un bloc, ACK APS de chaque bloc). Un message reçu plus long qu'une trame MT est remis à l'hôte comme le fait Z-Stack (`AF_INCOMING_MSG_EXT`, puis `AF_DATA_RETRIEVE`).
+- Un message reçu reste connu 10 s après sa remise. Si l'émetteur renvoie un bloc parce que notre ACK s'est perdu, en particulier le dernier, ce bloc est acquitté de nouveau, sans que le message soit remis une deuxième fois.
 - Réémission par le coordinateur d'une lecture ZCL restée sans réponse : jusqu'à 3 fois en 4,5 s, dans un budget d'une par seconde par rafales de 8. La réponse en double qui en résulte est filtrée, et rien n'est réémis vers un appareil connu pour dormir.
 
 **Green Power et Touchlink**
@@ -56,6 +57,11 @@ L'hôte le pilote par ZNP ([znp-compat.md](znp-compat.md)). Depuis le 18 novembr
 - Journal `nv_log` sûr face aux coupures : 2 banques de 56 Kio, disposition 2.
 - Réservation durable des compteurs sortants, NWK et APS.
 - Planchers des compteurs NWK entrants (format v2, empreinte IEEE de 32 bits), écrits tous les 1 024 et effacés à chaque réappairage.
+- Écriture d'un plancher NWK ou APS refusée par la Flash :
+  - les trames restent acceptées, car l'anti-rejeu en RAM est exact ;
+  - l'échec est compté et le plancher marqué en attente ;
+  - l'écriture est retentée à la trame suivante de l'appareil, au plus une fois par seconde pour l'ensemble des appareils.
+  Tant qu'elle n'a pas réussi, un redémarrage élargit la fenêtre de rejeu de cet appareil jusqu'à son dernier plancher écrit. Le diagnostic donne le nombre d'appareils en attente.
 
 **Diagnostic**
 - Sous-système MT privé `0x1F`, et les mêmes blocs en éléments NV virtuels `0x0FA0` à `0x0FA8`, lisibles pendant que Zigbee2MQTT tourne : identité de l'image (commit), performances, maillage, coordinateur, store, UART.

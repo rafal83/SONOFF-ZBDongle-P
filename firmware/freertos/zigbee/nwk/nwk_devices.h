@@ -25,6 +25,7 @@
 #define NWK_CAP_ALLOC_ADDR 0x80u
 
 enum { NWK_REL_NONE = 0, NWK_REL_CHILD = 1, NWK_REL_NEIGHBOR = 2 };
+enum { NWK_FLOOR_NWK = 1, NWK_FLOOR_APS = 2 };
 enum { NWK_ASSOC_SUCCESS = 0x00, NWK_ASSOC_PAN_AT_CAPACITY = 0x01, NWK_ASSOC_ACCESS_DENIED = 0x02 };
 
 typedef struct {
@@ -43,6 +44,7 @@ typedef struct {
     uint8_t ed_timeout;         /* child: End Device Timeout index requested + 1, 0 = none (default) */
     uint8_t parent_annce_frame; /* child: frame of our last Parent_annce listing it, 1-based; 0 = not listed
                                  * (RAM only, fits the padding) */
+    uint8_t floor_pending;      /* incoming counter floor not made durable: NWK_FLOOR_* (RAM only) */
 } nwk_device_t;
 
 typedef struct {

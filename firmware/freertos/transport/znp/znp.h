@@ -62,6 +62,9 @@ typedef struct {
     bool (*gp_channel)(void *ctx, uint8_t channel);
 } znp_platform_t;
 
+/* Long received messages held for AF_DATA_RETRIEVE at once: two arriving
+ * close together (two reports, a report and a read answer) are both kept. */
+#define ZNP_HUGE_SLOTS 2u
 typedef struct {
     znp_platform_t p;
     zb_coord_t *coord;
@@ -71,9 +74,10 @@ typedef struct {
     uint8_t interpan_channel;          /* Touchlink (interPanCtl): channel the radio is on, 0: none */
     uint8_t interpan_ep;               /* endpoint inter-PAN frames are delivered to, 0: none */
     uint32_t interpan_last_ms;         /* last Touchlink activity (interPanCtl, inter-PAN frame) */
-    /* Received message longer than one ZNP frame, announced by AF_INCOMING_MSG_EXT
-     * and read by the host with AF_DATA_RETRIEVE (length 0 frees it). */
-    struct { bool used; uint16_t len; uint32_t timestamp; uint8_t data[ZB_FRAG_RX_MAX]; } huge;
+    /* Received messages longer than one ZNP frame, announced by
+     * AF_INCOMING_MSG_EXT and read by the host with AF_DATA_RETRIEVE (length 0
+     * frees one); keyed by a timestamp unique among the held ones. */
+    struct { bool used; uint16_t len; uint32_t timestamp; uint8_t data[ZB_FRAG_RX_MAX]; } huge[ZNP_HUGE_SLOTS];
     /* The radio could not be put back on the network channel at the end of a
      * Touchlink session: attempt number (0: radio fine) and next try. */
     uint8_t radio_recover;

@@ -167,9 +167,10 @@ static bool nor_read(void *c, uint32_t a, void *b, size_t n) {
     memcpy(b, nor + a, n);
     return true;
 }
+static bool nor_fail;   /* every program operation fails (worn or failing flash) */
 static bool nor_program(void *c, uint32_t a, const void *d, size_t n) {
     (void)c;
-    if (a + n > sizeof nor) return false;
+    if (nor_fail || a + n > sizeof nor) return false;
     for (size_t i = 0; i < n; i++) nor[a + i] &= ((const uint8_t *)d)[i];
     return true;
 }
@@ -804,6 +805,60 @@ int main(void) {
                "journal of association, Update Device and leave\n");
     }
 
+    /* 11d. Incoming counter floor that cannot be written (flash refusing
+     *      writes): the frames stay accepted (RAM anti-replay exact), the
+     *      failure is counted and the floor left pending; once the flash
+     *      works again, the next frame of the device (after
+     *      ZB_FLOOR_RETRY_MS) makes it durable, and after a reboot the
+     *      replays below it are refused. */
+    {
+        static nv_log_t log;
+        static const nv_flash_ops_t OPS = {nor_read, nor_program, nor_erase, 0};
+        memset(nor, 0xFF, sizeof nor);
+        nor_fail = false;
+        CHECK(nv_log_mount(&log, &OPS, 0, NOR_BANK, NOR_SECTOR) || nv_log_format(&log));
+        static zb_coord_t c5, c6;
+        const uint8_t epid5[8] = {5, 5, 5, 5, 5, 5, 5, 5};
+        uint32_t t5 = 1000;
+        zb_coord_init(&c5, &RADIO, &upper, 0x00124B000000BBBBull, 0x5555u, 1);
+        zb_coord_attach_store(&c5, &log);
+        zb_coord_form(&c5, PAN, 25, epid5, KEY, 0);
+        zb_coord_tick(&c5, t5);
+        node_dev_t d;
+        memset(&d, 0, sizeof d);
+        dev_init_on(&c5, &d, 0x7778, 0x00158D0000CC0005ull);
+        uint16_t slot = nwk_devices_find_ext(&c5.devices, d.ext);
+        uint8_t replay[MAC_MAX_MPDU];
+        size_t replay_len = 0;
+        uint32_t up0 = c5.stats.aps_data_up;
+        d.sec.tx_next = d.sec.tx_reserved = 1020;
+        for (unsigned i = 0; i < 12; i++) {   /* counters 1020 .. 1031 */
+            if (i == 2) nor_fail = true;       /* the flash stops writing before 1024 */
+            if (i == 9) { nor_fail = false; t5 += ZB_FLOOR_RETRY_MS + 10u; zb_coord_tick(&c5, t5); }   /* back, 1 s later */
+            uint8_t mpdu[MAC_MAX_MPDU];
+            const uint8_t aps[8 + 3] = {0x00, 0x01, 0x06, 0x00, 0x04, 0x01, 0x01, d.aps++, 0x18, (uint8_t)i, 0x0A};
+            size_t n = build_from(&d, d.short_addr, d.short_addr, NWK_TYPE_DATA, aps, sizeof aps, mpdu);
+            if (i == 6) { memcpy(replay, mpdu, n); replay_len = n; }   /* 1026 */
+            zb_coord_rx(&c5, mpdu, (uint8_t)n, 200, -50);
+            if (i == 4) {   /* 1024 crossed while the flash refuses */
+                CHECK(c5.stats.floor_store_failures == 1 && (c5.devices.dev[slot].floor_pending & NWK_FLOOR_NWK));
+            }
+            if (i == 5) CHECK(c5.stats.floor_store_failures == 1);   /* no retry before ZB_FLOOR_RETRY_MS */
+        }
+        CHECK(c5.stats.nwk_auth_failures == 0 && c5.stats.aps_data_up == up0 + 12);   /* all accepted */
+        CHECK(!(c5.devices.dev[slot].floor_pending & NWK_FLOOR_NWK));                    /* written at 1029 */
+        air_head = air_tail;
+        zb_coord_init(&c6, &RADIO, &upper, 0x00124B000000BBBBull, 0x6666u, 1);
+        zb_coord_attach_store(&c6, &log);
+        CHECK(zb_coord_restore(&c6) && c6.stats.nwk_counters_restored == 1);
+        replay[2] ^= 0x5A;   /* new MAC sequence number */
+        zb_coord_rx(&c6, replay, (uint8_t)replay_len, 200, -50);
+        CHECK(c6.stats.nwk_auth_failures == 1);   /* 1026 <= durable floor 1029: refused */
+        air_head = air_tail;
+        printf("reliability: counter floor write refused by the flash: frames accepted, failure counted, floor pending, "
+               "made durable at the first frame after recovery; replay refused after reboot\n");
+    }
+
     /* 12. Touchlink through ZNP, as herdsman drives it: interPanCtl (channel,
      *     endpoint 12), Scan Request broadcast on PAN 0xFFFF, Scan Response
      *     back as AF_INCOMING_MSG_EXT; nothing passed up once restored. */
@@ -911,15 +966,44 @@ int main(void) {
             uint8_t wrong[7] = {(uint8_t)(ts + 1), (uint8_t)(ts >> 8), (uint8_t)(ts >> 16), (uint8_t)(ts >> 24), 0, 0, 8};
             znp_handle(&zt, 0x24, 0x12, wrong, sizeof wrong);                        /* other timestamp */
             CHECK(znp_last[0] == 0x02);
-            /* a second long message while the first is not freed: refused */
+            /* a second long message, in the same millisecond, while the first
+             * is not freed: kept too, with its own key; both read intact,
+             * interleaved; a third one while both are held: refused */
             uint32_t dropped0 = zt.stats.af_rx_huge_dropped;
-            zc.upper.aps_data(zc.upper.ctx, &bn, &ba, big, 300, 150);
+            uint8_t big2[300];
+            for (unsigned i = 0; i < sizeof big2; i++) big2[i] = (uint8_t)(i * 13u + 1u);
+            znp_c1 = 0;
+            zc.upper.aps_data(zc.upper.ctx, &bn, &ba, big2, sizeof big2, 150);
+            CHECK(znp_c0 == 0x44 && znp_c1 == 0x82 && zt.stats.af_rx_huge_dropped == dropped0);
+            uint32_t ts2 = (uint32_t)znp_last[20] | (uint32_t)znp_last[21] << 8 | (uint32_t)znp_last[22] << 16 |
+                           (uint32_t)znp_last[23] << 24;
+            CHECK(ts2 != ts && znp_last[25] == (300 & 0xFF) && znp_last[26] == (300 >> 8));
+            zc.upper.aps_data(zc.upper.ctx, &bn, &ba, big, 250, 150);
             CHECK(zt.stats.af_rx_huge_dropped == dropped0 + 1);
+            uint8_t got1[400], got2[300];
+            for (unsigned index = 0; index < 400; index += 240) {   /* interleaved reads */
+                const uint32_t keys[2] = {ts, ts2};
+                const unsigned lens[2] = {400, 300};
+                uint8_t *dst[2] = {got1, got2};
+                for (unsigned k = 0; k < 2; k++) {
+                    if (index >= lens[k]) continue;
+                    unsigned chunk = lens[k] - index < 240 ? lens[k] - index : 240;
+                    uint8_t q[7] = {(uint8_t)keys[k], (uint8_t)(keys[k] >> 8), (uint8_t)(keys[k] >> 16),
+                                    (uint8_t)(keys[k] >> 24), (uint8_t)index, (uint8_t)(index >> 8), (uint8_t)chunk};
+                    znp_handle(&zt, 0x24, 0x12, q, sizeof q);
+                    CHECK(znp_last[0] == 0 && znp_last[1] == chunk);
+                    memcpy(dst[k] + index, znp_last + 2, chunk);
+                }
+            }
+            CHECK(!memcmp(got1, big, sizeof got1) && !memcmp(got2, big2, sizeof got2));
             uint8_t fin[7] = {(uint8_t)ts, (uint8_t)(ts >> 8), (uint8_t)(ts >> 16), (uint8_t)(ts >> 24), 0, 0, 0};
-            znp_handle(&zt, 0x24, 0x12, fin, sizeof fin);                            /* freed */
-            CHECK(znp_last[0] == 0 && !zt.huge.used);
+            znp_handle(&zt, 0x24, 0x12, fin, sizeof fin);                            /* first freed */
+            CHECK(znp_last[0] == 0);
             znp_handle(&zt, 0x24, 0x12, past, sizeof past);
             CHECK(znp_last[0] == 0x02);
+            uint8_t fin2[7] = {(uint8_t)ts2, (uint8_t)(ts2 >> 8), (uint8_t)(ts2 >> 16), (uint8_t)(ts2 >> 24), 0, 0, 0};
+            znp_handle(&zt, 0x24, 0x12, fin2, sizeof fin2);                          /* second freed */
+            CHECK(znp_last[0] == 0 && !zt.huge[0].used && !zt.huge[1].used);
         }
         /* a session the host abandons (no restoreChannelInterPAN) ends by itself */
         req[0] = 0x01; req[1] = 11;
@@ -1093,6 +1177,40 @@ int main(void) {
         drain(0);
         CHECK(coord.stats.parent_annce_children_released == 1);
         CHECK(coord.devices.dev[nwk_devices_find_ext(&coord.devices, heard->ext)].relationship == NWK_REL_CHILD);
+        /* Under MAC saturation: the announce frames are refused, their
+         * children unmarked (an answer with their TSN releases nobody), the
+         * failure counted and the whole announce sent again 5 s later. */
+        {
+            uint32_t sent0 = coord.stats.parent_annce_sent, fail0 = coord.stats.parent_annce_send_failures;
+            uint32_t rel0 = coord.stats.parent_annce_children_released;
+            coord.parent_annce_pending = true;
+            coord.parent_annce_at_ms = (now + 20u) | 1u;   /* due at the next ticks */
+            coord.parent_annce_attempts = 0;
+            unsigned queued = 0;
+            for (unsigned i = 0; i < 200; i++) {
+                const uint8_t zcl[3] = {0x11, (uint8_t)i, 0x0B};
+                if (zb_coord_send_aps(&coord, 0xFFFD, 1, 1, 6, 0x0104, zcl, 3, false) != ZB_SEND_OK) break;   /* broadcasts */
+                queued++;
+            }
+            CHECK(queued > 0 && queued < 200);   /* the MAC is full */
+            advance(100);   /* the announce fires while the MAC is full */
+            CHECK(coord.stats.parent_annce_sent == sent0 && coord.stats.parent_annce_send_failures == fail0 + frames);
+            unsigned marked = 0;
+            for (uint16_t k = 0; k < NWK_MAX_DEVICES; k++) marked += coord.devices.dev[k].parent_annce_frame != 0;
+            CHECK(marked == 0 && coord.parent_annce_pending);
+            rsp[8] = coord.parent_annce_tsn_first;   /* answer naming `heard` with a refused frame's TSN */
+            rsp[7] = ann->aps++;
+            from_dev(ann, rsp, sizeof rsp);
+            CHECK(coord.stats.parent_annce_children_released == rel0);
+            CHECK(coord.devices.dev[nwk_devices_find_ext(&coord.devices, heard->ext)].relationship == NWK_REL_CHILD);
+            drain(0);                                 /* the MAC empties */
+            advance(ZB_PARENT_ANNCE_RETRY_MS + 100);
+            CHECK(coord.stats.parent_annce_sent == sent0 + (children - 1u + ZB_PARENT_ANNCE_MAX - 1u) / ZB_PARENT_ANNCE_MAX &&
+                  !coord.parent_annce_pending);
+            drain(0);
+            printf("reliability: Parent_annce under MAC saturation: %u frames refused, nobody released, sent again 5 s later\n",
+                   frames);
+        }
         printf("reliability: Parent_annce: %u children announced in %u frames, 1 heard child named back, "
                "answers with other TSNs ignored, child of another frame and child joined since kept, 1 released, late answer ignored\n",
                children, frames);

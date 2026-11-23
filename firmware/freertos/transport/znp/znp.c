@@ -1026,14 +1026,24 @@ static void incoming(znp_t *z, uint16_t group, uint16_t cluster, uint16_t src, u
         /* Longer than one frame: kept, announced by AF_INCOMING_MSG_EXT with the
          * total length and no data; herdsman reads it with AF_DATA_RETRIEVE. */
         uint32_t now = z->coord->now_ms;
-        if (len > sizeof z->huge.data || (z->huge.used && now - z->huge.timestamp < ZNP_HUGE_HOLD_MS)) {
+        int slot = -1;
+        for (unsigned i = 0; i < ZNP_HUGE_SLOTS && slot < 0; i++) if (!z->huge[i].used) slot = (int)i;
+        for (unsigned i = 0; i < ZNP_HUGE_SLOTS && slot < 0; i++)   /* abandoned by the host */
+            if ((int32_t)(now - z->huge[i].timestamp) >= (int32_t)ZNP_HUGE_HOLD_MS) slot = (int)i;   /* key may be ahead */
+        if (len > sizeof z->huge[0].data || slot < 0) {
             z->stats.af_rx_huge_dropped++;
             return;
         }
-        z->huge.used = true;
-        z->huge.len = (uint16_t)len;
-        z->huge.timestamp = now;
-        copy(z->huge.data, data, len);
+        /* The timestamp is the AF_DATA_RETRIEVE key: unique among held messages. */
+        for (bool clash = true; clash;) {
+            clash = false;
+            for (unsigned i = 0; i < ZNP_HUGE_SLOTS; i++)
+                if ((int)i != slot && z->huge[i].used && z->huge[i].timestamp == now) { now++; clash = true; }
+        }
+        z->huge[slot].used = true;
+        z->huge[slot].len = (uint16_t)len;
+        z->huge[slot].timestamp = now;
+        copy(z->huge[slot].data, data, len);
         size_t k = 0;
         put16(out + k, group); k += 2;
         put16(out + k, cluster); k += 2;
@@ -1188,21 +1198,23 @@ static void handle_af(znp_t *z, uint8_t cmd, const uint8_t *in, uint8_t n) {
         uint16_t index = get16(in + 4);
         uint8_t length = in[6], out[2 + 240];
         out[1] = 0;
-        if (!z->huge.used || ts != z->huge.timestamp || length > 240u) {
+        int slot = -1;
+        for (unsigned i = 0; i < ZNP_HUGE_SLOTS; i++) if (z->huge[i].used && z->huge[i].timestamp == ts) slot = (int)i;
+        if (slot < 0 || length > 240u) {
             out[0] = 0x02;                            /* afStatus_INVALID_PARAMETER */
             srsp(z, S_AF, cmd, out, 2);
             return;
         }
         if (!length) {                                /* the host is done: freed */
-            z->huge.used = false;
+            z->huge[slot].used = false;
             out[0] = ST_SUCCESS;
             srsp(z, S_AF, cmd, out, 2);
             return;
         }
-        if ((uint32_t)index + length > z->huge.len) { out[0] = 0x02; srsp(z, S_AF, cmd, out, 2); return; }
+        if ((uint32_t)index + length > z->huge[slot].len) { out[0] = 0x02; srsp(z, S_AF, cmd, out, 2); return; }
         out[0] = ST_SUCCESS;
         out[1] = length;
-        copy(out + 2, z->huge.data + index, length);
+        copy(out + 2, z->huge[slot].data + index, length);
         srsp(z, S_AF, cmd, out, 2u + length);
         return;
     }

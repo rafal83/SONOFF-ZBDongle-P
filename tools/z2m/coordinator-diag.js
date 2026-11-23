@@ -27,6 +27,13 @@ const FIRST_READ_S = 30;
 const RADIO_WARMUP_S = 600;
 const RADIO_WINDOW_S = 1800;
 const RADIO_MIN_FRAMES = 20;
+/* History for multi-day measurements (tools/z2m/prod_report.py): one JSON
+ * line per read in <zigbee2mqtt data>/coordinator-diag-history.jsonl, the
+ * last HISTORY_KEEP lines kept (10 days at one read every 5 minutes). */
+const HISTORY_FILE = 'coordinator-diag-history.jsonl';
+const HISTORY_KEEP = 3000;
+const fs = require('node:fs');
+const path = require('node:path');
 
 const PERF_NAMES = ['aes_sw_block_cycles', 'ccm_sw_frame_cycles', 'ccm_hw_frame_cycles', 'hw_aes_state',
     'znp_last_cycles', 'znp_max_cycles', 'rx_last_cycles', 'rx_max_cycles', 'tick_max_cycles',
@@ -68,7 +75,8 @@ const RELIABILITY_NAMES = ['zcl_resends', 'zcl_resends_deferred', 'zcl_route_reb
     'leaves', 'update_device', 'rejoins', 'tc_rejoins', 'interpan_rx', 'interpan_tx', 'store_writes',
     'store_failures', 'reads_unanswered', 'relays_flagged', 'parent_annce_sent', 'parent_annce_rsp_sent',
     'parent_annce_children_released', 'children', 'sleepy_children', 'indirect_short', 'indirect_ext',
-    'indirect_short_peak', 'indirect_ext_peak', 'parent_annce_rsp_ignored'];
+    'indirect_short_peak', 'indirect_ext_peak', 'parent_annce_rsp_ignored', 'frag_rx_reacked',
+    'floor_store_failures', 'floors_pending', 'parent_annce_send_failures', 'long_messages', 'long_messages_dropped'];
 const EVENT_KINDS = {1: 'leave', 2: 'update_device', 3: 'rejoin', 4: 'association', 5: 'address_conflict',
     6: 'child_aged', 7: 'child_moved', 8: 'removed', 9: 'member_learned', 10: 'aps_auth_failure'};
 const APS_KEY_ID = ['link key', 'network key', 'key-transport key', 'key-load key'];
@@ -225,6 +233,31 @@ class CoordinatorDiagnostics {
             retries_per_100: pct('retries')};
     }
 
+    /* One history line: raw counters (rates are computed by the report, which
+     * also handles the restarts of the dongle). */
+    record(diag) {
+        const c = diag.coordinator ?? {}, m = diag.mesh ?? {}, r = diag.reliability ?? {};
+        const line = {t: diag.time, up: diag.info?.uptime_s, commit: diag.info?.source_commit,
+            tx: c.tx_frames, no_ack: c.tx_no_ack, busy: c.tx_busy, retries: c.tx_retries,
+            mtorr: m.mtorr_tx, early_mtorr: m.early_mtorr, restarts: m.neighbor_restarts, bcast_dup: m.broadcast_duplicates,
+            rejoins: m.rejoins, tc_rejoins: m.tc_rejoins, assoc: c.associations_accepted, update_device: r.update_device,
+            leaves: r.leaves, aps_auth: c.aps_auth_failures, nwk_auth: c.nwk_auth_failures, unanswered: r.reads_unanswered,
+            route_failures: m.route_failures, neighbors: m.neighbors, cpu: diag.perf?.cpu_load_permille};
+        try {
+            const dir = process.env.ZIGBEE2MQTT_DATA ?? path.join(__dirname, '..');
+            const file = path.join(dir, HISTORY_FILE);
+            fs.appendFileSync(file, JSON.stringify(line) + '\n');
+            this.historyLines = (this.historyLines ?? HISTORY_KEEP) + 1;   /* trimmed at start, then every 500 lines */
+            if (this.historyLines > HISTORY_KEEP + 500) {
+                const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
+                fs.writeFileSync(file, lines.slice(-HISTORY_KEEP).join('\n') + '\n');
+                this.historyLines = Math.min(lines.length, HISTORY_KEEP);
+            }
+        } catch (error) {
+            this.logger?.debug?.(`coordinator-diag: history not written (${error.message})`);
+        }
+    }
+
     /* NWK address -> friendly name (Zigbee2MQTT 2.x devicesIterator). */
     names() {
         const map = new Map([[0, 'Coordinator']]);
@@ -264,6 +297,7 @@ class CoordinatorDiagnostics {
         diag.links ??= {destinations: [], relays: [], flagged_now: 0};   /* image without the block */
         this.annotate(diag);
         diag.radio = this.radioQuality(diag);
+        this.record(diag);
         await this.mqtt.publish('bridge/coordinator_diag', JSON.stringify(diag), {clientOptions: {retain: true, qos: 0}});
         if (!this.discovered && this.settings?.get?.().homeassistant?.enabled) await this.discover(diag);
     }
@@ -310,11 +344,17 @@ class CoordinatorDiagnostics {
             ['aps_auth_failures', 'Échecs d’authentification APS', '{{ value_json.coordinator.aps_auth_failures }}', null, total],
             ['aps_replays', 'Rejeux APS refusés', '{{ value_json.coordinator.aps_replays }}', null, total],
             ['tc_rejoins', 'Rejoins Trust Center', '{{ value_json.reliability.tc_rejoins }}', null, total],
+            ['rejoins', 'Réassociations (Rejoin)', '{{ value_json.mesh.rejoins }}', null, total],
+            ['mtorr', 'Demandes de routes many-to-one', '{{ value_json.mesh.mtorr_tx }}', null, total],
+            ['router_restarts', 'Redémarrages de routeurs détectés', '{{ value_json.mesh.neighbor_restarts }}', null, total],
+            ['floors_pending', 'Planchers de compteurs non sauvegardés', '{{ value_json.reliability.floors_pending }}', null,
+                {state_class: 'measurement'}],
             /* 5. links */
             ['reads_unanswered', 'Lectures sans réponse', '{{ value_json.reliability.reads_unanswered }}', null,
                 {...total, ...attrs('links.destinations')}],
             ['relays_flagged', 'Relais qui perdent des réponses', '{{ value_json.links.flagged_now }}', null,
                 {state_class: 'measurement', ...attrs('links.relays')}],
+            ['long_messages_dropped', 'Messages longs perdus', '{{ value_json.reliability.long_messages_dropped }}', null, total],
             ['parent_annce_released', 'Enfants repris par un routeur (Parent_annce)',
                 '{{ value_json.reliability.parent_annce_children_released }}', null, total],
             ['store_offset', 'Store : octets écrits', '{{ value_json.store.write_offset }}', 'B',
