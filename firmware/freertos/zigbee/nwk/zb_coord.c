@@ -149,7 +149,8 @@ static bool save_device(zb_coord_t *c, uint16_t slot) {
     le_u16(&w, d->short_addr);
     le_u8(&w, d->capability);
     le_u8(&w, (uint8_t)((d->authorized ? 1u : 0u) | (d->unique_key ? 2u : 0u) | (uint8_t)(d->relationship << 2) |
-                        (d->capability_guessed ? 0x40u : 0u) | (d->aps_in_seen ? 0x80u : 0u)));
+                        (d->aps_default_key ? 0x20u : 0u) | (d->capability_guessed ? 0x40u : 0u) |
+                        (d->aps_in_seen ? 0x80u : 0u)));
     if (d->unique_key) { le_bytes(&w, d->link_key, 16); le_u8(&w, d->tclk_shift); }
     if (d->aps_in_seen) le_u32(&w, d->aps_in_counter);   /* last authenticated incoming APS counter */
     bool ok = store_put(c, (uint16_t)(STORE_ID_DEVICE0 + slot), b, (uint16_t)w.len);
@@ -244,6 +245,7 @@ static bool next_aps_counter(zb_coord_t *c, uint32_t *out) {
  * preconfigured (install code) key, else the default key if allowed. */
 static const uint8_t *link_key_for(zb_coord_t *c, uint64_t ext) {
     uint16_t slot = nwk_devices_find_ext(&c->devices, ext);
+    if (slot != NWK_DEVICE_NONE && c->devices.dev[slot].aps_default_key) return TC_DEFAULT_LINK_KEY;
     if (slot != NWK_DEVICE_NONE && c->devices.dev[slot].unique_key) return c->devices.dev[slot].link_key;
     for (unsigned i = 0; i < ZB_LINK_KEYS; i++)
         if (c->link_keys[i].used && c->link_keys[i].ext == ext) return c->link_keys[i].key;
@@ -641,6 +643,9 @@ static bool event_recent(const zb_coord_t *c, uint8_t kind, uint16_t short_addr,
     }
     return false;
 }
+
+/* Copy of an APS frame for a second check (radio task only, never reentrant). */
+static uint8_t aps_retry[MAC_MAX_PAYLOAD];
 
 static void aps_auth_failure(zb_coord_t *c, const nwk_header_t *h, uint16_t mac_src, uint64_t ext, uint8_t detail) {
     c->stats.aps_auth_failures++;
@@ -1516,6 +1521,7 @@ static void handle_verify_key(zb_coord_t *c, uint16_t src, uint64_t ext, const u
     nwk_device_t *d = &c->devices.dev[dev];
     for (unsigned i = 0; i < 16; i++) d->link_key[i] = c->pending_keys[slot].key[i];
     d->unique_key = true;
+    d->aps_default_key = false;
     d->aps_in_seen = false;
     d->tclk_shift = c->tclk_seed_valid ? c->pending_shift[slot] : 0xFF;
     wipe(&c->pending_keys[slot], sizeof c->pending_keys[slot]);
@@ -1913,6 +1919,7 @@ static void handle_update_device(zb_coord_t *c, uint16_t parent, const uint8_t *
     if (status == 1) {
         /* Fresh join: any previous unique key is gone with the device's reset. */
         d->unique_key = false;
+        d->aps_default_key = false;
         d->aps_in_seen = false;
         d->authorized = false;
         nwkctr_forget(c, slot);
@@ -2368,13 +2375,36 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
         uint16_t sdev = aps_src ? nwk_devices_find_ext(&c->devices, aps_src) : NWK_DEVICE_NONE;
         aps_key = sdev == NWK_DEVICE_NONE ? 0 : link_key_for(c, aps_src);
         size_t off = 0, plen = 0;
-        if (!aps_key || !aps_open_from(aps_key, aps_bytes, payload_len, a.header_len, aps_src, &aa, &off, &plen)) {
+        /* Legacy devices (before Zigbee 3.0) never negotiated a unique key:
+         * they secure APS with the default TC link key, while the backup
+         * imported from Z-Stack gives them a derived unique key (production,
+         * 23 November: a siren, every APS frame refused). A unique key that
+         * never authenticated a frame of the device may be replaced by the
+         * default one, once that one checks; the device is then marked. */
+        nwk_device_t *sp = sdev == NWK_DEVICE_NONE ? 0 : &c->devices.dev[sdev];
+        bool may_default = sp && sp->unique_key && !sp->aps_default_key && !sp->aps_in_seen &&
+                           payload_len <= sizeof aps_retry;
+        if (may_default) memcpy(aps_retry, aps_bytes, payload_len);   /* a failed check wipes the payload */
+        bool opened = aps_key && aps_open_from(aps_key, aps_bytes, payload_len, a.header_len, aps_src, &aa, &off, &plen);
+        bool now_default = false;
+        if (!opened && may_default) {
+            memcpy(aps_bytes, aps_retry, payload_len);
+            opened = aps_open_from(TC_DEFAULT_LINK_KEY, aps_bytes, payload_len, a.header_len, aps_src, &aa, &off, &plen);
+            if (opened) {
+                aps_key = TC_DEFAULT_LINK_KEY;
+                sp->aps_default_key = now_default = true;
+                note_event(c, ZB_EV_APS_DEFAULT_KEY, h.src, aps_src, aps_mac_src, 0);
+            }
+        }
+        if (may_default) wipe(aps_retry, sizeof aps_retry);
+        if (!opened) {
             aps_auth_failure(c, &h, aps_mac_src, aps_src, (uint8_t)((aps_key ? 0x20 : 0x10) | (aa.key_id & 3u)));
             return;
         }
+        if (aps_key == TC_DEFAULT_LINK_KEY && sp && sp->aps_default_key) c->stats.aps_default_key_rx++;
         nwk_device_t *sd = &c->devices.dev[sdev];
         if (sd->aps_in_seen && aa.frame_counter <= sd->aps_in_counter) { c->stats.aps_replays++; return; }
-        bool persist = !sd->aps_in_seen || (aa.frame_counter >> 10) != (sd->aps_in_counter >> 10);
+        bool persist = now_default || !sd->aps_in_seen || (aa.frame_counter >> 10) != (sd->aps_in_counter >> 10);
         sd->aps_in_counter = aa.frame_counter;
         sd->aps_in_seen = true;
         /* Durable every 1024 counter values: after a reboot, replays are
@@ -2855,6 +2885,7 @@ bool zb_coord_restore(zb_coord_t *c) {
         dev.unique_key = (flags & 2u) && len >= 28;
         dev.relationship = (uint8_t)((flags >> 2) & 3u);
         dev.capability_guessed = (flags & 0x40u) != 0;
+        dev.aps_default_key = (flags & 0x20u) != 0;
         if (dev.unique_key) {
             for (unsigned i = 0; i < 16; i++) dev.link_key[i] = le_get_u8(&rd);
             dev.tclk_shift = len >= 29 ? le_get_u8(&rd) : 0xFFu;

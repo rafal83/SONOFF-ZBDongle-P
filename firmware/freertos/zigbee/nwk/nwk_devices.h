@@ -45,6 +45,8 @@ typedef struct {
     uint8_t parent_annce_frame; /* child: frame of our last Parent_annce listing it, 1-based; 0 = not listed
                                  * (RAM only, fits the padding) */
     uint8_t floor_pending;      /* incoming counter floor not made durable: NWK_FLOOR_* (RAM only) */
+    bool aps_default_key;       /* secures its APS frames with the default TC link key, not with the
+                                 * unique key a backup gave it (legacy device); stored */
 } nwk_device_t;
 
 typedef struct {

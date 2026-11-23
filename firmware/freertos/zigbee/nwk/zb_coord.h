@@ -122,7 +122,8 @@ enum {
     ZB_EV_CHILD_MOVED,        /* child heard through a router; from: that router */
     ZB_EV_REMOVED,            /* device removed from the Trust Center table */
     ZB_EV_MEMBER_LEARNED,     /* unknown network member learnt from its secured frame */
-    ZB_EV_APS_AUTH_FAILURE,   /* APS-secured frame refused; detail: key id (bits 0-1), 0x10 no link key
+    ZB_EV_APS_DEFAULT_KEY = 11,  /* device found securing APS with the default TC link key (once) */
+    ZB_EV_APS_AUTH_FAILURE = 10, /* APS-secured frame refused; detail: key id (bits 0-1), 0x10 no link key
                                * for the source, 0x20 MIC check failed, 0x40 unusable security header;
                                * from: MAC source. Once per source per ZB_EV_APS_AUTH_HOLD_MS */
 };
@@ -296,6 +297,7 @@ typedef struct {
     uint32_t parent_annce_sent, parent_annce_rsp_sent, parent_annce_children_released;
     uint32_t parent_annce_rsp_ignored;   /* answers not matching our last announce (TSN, window, status) */
     uint32_t parent_annce_send_failures; /* announce frames refused by the MAC (saturation), retried */
+    uint32_t aps_default_key_rx;   /* APS frames authenticated with the default key (legacy devices) */
     uint32_t children_aged;           /* children silent beyond their End Device Timeout */
     uint32_t children_moved;          /* children heard through a router: no longer ours */
     uint32_t nwk_counters_stored, nwk_counters_restored;   /* incoming NWK counter floors (store) */

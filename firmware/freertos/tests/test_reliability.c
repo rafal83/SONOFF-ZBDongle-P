@@ -21,6 +21,7 @@
 #include "zb_ccm_backend.h"
 #include "zb_coord.h"
 #include "aps_security.h"
+#include "trust_center.h"
 #include "znp.h"
 #include "nv_log.h"
 
@@ -1302,6 +1303,52 @@ int main(void) {
         e->aps_in_seen = false;
         drain(0);
         printf("reliability: APS-secured frame without the extended nonce authenticated (IEEE from the NWK source)\n");
+    }
+
+    /* 16b. Legacy device: a unique key from the backup, never used, while
+     *      the device secures APS with the default TC link key: accepted
+     *      with the default key, marked (journal once, stored), its next
+     *      frames checked with it. A device whose unique key already
+     *      authenticated one of its frames gets no such fallback. */
+    {
+        drain(0);
+        node_dev_t *d = &router[1];
+        nwk_device_t *e = &coord.devices.dev[nwk_devices_find_ext(&coord.devices, d->ext)];
+        for (unsigned i = 0; i < 16; i++) e->link_key[i] = (uint8_t)(0x90 + i);   /* the backup's derived key */
+        e->unique_key = true;
+        e->aps_in_seen = false;
+        e->aps_default_key = false;
+        uint32_t up0 = coord.stats.aps_data_up, f0 = coord.stats.aps_auth_failures, ev0 = coord.events_total;
+        for (unsigned k = 0; k < 2; k++) {
+            const uint8_t hdr8[8] = {0x00, 0x01, 0x06, 0x00, 0x04, 0x01, 0x01, d->aps++};
+            const uint8_t zcl[3] = {0x18, (uint8_t)(0x50 + k), 0x0A};
+            nwk_aux_t aux = {.key_id = APS_KEY_DATA, .extended_nonce = true, .frame_counter = 100u + k, .source = d->ext};
+            uint8_t aps[64];
+            size_t n = aps_seal(TC_DEFAULT_LINK_KEY, hdr8, sizeof hdr8, &aux, zcl, sizeof zcl, aps, sizeof aps);
+            CHECK(n);
+            from_dev(d, aps, n);
+        }
+        CHECK(coord.stats.aps_data_up == up0 + 2 && coord.stats.aps_auth_failures == f0 && up_last_tsn == 0x51);
+        CHECK(e->aps_default_key && coord.stats.aps_default_key_rx == 2 && coord.events_total == ev0 + 1);
+        CHECK(coord.events[(coord.events_total - 1u) % ZB_EVENTS].kind == ZB_EV_APS_DEFAULT_KEY);
+        /* a device whose unique key is proven: the default key is refused */
+        node_dev_t *v = &router[2];
+        nwk_device_t *ve = &coord.devices.dev[nwk_devices_find_ext(&coord.devices, v->ext)];
+        ve->unique_key = true;
+        ve->aps_in_seen = true;
+        ve->aps_in_counter = 10;
+        ve->aps_default_key = false;
+        const uint8_t hdr8[8] = {0x00, 0x01, 0x06, 0x00, 0x04, 0x01, 0x01, v->aps++};
+        const uint8_t zcl[3] = {0x18, 0x60, 0x0A};
+        nwk_aux_t aux = {.key_id = APS_KEY_DATA, .extended_nonce = true, .frame_counter = 200, .source = v->ext};
+        uint8_t aps[64];
+        size_t n = aps_seal(TC_DEFAULT_LINK_KEY, hdr8, sizeof hdr8, &aux, zcl, sizeof zcl, aps, sizeof aps);
+        from_dev(v, aps, n);
+        CHECK(coord.stats.aps_auth_failures == f0 + 1 && !ve->aps_default_key && coord.stats.aps_data_up == up0 + 2);
+        e->unique_key = false; e->aps_default_key = false; e->aps_in_seen = false;
+        ve->unique_key = false; ve->aps_in_seen = false;
+        drain(0);
+        printf("reliability: legacy device on the default TC link key accepted and marked; proven unique key: refused\n");
     }
 
     /* 16. APS authentication failure: counted, and its source in the events
