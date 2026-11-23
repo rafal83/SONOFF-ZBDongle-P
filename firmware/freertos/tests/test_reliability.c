@@ -1058,7 +1058,7 @@ int main(void) {
         node_dev_t *late = &sleeper[8];
         nwk_device_t *le = &coord.devices.dev[nwk_devices_find_ext(&coord.devices, late->ext)];
         le->relationship = NWK_REL_CHILD;
-        le->parent_annced = false;
+        le->parent_annce_frame = 0;
         uint8_t rsp2[8 + 3 + 8] = {0x00, 0x00, 0x1F, 0x80, 0x00, 0x00, 0x00, 0, (uint8_t)(coord.parent_annce_tsn_first + 1u), 0x00, 1};
         for (unsigned i = 0; i < 8; i++) rsp2[11 + i] = (uint8_t)(late->ext >> (8 * i));
         rsp2[7] = ann->aps++;
@@ -1066,8 +1066,18 @@ int main(void) {
         drain(0);
         CHECK(le->relationship == NWK_REL_CHILD && coord.stats.parent_annce_children_released == 0);
 
-        /* the answer to our first frame: taken is served by that router now */
-        rsp[8] = coord.parent_annce_tsn_first;
+        /* a matching TSN, but taken was listed in the other frame: kept */
+        uint8_t tframe = coord.devices.dev[nwk_devices_find_ext(&coord.devices, taken->ext)].parent_annce_frame;
+        CHECK(tframe >= 1 && tframe <= frames);
+        rsp[8] = (uint8_t)(coord.parent_annce_tsn_first + (tframe == 1 ? 1u : 0u));
+        rsp[7] = ann->aps++;
+        from_dev(ann, rsp, sizeof rsp);
+        drain(0);
+        CHECK(coord.devices.dev[nwk_devices_find_ext(&coord.devices, taken->ext)].relationship == NWK_REL_CHILD &&
+              coord.stats.parent_annce_children_released == 0);
+
+        /* the answer to its own frame: taken is served by that router now */
+        rsp[8] = (uint8_t)(coord.parent_annce_tsn_first + tframe - 1u);
         rsp[7] = ann->aps++;
         from_dev(ann, rsp, sizeof rsp);
         drain(0);
@@ -1084,7 +1094,7 @@ int main(void) {
         CHECK(coord.stats.parent_annce_children_released == 1);
         CHECK(coord.devices.dev[nwk_devices_find_ext(&coord.devices, heard->ext)].relationship == NWK_REL_CHILD);
         printf("reliability: Parent_annce: %u children announced in %u frames, 1 heard child named back, "
-               "answers with other TSNs ignored, child joined since kept, 1 released, late answer ignored\n",
+               "answers with other TSNs ignored, child of another frame and child joined since kept, 1 released, late answer ignored\n",
                children, frames);
     }
 

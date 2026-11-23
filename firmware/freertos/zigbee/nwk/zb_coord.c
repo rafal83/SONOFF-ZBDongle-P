@@ -1697,8 +1697,11 @@ static void send_parent_annce(zb_coord_t *c) {
     for (uint16_t s = 0; s <= NWK_MAX_DEVICES; s++) {
         nwk_device_t *d = s < NWK_MAX_DEVICES ? &c->devices.dev[s] : 0;
         if (d) {
-            d->parent_annced = d->ext && d->relationship == NWK_REL_CHILD && !(d->capability & NWK_CAP_FFD);
-            if (d->parent_annced) put64(p + 2 + 8 * n++, d->ext);
+            d->parent_annce_frame = 0;
+            if (d->ext && d->relationship == NWK_REL_CHILD && !(d->capability & NWK_CAP_FFD)) {
+                d->parent_annce_frame = (uint8_t)(c->parent_annce_frames + 1u);   /* the frame being filled */
+                put64(p + 2 + 8 * n++, d->ext);
+            }
         }
         if (n && (n == ZB_PARENT_ANNCE_MAX || !d)) {
             p[0] = ++c->parent_annce_tsn;
@@ -1734,9 +1737,9 @@ static void handle_parent_annce(zb_coord_t *c, const nwk_header_t *h, const uint
 
 /* Answer to our Parent_annce: these children are served by that router.
  * Only an answer to one of the frames of our last announce (its TSN, within
- * ZB_PARENT_ANNCE_RSP_MS) counts, and only for children that announce
- * listed: a stray or stale answer, or one naming a child that joined us
- * since, releases nothing. */
+ * ZB_PARENT_ANNCE_RSP_MS) counts, and only for the children listed in that
+ * very frame: a stray or stale answer, one naming a child of another frame
+ * or a child that joined us since, releases nothing. */
 static void handle_parent_annce_rsp(zb_coord_t *c, const nwk_header_t *h, const uint8_t *p, size_t len) {
     if (len < 3 || len < 3u + 8u * p[2]) { c->stats.aps_malformed++; return; }
     if (!c->parent_annce_sent_ms || c->now_ms - c->parent_annce_sent_ms > ZB_PARENT_ANNCE_RSP_MS || p[1] != ZDO_SUCCESS ||
@@ -1744,12 +1747,13 @@ static void handle_parent_annce_rsp(zb_coord_t *c, const nwk_header_t *h, const 
         c->stats.parent_annce_rsp_ignored++;
         return;
     }
+    uint8_t frame = (uint8_t)(p[0] - c->parent_annce_tsn_first + 1u);
     for (unsigned i = 0; i < p[2]; i++) {
         uint16_t s = nwk_devices_find_ext(&c->devices, get64(p + 3 + 8 * i));
         if (s == NWK_DEVICE_NONE) continue;
         nwk_device_t *d = &c->devices.dev[s];
-        if (d->relationship != NWK_REL_CHILD || !d->parent_annced) continue;
-        d->parent_annced = false;
+        if (d->relationship != NWK_REL_CHILD || d->parent_annce_frame != frame) continue;
+        d->parent_annce_frame = 0;
         d->relationship = NWK_REL_NONE;
         d->ed_timeout = 0;
         c->stats.children_moved++;
