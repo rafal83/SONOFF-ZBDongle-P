@@ -50,7 +50,7 @@ Ne jamais réécrire une ancienne capture complète après exploitation du rése
 | Réparation de routes : relais en échec, voisin retiré, *Network Status*, MTORR anticipé (différé s'il est limité), vieillissement | Oui | `test_mesh_scale` | Non |
 | Congestion : échecs CSMA remontés sans casser les routes | Oui | `test_mesh_scale` phase 7 | Non |
 | Saturation des files, tempête de broadcasts | Oui | `test_mesh_scale` phases 8 et 9 | Non |
-| Redémarrage d'un routeur voisin détecté par *Link Status* | Oui | `test_mesh_scale` phase 10 (reprise en 1 s au lieu de 119 s) | Non |
+| Redémarrage d'un routeur voisin détecté par *Link Status* : liste complète sans le coordinateur **et** réduite à moins de la moitié de la précédente, une fois par routeur et par 10 minutes | Oui | `test_mesh_scale` phase 10 (reprise en 1 s au lieu de 119 s), `test_reliability` (routeur qui retire le coordinateur d'une liste pleine : pas de redémarrage) | Non (avant la condition sur la taille de la liste : 94 faux redémarrages par heure en production) |
 | *Route Request*/*Reply*, relais unicast et broadcast avec *passive ACK*, conflits d'adresses | Oui | `test_mesh`, `test_mesh_scale` | Non |
 | *Update Device* et tunnel APS | Oui | `test_mesh` | Non |
 | Appareils endormis : *poll*, quotas, expiration, copies de broadcast, *End Device Timeout* | Oui | `test_sleepy` | Observé en production (capteurs sur pile entendus) ; pas de mesure dédiée |
@@ -75,8 +75,9 @@ Ne jamais réécrire une ancienne capture complète après exploitation du rése
 | Retour arrière `rollback` sans régression de compteur ; `restore` refusé après exploitation | Oui | Tests Python (store écrit par le code C) | **Non** : jamais exécuté |
 | Mesures embarquées (`DIAG 0x1B`, `0x18`, `0x19` ; `freertos_perf.py --interval`) | Oui | — | **Oui** : lues en production par l'extension Zigbee2MQTT |
 | *Parent_annce* (R21) : enfants terminaux annoncés aux routeurs après une restauration (9 par trame, 10 à 20 s après le démarrage), enfant libéré par une réponse dans les 60 s ; liste d'un routeur redémarré : enfants entendus dans les 5 dernières minutes renvoyés (*Parent_annce_rsp*) | Oui | `test_reliability` (17 enfants en 2 trames, réponse, libération, réponse tardive ignorée) | Non |
-| Liens qui perdent des réponses (`DIAG 0x1E`, NV `0x0FA8`) : 8 destinations et 8 premiers relais, relais signalé quand au moins une lecture sur trois passée par lui a dû être réémise ; routage inchangé | Oui | `test_reliability`, banc (résultats identiques à la référence ; relais signalé dans les scénarios « relais à pertes » et « routeur congestionné ») | Non |
+| Liens qui perdent des réponses (`DIAG 0x1E`, NV `0x0FA8`) : 8 destinations et 8 premiers relais, relais signalé quand au moins une lecture sur trois passée par lui a dû être réémise ; routeurs seulement (un appareil sur pile répond à son réveil) ; routage inchangé | Oui | `test_reliability`, banc (résultats identiques à la référence ; relais signalé dans les scénarios « relais à pertes » et « routeur congestionné ») | Non |
 | Diagnostic dans Home Assistant : dernier redémarrage et plantage, voisins, enfants directs et endormis, file indirecte, trames sans ACK et échecs d'accès au canal (% sur les 30 dernières minutes, rien pendant les 10 minutes qui suivent un redémarrage du dongle), échecs d'authentification, rejeux, rejoins Trust Center, lectures sans réponse et relais signalés (avec les noms des appareils en attributs) | Oui | Maquette de l'extension sur des blocs lus du dongle | Non |
+| Échecs d'authentification APS : source, clé et raison dans le journal des événements (une fois par source et par 30 minutes) | Oui | `test_reliability` | Non |
 
 ## Mesures
 

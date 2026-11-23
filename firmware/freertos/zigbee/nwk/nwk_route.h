@@ -20,10 +20,13 @@
 #define NWK_BTT_SIZE 32u
 #define NWK_BTT_MS 9000u                 /* nwkBroadcastDeliveryTime */
 #define NWK_ROUTER_AGE_LIMIT 3u          /* link status periods without news */
+#define NWK_RESTART_HOLD 40u             /* link status periods (10 min) between two restarts of a neighbour */
 
 typedef struct {
     uint16_t addr;
     uint8_t in_cost, out_cost, age, lqi, failures;   /* failures: consecutive MAC failures */
+    uint8_t last_count;     /* entries of its last complete Link Status */
+    uint8_t restart_hold;   /* link status periods before another restart can be reported */
     bool used;
 } nwk_neighbor_t;
 

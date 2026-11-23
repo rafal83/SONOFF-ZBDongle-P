@@ -32,6 +32,7 @@ L'hôte le pilote par ZNP ([znp-compat.md](znp-compat.md)). Depuis le 18 novembr
 
 **Maillage**
 - *Link Status* toutes les 15 s, *many-to-one* périodique et anticipé, routage par la source.
+- Redémarrage d'un routeur voisin. Il est reconnu quand le routeur envoie un *Link Status* complet qui ne cite plus le coordinateur, alors que le précédent le citait, et que sa liste est réduite à moins de la moitié de la précédente (table perdue). Le coordinateur relance alors aussitôt une demande *many-to-one*. Un même routeur n'est pas compté deux fois en 10 minutes. Sans la condition sur la taille de la liste, les routeurs réels, qui retirent parfois le coordinateur d'une table pleine, donnaient environ 94 faux redémarrages par heure en production.
 - *Route Request* et *Route Reply* émises, reçues et relayées ; relais unicast et broadcast ; *Network Status* ; conflits d'adresses ; départs (*Leave*).
 - Changement de canal (`mgmtNwkUpdateReq`) : diffusion, puis bascule 10 s plus tard.
 
@@ -58,8 +59,8 @@ L'hôte le pilote par ZNP ([znp-compat.md](znp-compat.md)). Depuis le 18 novembr
 
 **Diagnostic**
 - Sous-système MT privé `0x1F`, et les mêmes blocs en éléments NV virtuels `0x0FA0` à `0x0FA8`, lisibles pendant que Zigbee2MQTT tourne : identité de l'image (commit), performances, maillage, coordinateur, store, UART.
-- Liens qui perdent des réponses (`DIAG 0x1E`, NV `0x0FA8`). Le bloc liste les 8 destinations dont des lectures ZCL restent sans réponse après toutes leurs réémissions, avec le premier relais de leur route. Il liste aussi 8 relais, avec le nombre de lectures passées par eux qui ont dû être réémises. Un relais est signalé pendant 10 min dès que 6 lectures au moins, et au moins une sur trois, ont dû être réémises. Le relais est noté au premier envoi de chaque lecture.
-- Journal des 8 derniers événements réseau : départs, *Update Device*, réassociations, associations, conflits, enfants vieillis ou déplacés, retraits.
+- Liens qui perdent des réponses (`DIAG 0x1E`, NV `0x0FA8`). Le bloc liste, parmi les routeurs (voisins, relais de routes connues ou capacité connue), les 8 destinations dont des lectures ZCL restent sans réponse après toutes leurs réémissions, avec le premier relais de leur route. Il liste aussi 8 relais, avec le nombre de lectures passées par eux qui ont dû être réémises. Un relais est signalé pendant 10 min dès que 6 lectures au moins, et au moins une sur trois, ont dû être réémises. Le relais est noté au premier envoi de chaque lecture.
+- Journal des 8 derniers événements réseau : départs, *Update Device*, réassociations, associations, conflits, enfants vieillis ou déplacés, retraits, échecs d'authentification APS. Pour ces derniers, le journal note la source, la clé utilisée et la raison (pas de clé de lien, MIC faux ou en-tête refusé), une fois par source et par 30 minutes.
 - Compteurs de fiabilité, enfants directs et endormis, trames en file indirecte (actuelles et pic). Lecture par l'extension Zigbee2MQTT [`tools/z2m/coordinator-diag.js`](../../tools/z2m/coordinator-diag.js).
 
 ## Limites

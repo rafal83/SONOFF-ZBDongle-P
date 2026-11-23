@@ -1096,6 +1096,57 @@ int main(void) {
                (unsigned)ZB_RELAY_SUSPECT_LATE);
     }
 
+    /* 15. Router restart seen in Link Status: a router that drops us from a
+     *     list of the same size did not restart (production: 94 false
+     *     restarts an hour); one whose list shrank to less than half did;
+     *     the same router is not reported again within NWK_RESTART_HOLD. */
+    {
+        static nwk_routes_t rt;
+        nwk_routes_init(&rt);
+        uint8_t e[3 * 6];
+        for (unsigned i = 0; i < 6; i++) { e[3 * i] = (uint8_t)(0x10 + i); e[3 * i + 1] = 0x30; e[3 * i + 2] = 0x11; }
+        e[0] = 0x00; e[1] = 0x00;                                         /* entry 0: us (0x0000) */
+        CHECK(!nwk_neighbor_link_status(&rt, 0x3001, 200, 0x0000, e, 6, true));   /* lists us among 6 */
+        CHECK(!nwk_neighbor_link_status(&rt, 0x3001, 200, 0x0000, e + 3, 5, true)); /* 5 others: table churn */
+        CHECK(!nwk_neighbor_link_status(&rt, 0x3001, 200, 0x0000, e, 6, true));   /* back */
+        CHECK(nwk_neighbor_link_status(&rt, 0x3001, 200, 0x0000, e + 3, 1, true));  /* 1 of 6: restarted */
+        CHECK(!nwk_neighbor_link_status(&rt, 0x3001, 200, 0x0000, e, 6, true));
+        CHECK(!nwk_neighbor_link_status(&rt, 0x3001, 200, 0x0000, e + 3, 0, true));  /* again at once: held */
+        for (unsigned i = 0; i < NWK_RESTART_HOLD; i++) {
+            nwk_neighbors_age(&rt);
+            CHECK(!nwk_neighbor_link_status(&rt, 0x3001, 200, 0x0000, e, 6, true));   /* keeps it alive */
+        }
+        CHECK(nwk_neighbor_link_status(&rt, 0x3001, 200, 0x0000, e + 3, 0, true));   /* 10 min later: reported */
+        CHECK(!nwk_neighbor_link_status(&rt, 0x3001, 200, 0x0000, e + 3, 5, false)); /* a fragment proves nothing */
+        printf("reliability: router dropping us from a full list not taken for a restart; real restart reported once per 10 min\n");
+    }
+
+    /* 16. APS authentication failure: counted, and its source in the events
+     *     journal (detail: key id 1 = network key, 0x40 header refused),
+     *     once per source per ZB_EV_APS_AUTH_HOLD_MS. */
+    {
+        drain(0);
+        node_dev_t *d = &router[0];
+        uint8_t aps[8 + 1 + 4 + 8 + 3 + 4] = {0x20, 0x01, 0x06, 0x00, 0x04, 0x01, 0x01, 0, 0x28, 1, 0, 0, 0};
+        for (unsigned i = 0; i < 8; i++) aps[13 + i] = (uint8_t)(d->ext >> (8 * i));
+        aps[21] = 0x18; aps[22] = 0x01; aps[23] = 0x0A;
+        uint32_t f0 = coord.stats.aps_auth_failures, ev0 = coord.events_total;
+        aps[7] = d->aps++;
+        from_dev(d, aps, sizeof aps);
+        CHECK(coord.stats.aps_auth_failures == f0 + 1 && coord.events_total == ev0 + 1);
+        const zb_event_t *ev = &coord.events[(coord.events_total - 1u) % ZB_EVENTS];
+        uint64_t ext = 0;
+        for (unsigned i = 0; i < 8; i++) ext |= (uint64_t)ev->ext[i] << (8 * i);
+        CHECK(ev->kind == ZB_EV_APS_AUTH_FAILURE && ev->detail == 0x41 && ev->short_addr == d->short_addr &&
+              ev->from == d->short_addr && ext == d->ext);
+        aps[7] = d->aps++;
+        aps[9] = 2;   /* next frame counter */
+        from_dev(d, aps, sizeof aps);
+        CHECK(coord.stats.aps_auth_failures == f0 + 2 && coord.events_total == ev0 + 1);   /* journal: once */
+        drain(0);
+        printf("reliability: APS authentication failure counted, source journaled once (key id, reason)\n");
+    }
+
     /* 8. Native CCM* rejections: a flood of forged frames is re-verified in
      *    software within the budget only; an engine that then rejects
      *    genuine frames is still caught (audit) and abandoned. */

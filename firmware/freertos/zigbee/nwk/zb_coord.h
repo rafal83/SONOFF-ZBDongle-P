@@ -120,7 +120,11 @@ enum {
     ZB_EV_CHILD_MOVED,        /* child heard through a router; from: that router */
     ZB_EV_REMOVED,            /* device removed from the Trust Center table */
     ZB_EV_MEMBER_LEARNED,     /* unknown network member learnt from its secured frame */
+    ZB_EV_APS_AUTH_FAILURE,   /* APS-secured frame refused; detail: key id (bits 0-1), 0x10 no link key
+                               * for the source, 0x20 MIC check failed, 0x40 unusable security header;
+                               * from: MAC source. Once per source per ZB_EV_APS_AUTH_HOLD_MS */
 };
+#define ZB_EV_APS_AUTH_HOLD_MS 1800000u
 typedef struct {
     uint32_t ms;
     uint8_t ext[8];                  /* IEEE, little endian (0: unknown) */
@@ -290,6 +294,8 @@ typedef struct {
     uint16_t dst, via;                 /* via: first hop of the first send (link statistics) */
     uint32_t sent_ms;
     bool used, secured, expects_reply, answered;   /* answered: kept to drop a second answer */
+    /* answer_cmd: command of the answer once answered; before that, 1 once
+     * the deferral of the pending re-send was counted (zcl_retx_deferred). */
 } zb_recent_tx_t;
 
 typedef struct {

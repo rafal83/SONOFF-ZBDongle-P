@@ -65,15 +65,25 @@ bool nwk_neighbor_link_status(nwk_routes_t *t, uint16_t addr, uint8_t lqi, uint1
         const uint8_t *e = entries + 3u * i;
         if ((uint16_t)(e[0] | (e[1] << 8)) == self) { now = e[2] & 0x07u; listed = true; }   /* its incoming = our outgoing */
     }
-    /* Only a complete list (single frame) proves we are absent from it. */
+    /* Only a complete list (single frame) proves we are absent from it. A
+     * router that knew us and drops us did not necessarily restart: real
+     * routers leave the coordinator out of a full or aging table now and
+     * then (production, 22 November: 94 such "restarts" an hour over 28
+     * routers, each one a network-wide many-to-one request). A restarted
+     * router lost its table: its list is also less than half as long as
+     * before. Reported once per neighbour per NWK_RESTART_HOLD. */
     if (listed || complete_list) n->out_cost = now;
-    return complete_list && !listed && before != 0;   /* it knew us and forgot us: it restarted */
+    bool restarted = complete_list && !listed && before != 0 && 2u * count < n->last_count && !n->restart_hold;
+    if (complete_list) n->last_count = (uint8_t)(count > 0xFFu ? 0xFFu : count);
+    if (restarted) n->restart_hold = NWK_RESTART_HOLD;
+    return restarted;
 }
 
 void nwk_neighbors_age(nwk_routes_t *t) {
     for (unsigned i = 0; i < NWK_NEIGHBORS; i++) {
         nwk_neighbor_t *n = &t->neighbors[i];
         if (!n->used) continue;
+        if (n->restart_hold) n->restart_hold--;
         if (++n->age > NWK_ROUTER_AGE_LIMIT) { n->used = false; n->out_cost = 0; }
     }
 }

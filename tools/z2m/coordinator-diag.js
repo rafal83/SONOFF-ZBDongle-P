@@ -70,7 +70,8 @@ const RELIABILITY_NAMES = ['zcl_resends', 'zcl_resends_deferred', 'zcl_route_reb
     'parent_annce_children_released', 'children', 'sleepy_children', 'indirect_short', 'indirect_ext',
     'indirect_short_peak', 'indirect_ext_peak'];
 const EVENT_KINDS = {1: 'leave', 2: 'update_device', 3: 'rejoin', 4: 'association', 5: 'address_conflict',
-    6: 'child_aged', 7: 'child_moved', 8: 'removed', 9: 'member_learned'};
+    6: 'child_aged', 7: 'child_moved', 8: 'removed', 9: 'member_learned', 10: 'aps_auth_failure'};
+const APS_KEY_ID = ['link key', 'network key', 'key-transport key', 'key-load key'];
 const STORE_STATUS = {0: 'mounted', 1: 'formatted (was blank)', 2: 'CORRUPT', 3: 'I/O error', 4: 'bad parameters',
     5: 'not mounted', 6: 'migrated (layout 1 -> 2)'};
 const RESET_SOURCE = {0: 'power_on', 1: 'reset_pin', 2: 'vdds_brownout', 3: 'vdd_brownout', 4: 'vddr_brownout',
@@ -109,8 +110,13 @@ function store(b) {
 function events(b) {
     const total = b.readUInt32LE(1), n = b[5], list = [];
     for (let i = 0, k = 6; i < n && k + 18 <= b.length; i++, k += 18) {
-        list.push({age_s: Math.round(b.readUInt32LE(k) / 1000), kind: EVENT_KINDS[b[k + 4]] ?? b[k + 4], detail: b[k + 5],
-            nwk: hex16(b.readUInt16LE(k + 6)), from: hex16(b.readUInt16LE(k + 8)), ieee: ieee(b.subarray(k + 10, k + 18))});
+        const e = {age_s: Math.round(b.readUInt32LE(k) / 1000), kind: EVENT_KINDS[b[k + 4]] ?? b[k + 4], detail: b[k + 5],
+            nwk: hex16(b.readUInt16LE(k + 6)), from: hex16(b.readUInt16LE(k + 8)), ieee: ieee(b.subarray(k + 10, k + 18))};
+        if (e.kind === 'aps_auth_failure') {   /* detail: key id, reason */
+            e.key = APS_KEY_ID[e.detail & 3];
+            e.reason = e.detail & 0x40 ? 'security header refused' : e.detail & 0x10 ? 'no link key for the source' : 'MIC check failed';
+        }
+        list.push(e);
     }
     return {total, recent: list};
 }

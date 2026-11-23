@@ -459,6 +459,7 @@ static uint8_t nwk_tx(zb_coord_t *c, uint8_t type, uint16_t dst, uint8_t radius,
             c->recent_tx[idx].radius = radius;
             c->recent_tx[idx].secured = secured;
             c->recent_tx[idx].retries = 0;
+            c->recent_tx[idx].answer_cmd = 0;
             c->recent_tx[idx].expects_reply = reply;
             c->recent_tx[idx].len = (uint8_t)len;
             c->recent_tx[idx].sent_ms = c->now_ms;
@@ -612,6 +613,26 @@ static void note_event(zb_coord_t *c, uint8_t kind, uint16_t short_addr, uint64_
     e->from = from;
     e->kind = kind;
     e->detail = detail;
+}
+
+/* An event of this kind for this address in the journal within window_ms. */
+static bool event_recent(const zb_coord_t *c, uint8_t kind, uint16_t short_addr, uint32_t window_ms) {
+    uint32_t n = c->events_total < ZB_EVENTS ? c->events_total : ZB_EVENTS;
+    for (uint32_t i = 0; i < n; i++) {
+        const zb_event_t *e = &c->events[(c->events_total - 1u - i) % ZB_EVENTS];
+        if (e->kind == kind && e->short_addr == short_addr && c->now_ms - e->ms < window_ms) return true;
+    }
+    return false;
+}
+
+static void aps_auth_failure(zb_coord_t *c, const nwk_header_t *h, uint16_t mac_src, uint64_t ext, uint8_t detail) {
+    c->stats.aps_auth_failures++;
+    if (event_recent(c, ZB_EV_APS_AUTH_FAILURE, h->src, ZB_EV_APS_AUTH_HOLD_MS)) return;
+    if (!ext) {
+        uint16_t s = nwk_devices_find_short(&c->devices, h->src);
+        if (s != NWK_DEVICE_NONE) ext = c->devices.dev[s].ext;
+    }
+    note_event(c, ZB_EV_APS_AUTH_FAILURE, h->src, ext, mac_src, detail);
 }
 
 static void address_conflict(zb_coord_t *c, uint16_t addr, uint64_t claimant) {
@@ -817,9 +838,26 @@ static zb_relay_stat_t *relay_stat(zb_coord_t *c, uint16_t addr, bool create) {
 
 static bool known_sleepy(zb_coord_t *c, uint16_t addr);
 
+/* A router for sure: a neighbour (Link Status), a relay of a learnt route, or
+ * a device whose capability (not guessed from a backup) says so. */
+static bool known_router(zb_coord_t *c, uint16_t addr) {
+    if (known_sleepy(c, addr)) return false;
+    if (nwk_neighbor(&c->routes, addr)) return true;
+    uint16_t s = nwk_devices_find_short(&c->devices, addr);
+    if (s != NWK_DEVICE_NONE && !c->devices.dev[s].capability_guessed && (c->devices.dev[s].capability & NWK_CAP_FFD))
+        return true;
+    for (unsigned i = 0; i < NWK_SOURCE_ROUTES; i++) {
+        const nwk_source_route_t *r = &c->routes.source[i];
+        if (!r->used) continue;
+        for (unsigned k = 0; k < r->count; k++) if (r->relays[k] == addr) return true;
+    }
+    return false;
+}
+
 /* A read to dst stayed unanswered after its re-sends (via: first hop used). */
 static void note_unanswered(zb_coord_t *c, uint16_t dst, uint16_t via) {
     c->stats.reads_unanswered++;
+    if (!known_router(c, dst)) return;   /* end devices answer when they poll */
     zb_link_stat_t *l = link_stat(c, dst, true);
     l->via = via;
     l->misses++;
@@ -835,7 +873,7 @@ static void note_unanswered(zb_coord_t *c, uint16_t dst, uint16_t via) {
 /* A read to dst needed a re-send (no answer within ZB_RECENT_RETRY1_MS): its
  * relay is suspect when at least 1 read in 3 through it does. */
 static void note_late(zb_coord_t *c, uint16_t dst, uint16_t via) {
-    if (known_sleepy(c, dst)) return;   /* answers when it polls: always late */
+    if (!known_router(c, dst)) return;   /* end devices answer when they poll: always late */
     if (via == dst) return;
     zb_relay_stat_t *r = relay_stat(c, via, true);
     if (!r) return;
@@ -909,9 +947,13 @@ static void recent_service(zb_coord_t *c) {
         uint8_t r = c->recent_tx[i].retries;
         uint32_t due = r == 0 ? ZB_RECENT_RETRY1_MS : r == 1 ? ZB_RECENT_RETRY2_MS : ZB_RECENT_RETRY3_MS;
         if (r >= 3 || age < (int32_t)due) continue;
-        if (!c->retx_tokens) { c->stats.zcl_retx_deferred++; continue; }   /* budget: retried later or left to the host */
+        if (!c->retx_tokens) {   /* budget: retried later or left to the host */
+            if (!c->recent_tx[i].answer_cmd) { c->recent_tx[i].answer_cmd = 1; c->stats.zcl_retx_deferred++; }
+            continue;
+        }
         if (r == 0) note_late(c, dst, c->recent_tx[i].via);
         c->recent_tx[i].retries = (uint8_t)(r + 1);
+        c->recent_tx[i].answer_cmd = 0;
         c->retx_tokens--;
         c->recent_tx[i].sent_ms = c->now_ms;
         c->recent_tx[i].payload[7] = c->aps_counter++;
@@ -2243,13 +2285,20 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
     const uint8_t *aps_key = 0;
     if (a.security) {
         nwk_aux_t aa;
-        if (nwk_aux_parse(aps_bytes + a.header_len, payload_len - a.header_len, &aa) != NWK_OK ||
-            aa.key_id != APS_KEY_DATA || !aa.extended_nonce) { c->stats.aps_auth_failures++; return; }
+        uint16_t aps_mac_src = f->src_mode == MAC_ADDR_SHORT ? f->src_short : 0xFFFF;
+        if (nwk_aux_parse(aps_bytes + a.header_len, payload_len - a.header_len, &aa) != NWK_OK) {
+            aps_auth_failure(c, &h, aps_mac_src, 0, 0x40);
+            return;
+        }
+        if (aa.key_id != APS_KEY_DATA || !aa.extended_nonce) {
+            aps_auth_failure(c, &h, aps_mac_src, aa.extended_nonce ? aa.source : 0, (uint8_t)(0x40 | (aa.key_id & 3u)));
+            return;
+        }
         uint16_t sdev = nwk_devices_find_ext(&c->devices, aa.source);
         aps_key = sdev == NWK_DEVICE_NONE ? 0 : link_key_for(c, aa.source);
         size_t off = 0, plen = 0;
         if (!aps_key || !aps_open(aps_key, aps_bytes, payload_len, a.header_len, &aa, &off, &plen)) {
-            c->stats.aps_auth_failures++;
+            aps_auth_failure(c, &h, aps_mac_src, aa.source, (uint8_t)((aps_key ? 0x20 : 0x10) | (aa.key_id & 3u)));
             return;
         }
         nwk_device_t *sd = &c->devices.dev[sdev];
