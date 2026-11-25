@@ -310,6 +310,24 @@ static int diag_links(le_writer_t *w) {
     return w->ok ? (int)w->len : MT_DIAG_BAD_PARAM;
 }
 
+/* Per next hop: MAC attempts that asked for an ACK, and those left without
+ * one (address, attempts, missing; 6 bytes each, used entries only). */
+static int diag_hops(le_writer_t *w) {
+    const app_coord_snapshot_t *c = &app_coord;
+    uint8_t n = 0;
+    for (unsigned i = 0; i < ZB_HOP_STATS; i++) n += c->hops[i].last_ms != 0;
+    le_u8(w, 1);   /* format */
+    le_u8(w, n);
+    for (unsigned i = 0; i < ZB_HOP_STATS; i++) {
+        const zb_hop_stat_t *h = &c->hops[i];
+        if (!h->last_ms) continue;
+        le_u16(w, h->addr);
+        le_u16(w, h->tx);
+        le_u16(w, h->no_ack);
+    }
+    return w->ok ? (int)w->len : MT_DIAG_BAD_PARAM;
+}
+
 static int diag_store_status(le_writer_t *w) {
     const nv_log_t *s = &app_store;   /* word reads of a structure owned by the radio task */
     le_u8(w, 2);                      /* format (2: + counter floors) */
@@ -403,6 +421,7 @@ static int plat_diag(void *ctx, uint8_t cmd, const uint8_t *in, uint8_t len, uin
     case DIAG_EVENTS: return len ? MT_DIAG_BAD_PARAM : diag_events(&w);
     case DIAG_RELIABILITY: return len ? MT_DIAG_BAD_PARAM : diag_reliability(&w);
     case DIAG_LINKS: return len ? MT_DIAG_BAD_PARAM : diag_links(&w);
+    case DIAG_HOPS: return len ? MT_DIAG_BAD_PARAM : diag_hops(&w);
     case DIAG_STORE_FORMAT: {
         int n = diag_radio(cmd, in, len, &w);
         if (n > 0 && out[0] == 0) reset_pending = true;   /* boot on the empty store */

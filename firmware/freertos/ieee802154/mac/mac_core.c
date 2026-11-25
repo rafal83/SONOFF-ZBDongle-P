@@ -349,6 +349,9 @@ void mac_tx_done(mac_t *m, mac_tx_result_t result, bool frame_pending) {
     m->active = NO_SLOT;
     mac_slot_t *slot = &m->slots[s];
     bool indirect = slot->kind == SLOT_INDIRECT_SHORT || slot->kind == SLOT_INDIRECT_EXT;
+    if (m->upper.tx_attempt && slot->ack && !slot->dst_ext && slot->dst_short < 0xFFF8u &&
+        (result == MAC_TX_OK || result == MAC_TX_NO_ACK))
+        m->upper.tx_attempt(m->upper.ctx, slot->dst_short, result == MAC_TX_OK);
     switch (result) {
     case MAC_TX_OK:
         complete(m, s, MAC_STATUS_SUCCESS);

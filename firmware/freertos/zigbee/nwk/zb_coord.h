@@ -111,6 +111,10 @@
 #define ZB_RELAY_SUSPECT_MS 600000u         /* flag shown 10 min */
 #define ZB_LINK_STATS_RESET_MS 1800000u     /* counts older than 30 min start over */
 typedef struct { uint32_t last_ms; uint16_t dst, via, misses, answers; } zb_link_stat_t;
+/* MAC transmission attempts per next hop (acked unicasts): which links lose
+ * ACKs. Least recently used entry replaced; counts halved near 65535. */
+#define ZB_HOP_STATS 32u
+typedef struct { uint32_t last_ms; uint16_t addr, tx, no_ack; } zb_hop_stat_t;
 typedef struct { uint32_t last_ms, suspect_until_ms; uint16_t addr, misses, answers, late; } zb_relay_stat_t;
 enum {
     ZB_EV_LEAVE = 1,          /* NWK Leave heard; detail: options (0x20 rejoin), from: MAC source */
@@ -385,6 +389,7 @@ typedef struct {
     zb_link_stat_t links[ZB_LINK_STATS];   /* destinations losing answers */
     zb_relay_stat_t relays[ZB_RELAY_STATS];
     uint32_t links_version;                /* moves at every change (diagnostics snapshot) */
+    zb_hop_stat_t hops[ZB_HOP_STATS];
     bool parent_annce_pending;             /* restored network: announce our children */
     uint8_t parent_annce_tsn;
     uint8_t parent_annce_tsn_first, parent_annce_frames;   /* TSNs of our last announce: first .. first + frames - 1 */

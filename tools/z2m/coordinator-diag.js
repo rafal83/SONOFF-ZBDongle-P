@@ -3,7 +3,7 @@
  * (SONOFF ZBDongle-P) read while Zigbee2MQTT runs.
  *
  * The firmware serves its diagnostics blocks as read-only NV items
- * 0x0FA0..0x0FA8, read with the standard ZNP command SYS osalNvRead through
+ * 0x0FA0..0x0FA9, read with the standard ZNP command SYS osalNvRead through
  * herdsman's own request queue (no collision on the serial link, nothing
  * written). Another coordinator firmware answers "item missing": the
  * extension then stays idle.
@@ -147,9 +147,18 @@ function links(b) {
     out.flagged_now = out.relays.filter((r) => r.flagged_s > 0).length;
     return out;
 }
+/* MAC attempts per next hop (acked unicasts) and those without ACK, worst first. */
+function hops(b) {
+    const out = [];
+    for (let i = 0, k = 2; i < b[1] && k + 6 <= b.length; i++, k += 6) {
+        const tx = b.readUInt16LE(k + 2), no_ack = b.readUInt16LE(k + 4);
+        out.push({nwk: hex16(b.readUInt16LE(k)), tx, no_ack, no_ack_pct: tx ? Math.round(1000 * no_ack / tx) / 10 : 0});
+    }
+    return out.sort((x, y) => y.no_ack - x.no_ack);
+}
 const BLOCKS = [['info', info], ['uart', (b) => counters(b, COUNTER_NAMES)], ['coordinator', (b) => counters(b, COORD_NAMES)],
     ['mesh', (b) => counters(b, MESH_NAMES)], ['store', store], ['perf', (b) => counters(b, PERF_NAMES)], ['events', events],
-    ['reliability', (b) => counters(b, RELIABILITY_NAMES)], ['links', links]];
+    ['reliability', (b) => counters(b, RELIABILITY_NAMES)], ['links', links], ['hops', hops]];
 
 /* One NV item, in chunks (osalNvRead offset is one byte). null: not served. */
 async function readItem(znp, id) {
@@ -277,6 +286,7 @@ class CoordinatorDiagnostics {
         for (const e of diag.events?.recent ?? []) { e.name = name(e.nwk); if (e.from !== '0xffff') e.from_name = name(e.from); }
         for (const d of diag.links?.destinations ?? []) { d.name = name(d.nwk); d.via_name = name(d.via); }
         for (const r of diag.links?.relays ?? []) r.name = name(r.nwk);
+        for (const h of diag.hops ?? []) h.name = name(h.nwk);
     }
 
     async publish() {
@@ -295,6 +305,7 @@ class CoordinatorDiagnostics {
             return;
         }
         diag.links ??= {destinations: [], relays: [], flagged_now: 0};   /* image without the block */
+        diag.hops ??= [];
         this.annotate(diag);
         diag.radio = this.radioQuality(diag);
         this.record(diag);
@@ -337,7 +348,8 @@ class CoordinatorDiagnostics {
                     '{{ {"short": value_json.reliability.indirect_short, "ieee": value_json.reliability.indirect_ext, ' +
                     '"short_peak": value_json.reliability.indirect_short_peak, "ieee_peak": value_json.reliability.indirect_ext_peak} | tojson }}'}],
             /* 3. radio */
-            ['no_ack', 'Trames sans ACK (30 min)', '{{ value_json.radio.no_ack_pct }}', '%', {state_class: 'measurement'}],
+            ['no_ack', 'Trames sans ACK (30 min)', '{{ value_json.radio.no_ack_pct }}', '%',
+                {state_class: 'measurement', json_attributes_template: '{{ {"by_hop": value_json.hops[:12]} | tojson }}'}],
             ['channel_busy', 'Échecs d’accès au canal (30 min)', '{{ value_json.radio.channel_busy_pct }}', '%', {state_class: 'measurement'}],
             /* 4. security */
             ['nwk_auth_failures', 'Échecs d’authentification NWK', '{{ value_json.coordinator.nwk_auth_failures }}', null, total],
@@ -377,4 +389,4 @@ class CoordinatorDiagnostics {
 
 module.exports = CoordinatorDiagnostics;
 module.exports.readDiagnostics = readDiagnostics;
-module.exports.decode = {info, store, events, counters, links};
+module.exports.decode = {info, store, events, counters, links, hops};

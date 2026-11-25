@@ -436,6 +436,7 @@ static void snapshot(void) {
             sl += !d->capability_guessed && !(d->capability & NWK_CAP_RX_ON_IDLE);
         }
         app_coord.children = ch;
+        for (unsigned i = 0; i < ZB_HOP_STATS; i++) app_coord.hops[i] = coord.hops[i];
         app_coord.floors_pending = fp;
         app_coord.sleepy_children = sl;
     }

@@ -1354,6 +1354,22 @@ static void send_transport_key(zb_coord_t *c, uint16_t slot) {
 }
 
 /* A device that polls us is a sleepy child: deliver to it indirectly. */
+/* One MAC attempt to `addr` that asked for an ACK: counted for that hop. */
+static void on_tx_attempt(void *ctx, uint16_t addr, bool acked) {
+    zb_coord_t *c = ctx;
+    zb_hop_stat_t *e = 0, *lru = &c->hops[0];
+    for (unsigned i = 0; i < ZB_HOP_STATS; i++) {
+        zb_hop_stat_t *h = &c->hops[i];
+        if (h->last_ms && h->addr == addr) { e = h; break; }
+        if (!h->last_ms || (lru->last_ms && (int32_t)(h->last_ms - lru->last_ms) < 0)) lru = h;
+    }
+    if (!e) { e = lru; *e = (zb_hop_stat_t){.addr = addr}; }
+    if (e->tx >= 65000u) { e->tx /= 2u; e->no_ack /= 2u; }   /* keeps the ratio */
+    e->tx++;
+    if (!acked) e->no_ack++;
+    e->last_ms = c->now_ms | 1u;
+}
+
 static void on_poll(void *ctx, uint16_t short_addr, uint64_t ext, bool served) {
     zb_coord_t *c = ctx;
     (void)served;
@@ -2505,7 +2521,7 @@ void zb_coord_init(zb_coord_t *c, const mac_radio_ops_t *radio, const zb_coord_u
     if (upper) c->upper = *upper;
     c->ext_addr = ext_addr;
     c->allow_default_tclk = true;
-    const mac_upper_t mac_upper = {on_data_confirm, on_mac_data, on_assoc, 0, on_comm_status, on_poll, c};
+    const mac_upper_t mac_upper = {on_data_confirm, on_mac_data, on_assoc, 0, on_comm_status, on_poll, c, on_tx_attempt};
     mac_init(&c->mac, radio, &mac_upper, ext_addr);
     nwk_devices_init(&c->devices, random_seed);
     core_security_init(&c->security, nwk_counter_upper, zb_ccm_backend_active, reserve_adapter, c);

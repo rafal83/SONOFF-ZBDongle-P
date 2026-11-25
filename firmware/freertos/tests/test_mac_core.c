@@ -54,7 +54,7 @@ static void up_comm(void *ctx, uint64_t dev, uint8_t status) { (void)ctx; comm_c
 static void up_poll(void *ctx, uint16_t s, uint64_t e, bool served) { (void)ctx; (void)s; (void)e; (void)served; polls++; }
 
 static const mac_radio_ops_t RADIO = {sim_tx, sim_sm, 0};
-static const mac_upper_t UPPER = {up_confirm, up_data, up_assoc, up_orphan, up_comm, up_poll, 0};
+static const mac_upper_t UPPER = {up_confirm, up_data, up_assoc, up_orphan, up_comm, up_poll, 0, 0};
 static mac_t mac;
 static uint8_t rx_seq = 0x80;
 
@@ -118,7 +118,7 @@ static void rec_confirm(void *ctx, uint8_t handle, uint8_t status) {
     rec_depth--;
 }
 static void recursion_checks(void) {
-    static const mac_upper_t up = {rec_confirm, 0, 0, 0, 0, 0, 0};
+    static const mac_upper_t up = {rec_confirm, 0, 0, 0, 0, 0, 0, 0};
     const uint8_t epid[8] = {1};
     mac_init(&rec_mac, &RADIO, &up, COORD_EXT);
     mac_start(&rec_mac, PAN, 15, epid);

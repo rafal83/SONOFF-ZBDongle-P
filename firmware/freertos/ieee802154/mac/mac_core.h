@@ -103,6 +103,9 @@ typedef struct {
     void (*comm_status)(void *ctx, uint64_t device, uint8_t status);
     void (*poll_indication)(void *ctx, uint16_t short_addr, uint64_t ext_addr, bool served);
     void *ctx;
+    /* Optional, after ctx: outcome of every transmission attempt that asked
+     * for an ACK to a short address (acked or not; busy channel excluded). */
+    void (*tx_attempt)(void *ctx, uint16_t dst_short, bool acked);
 } mac_upper_t;
 
 typedef struct {

@@ -32,7 +32,7 @@ static void sim_assoc(void *ctx, uint64_t device, uint8_t cap, uint8_t lqi) {
 void arm_sim_mac_setup(mac_t *m) {
     static const uint8_t epid[8] = {0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD};
     const mac_radio_ops_t radio = {sim_tx, sim_match, 0};
-    const mac_upper_t upper = {0, 0, sim_assoc, 0, 0, 0, m};
+    const mac_upper_t upper = {0, 0, sim_assoc, 0, 0, 0, m, 0};
     mac_init(m, &radio, &upper, 0x00124B0001020304ull);
     mac_start(m, 0x1A62, 15, epid);
     mac_set_association_permit(m, true);

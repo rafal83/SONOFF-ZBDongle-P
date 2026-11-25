@@ -1305,6 +1305,28 @@ int main(void) {
         printf("reliability: APS-secured frame without the extended nonce authenticated (IEEE from the NWK source)\n");
     }
 
+    /* 16c. MAC attempts per next hop: an attempt without ACK, then the
+     *      retry acknowledged: 2 attempts, 1 missing ACK for that hop. */
+    {
+        drain(0);
+        const zb_hop_stat_t *hs = 0;
+        uint16_t tx0 = 0, na0 = 0;
+        for (unsigned i = 0; i < ZB_HOP_STATS; i++)
+            if (coord.hops[i].last_ms && coord.hops[i].addr == router[1].short_addr) hs = &coord.hops[i];
+        if (hs) { tx0 = hs->tx; na0 = hs->no_ack; }
+        const uint8_t zcl[3] = {0x11, 0x77, 0x0B};
+        CHECK(zb_coord_send_aps(&coord, router[1].short_addr, 1, 1, 6, 0x0104, zcl, 3, false) == ZB_SEND_OK);
+        CHECK(air_head != air_tail);
+        air_head++;                                  /* this attempt is not acknowledged */
+        zb_coord_tx_done(&coord, MAC_TX_NO_ACK, false);
+        drain(0);                                    /* the retry is */
+        hs = 0;
+        for (unsigned i = 0; i < ZB_HOP_STATS; i++)
+            if (coord.hops[i].last_ms && coord.hops[i].addr == router[1].short_addr) hs = &coord.hops[i];
+        CHECK(hs && hs->tx == tx0 + 2u && hs->no_ack == na0 + 1u);
+        printf("reliability: MAC attempts per next hop: missing ACK counted for that hop\n");
+    }
+
     /* 16b. Legacy device: a unique key from the backup, never used, while
      *      the device secures APS with the default TC link key: accepted
      *      with the default key, marked (journal once, stored), its next

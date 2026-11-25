@@ -92,6 +92,7 @@ typedef struct {
     uint8_t indirect_short, indirect_ext;    /* indirect frames queued now (short / IEEE destination) */
     uint8_t indirect_short_peak, indirect_ext_peak;
     uint16_t floors_pending;                 /* devices whose incoming counter floor is not durable (every second) */
+    zb_hop_stat_t hops[ZB_HOP_STATS];        /* copied every second */
     uint32_t af_rx_huge, af_rx_huge_dropped; /* ZNP: messages longer than one frame, kept / refused */
 } app_coord_snapshot_t;
 #define COORD_FLAG_NEW_NETWORK 0x01u
