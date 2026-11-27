@@ -70,7 +70,8 @@
  * are refused by the ZNP layer (they are not generic items). */
 #define MT_DIAG_NV_FIRST 0x0FA0u
 #define MT_DIAG_NV_CMDS {DIAG_INFO, DIAG_COUNTERS, DIAG_COORD_STATS, DIAG_MESH_STATS, DIAG_STORE_STATUS, DIAG_PERF, \
-                         DIAG_EVENTS, DIAG_RELIABILITY, DIAG_LINKS, DIAG_HOPS}
+                         DIAG_EVENTS, DIAG_RELIABILITY, DIAG_LINKS, DIAG_HOPS, \
+                         DIAG_RADIO_STATS}
 #define MT_SYS_OSAL_NV_READ 0x08u
 #define MT_SYS_OSAL_NV_LENGTH 0x13u
 #define MT_SYS_OSAL_NV_READ_EXT 0x1Cu

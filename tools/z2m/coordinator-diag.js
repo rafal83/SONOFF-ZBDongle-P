@@ -3,7 +3,7 @@
  * (SONOFF ZBDongle-P) read while Zigbee2MQTT runs.
  *
  * The firmware serves its diagnostics blocks as read-only NV items
- * 0x0FA0..0x0FA9, read with the standard ZNP command SYS osalNvRead through
+ * 0x0FA0..0x0FAA, read with the standard ZNP command SYS osalNvRead through
  * herdsman's own request queue (no collision on the serial link, nothing
  * written). Another coordinator firmware answers "item missing": the
  * extension then stays idle.
@@ -70,6 +70,18 @@ const COUNTER_NAMES = ['uart_rx_bytes', 'uart_tx_bytes', 'uart_rx_overflow', 'ua
     'mt_accepted', 'mt_bad_fcs', 'mt_oversized', 'mt_timeouts', 'mt_invalid_type', 'mt_resync_discarded',
     'mt_rx_errors', 'tx_dropped', 'tx_dropped_normal', 'tx_dropped_control', 'tx_high_water', 'wd_feeds', 'wd_misses',
     'wd_last_missing', 'wd_worst_consecutive', 'radio_frames_dropped'];
+/* Radio driver (DIAG_RADIO_STATS): signed values as two's complement u32. */
+const RF_NAMES = ['powerups', 'setup_failures', 'last_error_step', 'rx_frames', 'rx_crc_fail', 'rx_ignored', 'rx_buf_full',
+    'rx_overflow_restarts', 'rx_dropped_parse', 'tx_attempts', 'tx_ok', 'tx_no_ack', 'tx_busy', 'tx_error',
+    'tx_ack_pending', 'internal_errors', 'synth_no_lock', 'src_match_overflow', 'isr_count', 'isr_max_cycles',
+    'last_cmd_status', 'last_rssi_dbm', 'max_rssi_dbm', 'channel', 'power_dbm', 'high_pa', 'powered',
+    'setup_fail_step', 'setup_fail_status', 'setup_fail_fs_status'];
+const RF_SIGNED = new Set(['last_rssi_dbm', 'max_rssi_dbm', 'power_dbm']);
+function rf(b) {
+    const out = counters(b, RF_NAMES);
+    for (const k of RF_SIGNED) if (k in out) out[k] = out[k] | 0;
+    return out;
+}
 const RELIABILITY_NAMES = ['zcl_resends', 'zcl_resends_deferred', 'zcl_route_rebuilds', 'zcl_answers_dropped',
     'zcl_resends_sleepy_skipped', 'capabilities_learnt', 'poll_children', 'children_aged', 'children_moved',
     'nwk_counters_stored', 'nwk_counters_restored', 'bcast_seq_skipped', 'learned_members', 'addresses_reassigned',
@@ -160,7 +172,7 @@ function hops(b) {
 }
 const BLOCKS = [['info', info], ['uart', (b) => counters(b, COUNTER_NAMES)], ['coordinator', (b) => counters(b, COORD_NAMES)],
     ['mesh', (b) => counters(b, MESH_NAMES)], ['store', store], ['perf', (b) => counters(b, PERF_NAMES)], ['events', events],
-    ['reliability', (b) => counters(b, RELIABILITY_NAMES)], ['links', links], ['hops', hops]];
+    ['reliability', (b) => counters(b, RELIABILITY_NAMES)], ['links', links], ['hops', hops], ['rf', rf]];
 
 /* One NV item, in chunks (osalNvRead offset is one byte). null: not served. */
 async function readItem(znp, id) {
@@ -350,6 +362,8 @@ class CoordinatorDiagnostics {
                     '{{ {"short": value_json.reliability.indirect_short, "ieee": value_json.reliability.indirect_ext, ' +
                     '"short_peak": value_json.reliability.indirect_short_peak, "ieee_peak": value_json.reliability.indirect_ext_peak} | tojson }}'}],
             /* 3. radio */
+            ['tx_power', 'Puissance d’émission', '{{ value_json.rf.power_dbm }}', 'dBm',
+                {device_class: 'signal_strength', ...attrs('rf')}],
             ['no_ack', 'Trames sans ACK (30 min)', '{{ value_json.radio.no_ack_pct }}', '%',
                 {state_class: 'measurement', json_attributes_template: '{{ {"by_hop": value_json.hops[:12]} | tojson }}'}],
             ['channel_busy', 'Échecs d’accès au canal (30 min)', '{{ value_json.radio.channel_busy_pct }}', '%', {state_class: 'measurement'}],
@@ -391,4 +405,4 @@ class CoordinatorDiagnostics {
 
 module.exports = CoordinatorDiagnostics;
 module.exports.readDiagnostics = readDiagnostics;
-module.exports.decode = {info, store, events, counters, links, hops};
+module.exports.decode = {info, store, events, counters, links, hops, rf};
