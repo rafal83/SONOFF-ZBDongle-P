@@ -45,7 +45,7 @@ L'hôte le pilote par ZNP ([znp-compat.md](znp-compat.md)). Depuis le 18 novembr
 
 **APS et ZCL**
 - Doublons filtrés, commandes APS comprises, groupes, chiffrement APS sur demande de l'hôte.
-- Un même *Update Device* (même appareil, même statut, même routeur) reçu de nouveau dans les 5 s est ignoré et compté : certains routeurs l'envoient deux fois sous deux compteurs APS différents.
+- Un même *Update Device* (même appareil, même statut, même routeur) reçu de nouveau dans les 5 s est ignoré et compté (`update_device_repeats`, bloc fiabilité) : certains routeurs l'envoient deux fois sous deux compteurs APS différents.
 - Une commande APS reçue qui demande un ACK est acquittée (format commande). Avant, un routeur qui attendait cet ACK renvoyait sa commande : chaque *Update Device* était traité deux fois, avec deux envois de la clé réseau.
 - Trames APS chiffrées sans IEEE dans l'en-tête auxiliaire (*extended nonce* absent, permis par Zigbee PRO) : l'IEEE de l'émetteur est retrouvée à partir de son adresse réseau, comme le fait Z-Stack. Avant, ces trames étaient refusées.
 - Appareils anciens (avant Zigbee 3.0) qui chiffrent leurs trames APS avec la clé de lien par défaut, alors que la sauvegarde importée de Z-Stack leur donne une clé unique dérivée. Le firmware n'essaie la clé par défaut que si la clé unique n'a jamais authentifié de trame de l'appareil. Si elle convient, l'appareil est marqué (drapeau sauvegardé, une entrée au journal d'événements), et ses trames sont ensuite vérifiées et envoyées avec cette clé. Les trames acceptées ainsi sont comptées. Un nouvel échange de clé ou une nouvelle adhésion efface le marquage. Ces trames ont déjà franchi la couche réseau, qui exige la clé du réseau.
