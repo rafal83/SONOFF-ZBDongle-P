@@ -105,6 +105,10 @@
 #define ZB_CHILD_HEARD_MS 300000u          /* a child we claim was heard this recently */
 #define ZB_PARENT_ANNCE_RETRY_MS 5000u     /* a frame the MAC refused (saturation): announce again */
 #define ZB_PARENT_ANNCE_ATTEMPTS 3u
+/* A router may send one Update Device twice under different APS counters
+ * (production: every one seen twice, at the same instant): the same device,
+ * status and router again within this window is the same event. */
+#define ZB_UPDATE_DEVICE_REPEAT_MS 5000u
 #define ZB_LINK_STATS 8u
 #define ZB_RELAY_STATS 8u
 #define ZB_RELAY_SUSPECT_LATE 6u            /* reads that needed a re-send, at least 1 in 3 */
@@ -302,6 +306,7 @@ typedef struct {
     uint32_t parent_annce_rsp_ignored;   /* answers not matching our last announce (TSN, window, status) */
     uint32_t parent_annce_send_failures; /* announce frames refused by the MAC (saturation), retried */
     uint32_t aps_default_key_rx;   /* APS frames authenticated with the default key (legacy devices) */
+    uint32_t update_device_repeats;   /* same Update Device again within ZB_UPDATE_DEVICE_REPEAT_MS: ignored */
     uint32_t children_aged;           /* children silent beyond their End Device Timeout */
     uint32_t children_moved;          /* children heard through a router: no longer ours */
     uint32_t nwk_counters_stored, nwk_counters_restored;   /* incoming NWK counter floors (store) */
@@ -396,6 +401,7 @@ typedef struct {
     uint8_t parent_annce_attempts;
     uint32_t parent_annce_at_ms, parent_annce_sent_ms;
     uint32_t floor_retry_ms;               /* earliest retry of a failed floor write (0: none due) */
+    struct { uint64_t ext; uint32_t ms; uint16_t parent; uint8_t status; bool valid; } last_update_device;
     uint32_t events_total;
     zb_frag_rx_t frag_rx[ZB_FRAG_RX_SESSIONS];
     zb_frag_tx_t frag_tx;                  /* one fragmented transmission at a time */

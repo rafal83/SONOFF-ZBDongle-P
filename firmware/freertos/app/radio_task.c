@@ -423,10 +423,16 @@ static void snapshot(void) {
     app_coord.indirect_ext = ind_ext;
     if (ind_short > app_coord.indirect_short_peak) app_coord.indirect_short_peak = ind_short;
     if (ind_ext > app_coord.indirect_ext_peak) app_coord.indirect_ext_peak = ind_ext;
-    /* Children, once a second (up to 200 devices). */
+    /* Children, once a second (up to 200 devices); the store's spare bank
+     * erased ahead, one sector per second at most (see nv_log_prepare). */
     static uint32_t children_ms;
     if (coord.now_ms - children_ms >= 1000u) {
         children_ms = coord.now_ms;
+        uint32_t t0 = hal_cycles();
+        if (nv_log_prepare(&app_store)) {
+            uint32_t dt = hal_cycles() - t0;
+            if (dt > app_perf.store_prep_max) app_perf.store_prep_max = dt;
+        }
         uint16_t ch = 0, sl = 0, fp = 0;
         for (uint16_t k = 0; k < coord.devices.count; k++) {
             const nwk_device_t *d = &coord.devices.dev[coord.devices.by_ext[k]];

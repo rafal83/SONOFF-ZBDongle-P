@@ -442,6 +442,16 @@ int main(void) {
                 acked = true;
         }
         CHECK(acked);
+        /* R sends it once more under a new APS counter (seen in production):
+         * the same device, status and router within 5 s: ignored. */
+        const uint8_t ahdr3[2] = {0x01, r.aps_counter++};
+        nwk_aux_t aux3 = {.key_id = APS_KEY_DATA, .extended_nonce = true, .frame_counter = r.aps_fc++, .source = r.ext};
+        size_t n3 = aps_seal(r.tclk, ahdr3, 2, &aux3, ud, sizeof ud, aps, sizeof aps);
+        CHECK(n3);
+        nwk_header_t h3 = hdr(NWK_TYPE_DATA, r.short_addr, 0x0000, 7);
+        hop_send(&r, &h3, aps, n3, 0x0000, true);
+        CHECK(coord.stats.update_device == 1 && coord.stats.tunnels_sent == 1 && coord.stats.update_device_repeats == 1);
+        while (rx_frame(&r, &m)) {}
     }
     /* Relayed announce (security source = R): accepted; a duplicate relayed
      * by R2 is suppressed by the broadcast transaction table. */

@@ -72,12 +72,14 @@ static uint16_t hcrc(uint16_t id, uint16_t len) {
 
 static uint32_t bank_addr(const nv_log_t *l, unsigned bank) { return l->base + bank * l->bank_size; }
 
-static bool erase_bank(nv_log_t *l, unsigned bank) {
-    for (uint32_t off = 0; off < l->bank_size; off += l->sector_size) {
+static bool erase_bank_from(nv_log_t *l, unsigned bank, uint32_t first) {
+    for (uint32_t off = first; off < l->bank_size; off += l->sector_size) {
         if (!l->ops.erase_sector(l->ops.ctx, bank_addr(l, bank) + off)) { l->stats.erase_failures++; return false; }
     }
     return true;
 }
+
+static bool erase_bank(nv_log_t *l, unsigned bank) { return erase_bank_from(l, bank, 0); }
 
 static bool program(nv_log_t *l, uint32_t addr, const void *data, size_t len) {
     if (l->ops.program(l->ops.ctx, addr, data, len)) return true;
@@ -154,8 +156,19 @@ static bool scan(nv_log_t *l) {
     return true;
 }
 
+bool nv_log_prepare(nv_log_t *l) {
+    if (!l->mounted || !l->sector_size || l->write_offset < l->bank_size / 2u) return false;
+    uint32_t off = (uint32_t)l->spare_erased * l->sector_size;
+    if (off >= l->bank_size) return false;
+    if (!l->ops.erase_sector(l->ops.ctx, bank_addr(l, 1u - l->active) + off)) { l->stats.erase_failures++; return false; }
+    l->spare_erased++;
+    l->stats.sectors_pre_erased++;
+    return true;
+}
+
 bool nv_log_format(nv_log_t *l) {
     l->mounted = false;
+    l->spare_erased = 0;
     if (!l->sector_size || !erase_bank(l, 0) || !erase_bank(l, 1)) { l->mount_status = NV_LOG_ERR_IO; return false; }
     l->active = 0;
     l->generation = 1;
@@ -266,7 +279,10 @@ static bool append(nv_log_t *l, unsigned bank, uint32_t *off, uint16_t id, uint1
 
 static bool compact(nv_log_t *l) {
     unsigned target = 1u - l->active;
-    if (!erase_bank(l, target)) return false;
+    /* Sectors erased ahead (nv_log_prepare) are blank: no write ever goes to
+     * the inactive bank outside the compaction. */
+    if (!erase_bank_from(l, target, (uint32_t)l->spare_erased * l->sector_size)) { l->spare_erased = 0; return false; }
+    l->spare_erased = 0;
     uint32_t gen = l->generation + 1u;
     if (!write_header(l, target, gen, false)) return false;
     uint32_t off = NV_LOG_HEADER;

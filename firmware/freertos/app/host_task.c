@@ -224,6 +224,8 @@ static int diag_perf(le_writer_t *w) {
         app_touchlink.timeouts, app_touchlink.rx_dropped, app_touchlink.restore_failed,
         app_touchlink.restore_retries, app_touchlink.restore_recovered, app_touchlink.restore_restarts,
         app_touchlink.restore_reboots, app_touchlink.recovering,
+        /* 56..57: store spare bank erased ahead (23 November) */
+        p.store_prep_max, app_store.stats.sectors_pre_erased,
     };
     le_u8(w, (uint8_t)(sizeof values / sizeof values[0]));
     for (unsigned i = 0; i < sizeof values / sizeof values[0]; i++) le_u32(w, values[i]);

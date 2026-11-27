@@ -36,6 +36,7 @@ typedef struct {
 typedef struct {
     uint32_t mounts, writes, compactions, torn_records, torn_headers, erase_failures, program_failures;
     uint32_t old_layout_retired;
+    uint32_t sectors_pre_erased;    /* spare-bank sectors erased ahead by nv_log_prepare() */
 } nv_log_stats_t;
 
 /* Outcome of nv_log_mount(). Only a store holding no committed data
@@ -69,6 +70,7 @@ typedef struct {
     nv_log_mount_status_t mount_status;
     bool mounted;                   /* writes/reads refused while false */
     uint16_t migrated_records;      /* records copied by nv_log_migrate() */
+    uint16_t spare_erased;          /* leading sectors of the inactive bank already erased (RAM) */
 } nv_log_t;
 
 /* Mount. Formats ONLY a store without committed data (see
@@ -86,6 +88,13 @@ bool nv_log_read(nv_log_t *log, uint16_t id, void *buffer, uint16_t cap, uint16_
  * explicit format of a corrupted store. Read-only. Returns the count. */
 typedef void (*nv_log_salvage_fn)(void *ctx, const uint8_t *data, uint16_t len);
 unsigned nv_log_salvage(nv_log_t *log, uint16_t id, nv_log_salvage_fn fn, void *ctx);
+/* Background work, one flash sector at most per call: once the active bank
+ * is half full, erase the next sector of the inactive bank (its header
+ * sector first, so a power cut leaves it plainly invalid; the active bank,
+ * committed, is what mounts). The compaction then only copies the live
+ * records instead of also erasing a whole bank in the caller's path
+ * (production: up to 160 ms in the radio task). Returns true if it erased. */
+bool nv_log_prepare(nv_log_t *log);
 /* Erase both banks and start an empty log (factory reset of the store). */
 bool nv_log_format(nv_log_t *log);
 

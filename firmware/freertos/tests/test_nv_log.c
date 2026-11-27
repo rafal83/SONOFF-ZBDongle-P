@@ -138,7 +138,10 @@ int main(void) {
         uint16_t vlen = (uint16_t)(frt_rand() % 49);
         for (unsigned k = 0; k < vlen; k++) value[k] = (uint8_t)frt_rand();
         budget = (frt_rand() % 3 == 0) ? (long)(frt_rand() % 40) : -1;
-        bool ok = del ? nv_log_delete(&lg, (uint16_t)id) : nv_log_write(&lg, (uint16_t)id, value, vlen);
+        /* The spare bank erased ahead, sector by sector, cuts included: the
+         * compaction must find those sectors blank (no double program). */
+        if (frt_rand() % 2) (void)nv_log_prepare(&lg);
+        bool ok = !dead && (del ? nv_log_delete(&lg, (uint16_t)id) : nv_log_write(&lg, (uint16_t)id, value, vlen));
         if (!dead) {
             budget = -1;
             CHECK(ok);
@@ -171,6 +174,7 @@ int main(void) {
            lg.stats.compactions);
     CHECK(cuts > 500 && rolled_forward > 0 && rolled_back > 0);
     CHECK(double_programs == 0);
+    CHECK(lg.stats.sectors_pre_erased > 0);   /* counted since the last mount */
     /* A torn write is never followed by data in the same place: further
      * writes after a cut still succeed and survive a remount. */
     CHECK(nv_log_write(&lg, 1, a, 5) && nv_log_mount(&lg, &OPS, BASE, BANK, SECTOR));

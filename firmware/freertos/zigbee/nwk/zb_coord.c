@@ -1912,6 +1912,16 @@ static void handle_update_device(zb_coord_t *c, uint16_t parent, const uint8_t *
     uint64_t ext = get64(p + 1);
     uint16_t short_addr = get16(p + 9);
     uint8_t status = p[11];
+    if (c->last_update_device.valid && c->last_update_device.ext == ext && c->last_update_device.parent == parent &&
+        c->last_update_device.status == status && c->now_ms - c->last_update_device.ms < ZB_UPDATE_DEVICE_REPEAT_MS) {
+        c->stats.update_device_repeats++;   /* the same join again: no second Transport Key */
+        return;
+    }
+    c->last_update_device.ext = ext;
+    c->last_update_device.parent = parent;
+    c->last_update_device.status = status;
+    c->last_update_device.ms = c->now_ms;
+    c->last_update_device.valid = true;
     c->stats.update_device++;
     note_event(c, ZB_EV_UPDATE_DEVICE, short_addr, ext, parent, status);
     if (!ext || short_addr >= 0xFFF8u || short_addr == 0x0000) return;

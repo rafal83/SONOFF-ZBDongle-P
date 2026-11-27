@@ -46,7 +46,8 @@ const PERF_NAMES = ['aes_sw_block_cycles', 'ccm_sw_frame_cycles', 'ccm_hw_frame_
     'gp_coord_tx_deferred', 'gp_channel_moves', 'gp_channel_failed', 'ccm_prof_setup_cycles_sum',
     'ccm_prof_aad_cycles_sum', 'ccm_prof_data_cycles_sum', 'ccm_prof_tail_cycles_sum', 'touchlink_idle_timeouts',
     'touchlink_rx_dropped', 'touchlink_restore_failed', 'touchlink_restore_retries', 'touchlink_restore_recovered',
-    'touchlink_radio_restarts', 'touchlink_reboots', 'touchlink_recovering'];
+    'touchlink_radio_restarts', 'touchlink_reboots', 'touchlink_recovering', 'store_prep_max_cycles',
+    'store_sectors_pre_erased'];
 const MESH_NAMES = ['nwk_commands', 'link_status_rx', 'link_status_tx', 'route_records', 'rreq_rx', 'rrep_rx', 'rreq_tx',
     'mtorr_tx', 'network_status_rx', 'relayed', 'relay_dropped', 'not_for_us', 'broadcast_duplicates', 'no_route',
     'update_device', 'tunnels_sent', 'rejoins', 'tc_rejoins', 'leaves', 'timeout_requests', 'neighbors',

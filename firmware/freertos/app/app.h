@@ -129,6 +129,7 @@ typedef struct {
     uint32_t rx_latency_last_us, rx_latency_max_us, rx_measured;   /* end of frame -> processing */
     uint32_t radio_stack_free_words;  /* lowest free stack of the radio task (no heap: static allocation) */
     uint32_t ccm_hw_block_frame_cycles;   /* the same frame in block mode (ECB per block) */
+    uint32_t store_prep_max;          /* cycles of one sector erased ahead (nv_log_prepare) */
 } app_perf_t;
 extern app_perf_t app_perf;
 
