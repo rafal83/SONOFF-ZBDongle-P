@@ -21,6 +21,21 @@ uint8_t nwk_lqi_cost(uint8_t lqi) {
     return 7;
 }
 
+uint8_t nwk_ack_cost(uint8_t attempts, uint8_t failures) {
+    if (attempts < NWK_ACK_MIN_SAMPLES) return 0;
+    unsigned pct = 100u * failures / attempts;
+    if (pct >= 40u) return 7;
+    if (pct >= 25u) return 5;
+    if (pct >= 15u) return 3;
+    return 0;
+}
+
+/* Our incoming cost of a neighbour, as advertised in our Link Status. */
+static uint8_t neighbor_cost(const nwk_neighbor_t *n) {
+    uint8_t lqi = nwk_lqi_cost(n->lqi), ack = nwk_ack_cost(n->ack_tx, n->ack_fail);
+    return ack > lqi ? ack : lqi;
+}
+
 static nwk_neighbor_t *find_neighbor(nwk_routes_t *t, uint16_t addr) {
     for (unsigned i = 0; i < NWK_NEIGHBORS; i++)
         if (t->neighbors[i].used && t->neighbors[i].addr == addr) return &t->neighbors[i];
@@ -36,7 +51,27 @@ void nwk_neighbor_heard(nwk_routes_t *t, uint16_t addr, uint8_t lqi) {
     if (!n) return;   /* only routers that sent a link status are neighbours */
     /* Smoothed LQI: 3/4 old + 1/4 new. */
     n->lqi = (uint8_t)((3u * n->lqi + lqi) / 4u);
-    n->in_cost = nwk_lqi_cost(n->lqi);
+    n->in_cost = neighbor_cost(n);
+}
+
+bool nwk_neighbor_ack(nwk_routes_t *t, uint16_t addr, bool acked) {
+    nwk_neighbor_t *n = find_neighbor(t, addr);
+    if (!n) return false;
+    bool before = nwk_ack_cost(n->ack_tx, n->ack_fail) > nwk_lqi_cost(n->lqi);
+    if (n->ack_tx >= NWK_ACK_WINDOW) { n->ack_tx /= 2u; n->ack_fail /= 2u; }
+    n->ack_tx++;
+    if (!acked) n->ack_fail++;
+    n->in_cost = neighbor_cost(n);
+    return !before && nwk_ack_cost(n->ack_tx, n->ack_fail) > nwk_lqi_cost(n->lqi);
+}
+
+unsigned nwk_neighbors_ack_penalized(const nwk_routes_t *t) {
+    unsigned k = 0;
+    for (unsigned i = 0; i < NWK_NEIGHBORS; i++) {
+        const nwk_neighbor_t *n = &t->neighbors[i];
+        k += n->used && nwk_ack_cost(n->ack_tx, n->ack_fail) > nwk_lqi_cost(n->lqi);
+    }
+    return k;
 }
 
 bool nwk_neighbor_link_status(nwk_routes_t *t, uint16_t addr, uint8_t lqi, uint16_t self,
@@ -50,14 +85,14 @@ bool nwk_neighbor_link_status(nwk_routes_t *t, uint16_t addr, uint8_t lqi, uint1
             victim = &t->neighbors[0];
             for (unsigned i = 1; i < NWK_NEIGHBORS; i++)
                 if (t->neighbors[i].in_cost > victim->in_cost) victim = &t->neighbors[i];
-            if (victim->in_cost <= nwk_lqi_cost(lqi)) return false;
+            if (victim->in_cost <= nwk_lqi_cost(lqi)) return false;   /* in_cost: ACK cost included */
         }
         *victim = (nwk_neighbor_t){.addr = addr, .lqi = lqi, .used = true};
         n = victim;
     } else {
         n->lqi = (uint8_t)((3u * n->lqi + lqi) / 4u);
     }
-    n->in_cost = nwk_lqi_cost(n->lqi);
+    n->in_cost = neighbor_cost(n);
     n->age = 0;
     uint8_t before = n->out_cost, now = 0;
     bool listed = false;
@@ -80,9 +115,12 @@ bool nwk_neighbor_link_status(nwk_routes_t *t, uint16_t addr, uint8_t lqi, uint1
 }
 
 void nwk_neighbors_age(nwk_routes_t *t) {
+    bool decay = ++t->ack_decay >= NWK_ACK_DECAY_PERIODS;
+    if (decay) t->ack_decay = 0;
     for (unsigned i = 0; i < NWK_NEIGHBORS; i++) {
         nwk_neighbor_t *n = &t->neighbors[i];
         if (!n->used) continue;
+        if (decay) { n->ack_tx /= 2u; n->ack_fail /= 2u; n->in_cost = neighbor_cost(n); }
         if (n->restart_hold) n->restart_hold--;
         if (++n->age > NWK_ROUTER_AGE_LIMIT) { n->used = false; n->out_cost = 0; }
     }

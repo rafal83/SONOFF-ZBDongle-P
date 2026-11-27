@@ -307,6 +307,8 @@ typedef struct {
     uint32_t parent_annce_send_failures; /* announce frames refused by the MAC (saturation), retried */
     uint32_t aps_default_key_rx;   /* APS frames authenticated with the default key (legacy devices) */
     uint32_t update_device_repeats;   /* same Update Device again within ZB_UPDATE_DEVICE_REPEAT_MS: ignored */
+    uint32_t link_cost_ack_raised;    /* neighbour cost raised by its lost MAC ACKs (nwk_neighbor_ack) */
+    uint32_t links_ack_penalized;     /* neighbours advertised at their ACK cost (at the last Link Status) */
     uint32_t children_aged;           /* children silent beyond their End Device Timeout */
     uint32_t children_moved;          /* children heard through a router: no longer ours */
     uint32_t nwk_counters_stored, nwk_counters_restored;   /* incoming NWK counter floors (store) */

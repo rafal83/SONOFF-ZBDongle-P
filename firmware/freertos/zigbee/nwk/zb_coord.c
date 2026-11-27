@@ -1368,6 +1368,7 @@ static void on_tx_attempt(void *ctx, uint16_t addr, bool acked) {
     e->tx++;
     if (!acked) e->no_ack++;
     e->last_ms = c->now_ms | 1u;
+    if (nwk_neighbor_ack(&c->routes, addr, acked)) c->stats.link_cost_ack_raised++;
 }
 
 static void on_poll(void *ctx, uint16_t short_addr, uint64_t ext, bool served) {
@@ -3065,6 +3066,7 @@ void zb_coord_tick(zb_coord_t *c, uint32_t now_ms) {
         nwk_neighbors_age(&c->routes);
         c->stats.routes_expired += nwk_routes_age(&c->routes, now_ms);
         child_aging(c);
+        c->stats.links_ack_penalized = nwk_neighbors_ack_penalized(&c->routes);
         send_link_status(c);
     }
     if ((int32_t)(now_ms - c->next_mtorr_ms) >= 0) {

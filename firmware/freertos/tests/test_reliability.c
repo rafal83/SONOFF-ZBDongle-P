@@ -1277,6 +1277,57 @@ int main(void) {
         printf("reliability: router dropping us from a full list not taken for a restart; real restart reported once per 10 min\n");
     }
 
+    /* 15b. Link cost from lost MAC ACKs (production, 27 November: links at
+     *      LQI cost 2-3 losing 39-50 % of their ACKs kept being chosen).
+     *      The advertised cost is the worse of the LQI and ACK costs, needs
+     *      NWK_ACK_MIN_SAMPLES attempts, recovers with acknowledged traffic,
+     *      and decays when the link carries no more traffic. */
+    {
+        static nwk_routes_t rt;
+        nwk_routes_init(&rt);
+        CHECK(nwk_ack_cost(NWK_ACK_MIN_SAMPLES - 1, NWK_ACK_MIN_SAMPLES - 1) == 0);   /* too few attempts */
+        CHECK(nwk_ack_cost(100, 14) == 0 && nwk_ack_cost(100, 15) == 3 && nwk_ack_cost(100, 25) == 5 &&
+              nwk_ack_cost(100, 40) == 7 && nwk_ack_cost(64, 64) == 7);
+        CHECK(!nwk_neighbor_ack(&rt, 0x3002, false));                          /* not a neighbour: ignored */
+        (void)nwk_neighbor_link_status(&rt, 0x3002, 220, 0x0000, 0, 0, false);   /* LQI cost 1 */
+        const nwk_neighbor_t *nb = nwk_neighbor(&rt, 0x3002);
+        CHECK(nb && nb->in_cost == 1);
+        for (unsigned i = 0; i + 1 < NWK_ACK_MIN_SAMPLES; i++) CHECK(!nwk_neighbor_ack(&rt, 0x3002, false));
+        CHECK(nb->in_cost == 1 && nwk_neighbors_ack_penalized(&rt) == 0);
+        CHECK(nwk_neighbor_ack(&rt, 0x3002, false));                           /* 12 of 12 lost: raised */
+        CHECK(nb->in_cost == 7 && nwk_neighbors_ack_penalized(&rt) == 1);
+        CHECK(!nwk_neighbor_ack(&rt, 0x3002, false));                          /* reported once */
+        /* a frame heard keeps the ACK cost */
+        nwk_neighbor_heard(&rt, 0x3002, 230);
+        CHECK(nb->in_cost == 7);
+        uint8_t ls[2 + 3 * 31];
+        size_t n = nwk_link_status_build(&rt, ls, sizeof ls);
+        CHECK(n == 5 && ls[2] == 0x02 && ls[3] == 0x30 && (ls[4] & 7u) == 7);  /* advertised: 7 */
+        for (unsigned i = 0; i < 4 * NWK_ACK_WINDOW; i++) (void)nwk_neighbor_ack(&rt, 0x3002, true);
+        CHECK(nb->in_cost == 1 && nwk_neighbors_ack_penalized(&rt) == 0);      /* acknowledged again */
+        CHECK(nb->ack_tx <= NWK_ACK_WINDOW);
+
+        /* No more traffic through it: forgiven after one decay. */
+        (void)nwk_neighbor_link_status(&rt, 0x3003, 220, 0x0000, 0, 0, false);
+        for (unsigned i = 0; i < 20; i++) (void)nwk_neighbor_ack(&rt, 0x3003, false);
+        const nwk_neighbor_t *nc = nwk_neighbor(&rt, 0x3003);
+        CHECK(nc && nc->in_cost == 7);
+        for (unsigned p = 0; p < NWK_ACK_DECAY_PERIODS; p++) {
+            CHECK(nc->in_cost == 7 || p + 1 >= NWK_ACK_DECAY_PERIODS);
+            nwk_neighbors_age(&rt);
+            (void)nwk_neighbor_link_status(&rt, 0x3002, 220, 0x0000, 0, 0, false);   /* keeps them alive */
+            (void)nwk_neighbor_link_status(&rt, 0x3003, 220, 0x0000, 0, 0, false);
+        }
+        CHECK(nc->ack_tx == 10 && nc->in_cost == 1);                           /* 10 < 12: LQI cost again */
+
+        /* An ACK cost no worse than the LQI cost changes nothing. */
+        (void)nwk_neighbor_link_status(&rt, 0x3004, 150, 0x0000, 0, 0, false);   /* LQI cost 3 */
+        bool raised = false;
+        for (unsigned i = 0; i < 20; i++) raised |= nwk_neighbor_ack(&rt, 0x3004, i % 5 != 4);   /* 20 % lost */
+        CHECK(!raised && nwk_neighbor(&rt, 0x3004)->in_cost == 3 && nwk_neighbors_ack_penalized(&rt) == 0);
+        printf("reliability: link cost raised by lost MAC ACKs (worse of LQI and ACK costs), recovered, decayed\n");
+    }
+
     /* 16a. APS-secured data without the extended nonce (the sender's IEEE
      *      not in the auxiliary header): the IEEE comes from the NWK source,
      *      the frame is authenticated and passed up. */
@@ -1314,6 +1365,10 @@ int main(void) {
         for (unsigned i = 0; i < ZB_HOP_STATS; i++)
             if (coord.hops[i].last_ms && coord.hops[i].addr == router[1].short_addr) hs = &coord.hops[i];
         if (hs) { tx0 = hs->tx; na0 = hs->no_ack; }
+        (void)nwk_neighbor_link_status(&coord.routes, router[1].short_addr, 220, 0x0000, 0, 0, false);
+        const nwk_neighbor_t *nb = nwk_neighbor(&coord.routes, router[1].short_addr);
+        CHECK(nb);
+        uint8_t at0 = nb->ack_tx, af0 = nb->ack_fail;
         const uint8_t zcl[3] = {0x11, 0x77, 0x0B};
         CHECK(zb_coord_send_aps(&coord, router[1].short_addr, 1, 1, 6, 0x0104, zcl, 3, false) == ZB_SEND_OK);
         CHECK(air_head != air_tail);
@@ -1324,6 +1379,7 @@ int main(void) {
         for (unsigned i = 0; i < ZB_HOP_STATS; i++)
             if (coord.hops[i].last_ms && coord.hops[i].addr == router[1].short_addr) hs = &coord.hops[i];
         CHECK(hs && hs->tx == tx0 + 2u && hs->no_ack == na0 + 1u);
+        CHECK(nb->ack_tx == at0 + 2u && nb->ack_fail == af0 + 1u);   /* the neighbour's ACK cost is fed too */
         printf("reliability: MAC attempts per next hop: missing ACK counted for that hop\n");
     }
 

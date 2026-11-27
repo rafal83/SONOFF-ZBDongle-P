@@ -21,12 +21,23 @@
 #define NWK_BTT_MS 9000u                 /* nwkBroadcastDeliveryTime */
 #define NWK_ROUTER_AGE_LIMIT 3u          /* link status periods without news */
 #define NWK_RESTART_HOLD 40u             /* link status periods (10 min) between two restarts of a neighbour */
+/* Link cost from the MAC acknowledgements of our unicasts to a neighbour.
+ * The LQI says nothing of the frames that never arrive: in production
+ * (27 November), links at LQI cost 2-3 lost 39 to 50 % of their ACKs while
+ * routers kept choosing them over a relay at 3.5 %. The cost we advertise
+ * for a neighbour is the worse of the LQI and ACK costs. Counts over a
+ * sliding window (halved when full, and every NWK_ACK_DECAY_PERIODS link
+ * status periods, so a link that no longer carries traffic is forgiven). */
+#define NWK_ACK_WINDOW 64u               /* attempts kept (halved beyond) */
+#define NWK_ACK_MIN_SAMPLES 12u          /* below this, the LQI cost alone */
+#define NWK_ACK_DECAY_PERIODS 16u        /* link status periods (4 min) between two halvings */
 
 typedef struct {
     uint16_t addr;
     uint8_t in_cost, out_cost, age, lqi, failures;   /* failures: consecutive MAC failures */
     uint8_t last_count;     /* entries of its last complete Link Status */
     uint8_t restart_hold;   /* link status periods before another restart can be reported */
+    uint8_t ack_tx, ack_fail;   /* MAC attempts to it and those without ACK (sliding window) */
     bool used;
 } nwk_neighbor_t;
 
@@ -54,6 +65,7 @@ typedef struct {
     uint8_t btt_next;
     uint32_t now_ms;                         /* set by the owner before each update */
     uint8_t rreq_id;
+    uint8_t ack_decay;                       /* link status periods since the last ACK window halving */
 } nwk_routes_t;
 
 #define NWK_NEIGHBOR_MAX_FAILURES 3u
@@ -64,6 +76,15 @@ void nwk_routes_init(nwk_routes_t *t);
 void nwk_routes_clear(nwk_routes_t *t);
 /* Link cost from a received LQI (1 good .. 7 poor). */
 uint8_t nwk_lqi_cost(uint8_t lqi);
+/* Link cost from acknowledged MAC attempts: 0 (no opinion: too few
+ * attempts, or under 15 % lost), 3 (15 %), 5 (25 %), 7 (40 % or more). */
+uint8_t nwk_ack_cost(uint8_t attempts, uint8_t failures);
+/* One MAC attempt to `addr` (its ACK requested): feeds its ACK cost.
+ * Returns true when this attempt makes the ACK cost the worse of the two
+ * (the advertised cost of that neighbour goes up). */
+bool nwk_neighbor_ack(nwk_routes_t *t, uint16_t addr, bool acked);
+/* Neighbours whose advertised cost currently comes from lost ACKs. */
+unsigned nwk_neighbors_ack_penalized(const nwk_routes_t *t);
 
 /* A frame was received from router `addr` (MAC source). */
 void nwk_neighbor_heard(nwk_routes_t *t, uint16_t addr, uint8_t lqi);
