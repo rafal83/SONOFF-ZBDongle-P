@@ -533,10 +533,31 @@ def fast_flash(args):
         if not args.wipe_store:
             # Keep the FreeRTOS nv_log store: the lab network and its paired
             # devices survive the firmware update.
-            target[STORE_START:NV_START] = read_range(command, STORE_START, NV_START)
+            store = read_range(command, STORE_START, NV_START)
+            saved = backup[STORE_START:NV_START]
+            if args.take_backup and store != saved:
+                raise ValueError("Store read differs from the capture of this same ROM session")
+            on_dongle = bytearray(current)
+            on_dongle[STORE_START:NV_START] = store
+            if (freertos_store.has_network(freertos_store.records(backup)) and
+                    not freertos_store.has_network(freertos_store.records(bytes(on_dongle)))):
+                # The store lies inside the erased application range: a flash
+                # stopped after its erase leaves no network on the dongle, and
+                # only the capture of that session still holds it (a reread
+                # here would program the erased store and lose the network).
+                if not args.store_from_backup:
+                    raise ValueError("No network in the dongle's store but one in the backup (interrupted "
+                                     "flash?): rerun with --production-backup <capture of the interrupted "
+                                     "session>/original-a.bin --store-from-backup")
+                store = saved
+                report["store_from_backup"] = True
+            target[STORE_START:NV_START] = store
         report["store_preserved"] = not args.wipe_store
         target = bytes(target)
         report["crc32_full_flash"] = program_application(command, device, target, bytes(current))
+        if not args.wipe_store and read_range(command, STORE_START, NV_START) != target[STORE_START:NV_START]:
+            raise IOError("Store readback differs from the programmed store")
+        report["store_readback_verified"] = not args.wipe_store
         boot(command)
     finally:
         command.close()
@@ -781,6 +802,10 @@ def main():
                     help="migrate: explicit consent of the network owner (never implied)")
     ap.add_argument("--take-backup", type=Path, help="flash: double full capture into this private dir first")
     ap.add_argument("--wipe-store", action="store_true", help="flash: erase the FreeRTOS nv_log store too")
+    ap.add_argument("--store-from-backup", action="store_true",
+                    help="flash: after an interrupted flash only (store erased on the dongle), program the "
+                         "store of --production-backup; it must be the capture of THAT session (an older one "
+                         "would bring back used security counters)")
     ap.add_argument("--hw-aes", action="store_true", help="flash: the --hw-aes variant (AES accelerator)")
     ap.add_argument("--production-backup", type=Path,
                     default=ROOT / "private/freertos-lab-20261118-r7/original-a.bin")
