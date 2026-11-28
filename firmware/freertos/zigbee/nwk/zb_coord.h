@@ -352,8 +352,9 @@ typedef struct {
     zb_endpoint_t endpoints[ZB_MAX_ENDPOINTS];
     uint8_t endpoint_count;
     uint8_t last_send_handle;
-    /* Unique TC link keys sent but not yet verified by the device. */
-    struct { uint64_t ext; uint8_t key[16]; bool used; } pending_keys[ZB_PENDING_KEYS];
+    /* Unique TC link keys sent but not yet verified by the device (`ms`:
+     * when sent; the oldest is replaced when all are taken). */
+    struct { uint64_t ext; uint8_t key[16]; uint32_t ms; bool used; } pending_keys[ZB_PENDING_KEYS];
     uint8_t pending_shift[ZB_PENDING_KEYS];
     nwk_routes_t routes;
     /* Broadcast relaying with passive acknowledgement: the plaintext NWK

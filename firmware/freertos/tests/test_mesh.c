@@ -4,6 +4,8 @@
  *  Link Status both ways, Many-to-One Route Request, Route Record and
  *  source routing, Route Request -> Route Reply, Update Device -> APS Tunnel
  *  (the end device decrypts the tunnelled Transport Key), relayed announce,
+ *  unique TC link key for an end device behind a router (Request Key asked
+ *  twice, Verify Key, Confirm Key; abandoned exchanges give way),
  *  broadcast duplicate suppression, Leave, secured and Trust Center rejoin,
  *  relaying to a child.
  */
@@ -56,7 +58,13 @@ static void up_aps(void *ctx, const nwk_header_t *n, const aps_header_t *a, cons
     memcpy(last_aps, p, last_aps_len);
 }
 static bool up_reserve(void *ctx, uint32_t upper) { (void)ctx; (void)upper; return true; }
-static bool up_random(void *ctx, uint8_t key[16]) { (void)ctx; for (unsigned i = 0; i < 16; i++) key[i] = (uint8_t)(i * 29 + 7); return true; }
+static unsigned random_calls;   /* each draw differs: a re-drawn key would show */
+static bool up_random(void *ctx, uint8_t key[16]) {
+    (void)ctx;
+    random_calls++;
+    for (unsigned i = 0; i < 16; i++) key[i] = (uint8_t)(i * 29 + 7 + random_calls);
+    return true;
+}
 static void up_left(void *ctx, uint16_t s, uint64_t e, bool rejoin) { (void)ctx; (void)s; left_events++; left_ext = e; last_left_rejoin = rejoin; }
 static const mac_radio_ops_t RADIO = {sim_tx, sim_match, 0};
 static unsigned channel_events, channel_last;
@@ -131,6 +139,25 @@ static bool rx_frame(node_t *rx, rx_t *out) {
     memcpy(out->payload, frame + out->nwk.header_len + 14, plen);
     out->len = plen;
     return true;
+}
+
+/* `dev` sends an APS command to the coordinator through `hop`, APS-secured
+ * with its TC link key (Request Key) or not (Verify Key). */
+static void aps_command_via(node_t *dev, node_t *hop, const uint8_t *cmd, size_t len, bool secured, uint8_t seq) {
+    const uint8_t ahdr[2] = {0x01, dev->aps_counter++};
+    uint8_t aps[MAC_MAX_PAYLOAD];
+    size_t n;
+    if (secured) {
+        nwk_aux_t aux = {.key_id = APS_KEY_DATA, .extended_nonce = true, .frame_counter = dev->aps_fc++, .source = dev->ext};
+        n = aps_seal(dev->tclk, ahdr, 2, &aux, cmd, len, aps, sizeof aps);
+    } else {
+        memcpy(aps, ahdr, 2);
+        memcpy(aps + 2, cmd, len);
+        n = 2 + len;
+    }
+    CHECK(n);
+    nwk_header_t h = hdr(NWK_TYPE_DATA, dev->short_addr, 0x0000, seq);
+    hop_send(hop, &h, aps, n, 0x0000, true);
 }
 
 static void announce(node_t *dev, node_t *hop, uint8_t seq) {
@@ -470,6 +497,86 @@ int main(void) {
         nwk_header_t h = hdr(NWK_TYPE_DATA, fake.short_addr, NWK_BCAST_RX_ON, 10);   /* ... from 0x5555 */
         hop_send(&r, &h, aps, sizeof aps, 0xFFFF, true);
         CHECK(coord.stats.nwk_unknown_source == unknown + 1 && joined_events == 1);
+    }
+    /* ---- ED, behind R, obtains its unique TC link key ------------------ */
+    /* R re-secures the relayed frames at NWK level under its own address:
+     * the key must still be derived for, and sealed with, the ED's own. */
+    {
+        uint8_t seed[16];
+        for (unsigned i = 0; i < 16; i++) seed[i] = (uint8_t)(0x91 + 3 * i);
+        zb_coord_set_tclk_seed(&coord, seed);
+        drain();
+        /* Exchanges abandoned by other devices (direct, rx-on: no route
+         * discovery) hold every pending slot. */
+        const uint8_t req[2] = {0x08, 0x04};
+        for (unsigned i = 0; i < ZB_PENDING_KEYS; i++) {
+            node_t stale;
+            node_init(&stale, 0xA4C1380000000401ull + i, (uint16_t)(0x5100 + i), 0x8E);
+            node_set_key(&stale, key);
+            CHECK(zb_coord_import_device(&coord, NWK_DEVICE_NONE, stale.ext, stale.short_addr, true, 0, 0xFF));
+            coord.devices.dev[nwk_devices_find_ext(&coord.devices, stale.ext)].capability = 0x8E;
+            aps_command_via(&stale, &stale, req, sizeof req, true, (uint8_t)(30 + i));
+            drain();
+        }
+        /* Their ages (the test clock is not advanced here): slot 2 oldest. */
+        for (unsigned i = 0; i < ZB_PENDING_KEYS; i++) {
+            CHECK(coord.pending_keys[i].used && coord.pending_keys[i].ext != ed.ext);
+            coord.pending_keys[i].ms = coord.now_ms - (i == 2 ? 9000u : 100u * (i + 1));
+        }
+        uint32_t requests = coord.stats.key_requests, sent = coord.stats.link_keys_sent;
+        CHECK(requests == ZB_PENDING_KEYS);
+        /* Asked twice (the first Transport Key arrived after the device's
+         * timeout): the same key both times. */
+        uint8_t unique[16];
+        for (unsigned attempt = 0; attempt < 2; attempt++) {
+            aps_command_via(&ed, &r, req, sizeof req, true, (uint8_t)(40 + attempt));
+            CHECK(coord.stats.key_requests == requests + 1 + attempt && coord.stats.link_keys_sent == sent + 1 + attempt);
+            CHECK(coord.pending_keys[2].used && coord.pending_keys[2].ext == ed.ext);   /* the oldest gave way */
+            CHECK(rx_frame(&ed, &m));
+            CHECK(m.mac.dst_short == r.short_addr && m.nwk.dst == ed.short_addr);
+            aps_header_t a;
+            CHECK(aps_parse(m.payload, m.len, &a) == APS_OK && a.security && a.type == APS_TYPE_COMMAND);
+            uint8_t ktk[16];
+            zb_key_transport_key(ed.tclk, ktk);   /* the ED's key, not R's */
+            nwk_aux_t kaux;
+            size_t off, plen;
+            CHECK(aps_open(ktk, m.payload, m.len, a.header_len, &kaux, &off, &plen));
+            CHECK(kaux.key_id == APS_KEY_TRANSPORT && kaux.source == COORD_EXT);
+            CHECK(plen == 34 && m.payload[off] == APS_CMD_TRANSPORT_KEY && m.payload[off + 1] == 0x04);
+            uint64_t dst = 0;
+            for (int i = 7; i >= 0; i--) dst = (dst << 8) | m.payload[off + 18 + i];
+            CHECK(dst == ed.ext);
+            if (attempt == 0) memcpy(unique, m.payload + off + 2, 16);
+            else CHECK(!memcmp(unique, m.payload + off + 2, 16));
+            drain();
+        }
+        CHECK(memcmp(unique, TC_DEFAULT_LINK_KEY, 16) != 0);
+        /* Verify Key (APS-unsecured), relayed by R: verified, confirmed. */
+        uint8_t verify[26] = {0x0F, 0x04};
+        for (unsigned i = 0; i < 8; i++) verify[2 + i] = (uint8_t)(ed.ext >> (8 * i));
+        const uint8_t three = 0x03;
+        CHECK(zb_hmac_mmo(unique, &three, 1, verify + 10));
+        aps_command_via(&ed, &r, verify, sizeof verify, false, 42);
+        CHECK(coord.stats.keys_verified == 1 && coord.stats.key_verify_failures == 0);
+        memcpy(ed.tclk, unique, 16);
+        CHECK(rx_frame(&ed, &m));
+        CHECK(m.mac.dst_short == r.short_addr && m.nwk.dst == ed.short_addr);
+        aps_header_t a;
+        CHECK(aps_parse(m.payload, m.len, &a) == APS_OK && a.security);
+        nwk_aux_t caux;
+        size_t off, plen;
+        CHECK(aps_open(ed.tclk, m.payload, m.len, a.header_len, &caux, &off, &plen));
+        CHECK(caux.key_id == APS_KEY_DATA && plen == 11 && m.payload[off] == 0x10 && m.payload[off + 1] == 0x00);
+        const nwk_device_t *d = &coord.devices.dev[nwk_devices_find_ext(&coord.devices, ed.ext)];
+        CHECK(d->unique_key && !memcmp(d->link_key, unique, 16) && d->tclk_shift < 16);
+        uint8_t derived[16];
+        zb_tclk_derive(seed, d->tclk_shift, ed.ext, derived);
+        CHECK(!memcmp(derived, unique, 16));
+        /* R's own key is untouched. */
+        const nwk_device_t *rd = &coord.devices.dev[nwk_devices_find_ext(&coord.devices, r.ext)];
+        CHECK(!rd->unique_key);
+        for (unsigned i = 0; i < ZB_PENDING_KEYS; i++) CHECK(zb_coord_remove_device(&coord, 0xA4C1380000000401ull + i));
+        drain();
     }
     /* Data to ED goes through R (source route from Update Device). */
     {

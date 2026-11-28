@@ -1486,13 +1486,20 @@ static void handle_request_key(zb_coord_t *c, uint16_t src, uint64_t ext, const 
     if (len < 2 || p[1] != APS_KEY_TYPE_TC_LINK || (!c->tclk_seed_valid && !c->upper.random_key)) return;
     const uint8_t *current = link_key_for(c, ext);
     if (!current) return;
-    int slot = -1;
+    int slot = -1, mine = -1, oldest = 0;
     for (unsigned i = 0; i < ZB_PENDING_KEYS; i++) {
-        if (c->pending_keys[i].used && c->pending_keys[i].ext == ext) { slot = (int)i; break; }
+        if (c->pending_keys[i].used && c->pending_keys[i].ext == ext) { mine = (int)i; break; }
         if (!c->pending_keys[i].used && slot < 0) slot = (int)i;
+        if (c->now_ms - c->pending_keys[i].ms > c->now_ms - c->pending_keys[oldest].ms) oldest = (int)i;
     }
-    if (slot < 0) return;
-    if (c->tclk_seed_valid) {
+    /* Exchanges a device abandoned would otherwise hold every slot until
+     * a reboot: the oldest gives way. */
+    if (slot < 0) slot = oldest;
+    if (mine >= 0) {
+        /* Asked again (the first Transport Key was late, a sleepy device
+         * polls slowly): the same key, which it may verify at any time. */
+        slot = mine;
+    } else if (c->tclk_seed_valid) {
         /* Z-Stack 3.x scheme: the key is derived, the device keeps the shift. */
         uint8_t shift = 0;
         if (c->upper.random_key) {
@@ -1507,6 +1514,7 @@ static void handle_request_key(zb_coord_t *c, uint16_t src, uint64_t ext, const 
     }
     c->pending_keys[slot].used = true;
     c->pending_keys[slot].ext = ext;
+    c->pending_keys[slot].ms = c->now_ms;
     /* Transport Key, key type TC link key: key, destination, source. */
     uint8_t tk[2 + 16 + 8 + 8];
     tk[0] = APS_CMD_TRANSPORT_KEY;
@@ -2380,6 +2388,7 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
     if (aps_parse(aps_bytes, payload_len, &a) != APS_OK) { c->stats.aps_malformed++; return; }
 
     const uint8_t *aps_key = 0;
+    uint64_t aps_src = 0;   /* APS-level sender, authenticated by its link key */
     if (a.security) {
         nwk_aux_t aa;
         uint16_t aps_mac_src = f->src_mode == MAC_ADDR_SHORT ? f->src_short : 0xFFFF;
@@ -2394,7 +2403,7 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
         /* Without the extended nonce (allowed by Zigbee PRO, sent by some
          * devices: production, 23 November) the sender's IEEE comes from
          * its NWK address, as Z-Stack does. */
-        uint64_t aps_src = aa.source;
+        aps_src = aa.source;
         if (!aa.extended_nonce) {
             uint16_t s = nwk_devices_find_short(&c->devices, h.src);
             aps_src = s == NWK_DEVICE_NONE ? 0 : c->devices.dev[s].ext;
@@ -2461,7 +2470,14 @@ static void on_mac_data_inner(void *ctx, const mac_frame_t *f, uint8_t lqi, int8
             c->stats.aps_duplicates++;
             return;
         }
-        uint64_t sender = aux_source;
+        /* The device that sent the command, not the NWK security source:
+         * a router relaying it re-secures it with its own address, and the
+         * key would then be derived for, and sealed with, the router's. */
+        uint64_t sender = aps_src;
+        if (!a.security) {
+            uint16_t s = nwk_devices_find_short(&c->devices, h.src);
+            sender = s == NWK_DEVICE_NONE ? 0 : c->devices.dev[s].ext;
+        }
         if (a.payload[0] == APS_CMD_REQUEST_KEY && a.security)
             handle_request_key(c, h.src, sender, a.payload, a.payload_len);
         else if (a.payload[0] == APS_CMD_UPDATE_DEVICE)   /* APS-secured (R21) or NWK-only (legacy) */
